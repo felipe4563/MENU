@@ -3,7 +3,7 @@ import { useQuery } from '@tanstack/react-query';
 import { Landmark, AlertTriangle, User } from 'lucide-react';
 import { getReporteArqueos, getReporteArqueosResumen } from '../../../api/reportes';
 import { useAuthStore } from '../../../store/authStore';
-import { FiltroFechas, StatCard, Skeleton, bs, fecha, fechaHora, hoy, inicioMes } from '../shared';
+import { FiltroFechas, StatCard, Skeleton, bs, fechaHora, hoy, inicioMes } from '../shared';
 import Paginacion from '../../../components/ui/Paginacion';
 
 function diferenciaColor(fueraDeTolerancia, diferencia) {
@@ -32,7 +32,7 @@ function ArqueoCard({ s, mostrarSucursal }) {
       <div className="grid grid-cols-2 gap-2 text-xs text-center">
         <div className="bg-muted rounded-lg px-2 py-1.5">
           <p className="text-muted-foreground font-medium mb-0.5">Esperado</p>
-          <p className="font-bold text-foreground">{bs(parseFloat(s.monto_apertura) + parseFloat(s.total_ventas) - parseFloat(s.total_gastos))}</p>
+          <p className="font-bold text-foreground">{bs(parseFloat(s.monto_cierre ?? 0) - diferencia)}</p>
         </div>
         <div className="bg-muted rounded-lg px-2 py-1.5">
           <p className="text-muted-foreground font-medium mb-0.5">Contado</p>

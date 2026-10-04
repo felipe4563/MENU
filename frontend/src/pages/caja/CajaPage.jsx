@@ -200,18 +200,22 @@ export default function CajaPage() {
             )}
           </div>
 
-          <div className="grid grid-cols-3 gap-2 sm:gap-3">
-            <MetricCard label="Apertura" valor={parseFloat(sesion.monto_apertura)} icono={<DollarSign className="w-4 h-4" />} color="blue" />
-            <MetricCard label="Ventas"   valor={parseFloat(sesion.total_ventas)}   icono={<TrendingUp  className="w-4 h-4" />} color="green" />
-            <MetricCard label="Gastos"   valor={parseFloat(sesion.total_gastos)}   icono={<TrendingDown className="w-4 h-4" />} color="red" />
-          </div>
+          {sesion.sucursal?.modo_cierre_caja !== 'ciego' && (
+            <>
+              <div className="grid grid-cols-3 gap-2 sm:gap-3">
+                <MetricCard label="Apertura" valor={parseFloat(sesion.monto_apertura)} icono={<DollarSign className="w-4 h-4" />} color="blue" />
+                <MetricCard label="Ventas"   valor={parseFloat(sesion.total_ventas)}   icono={<TrendingUp  className="w-4 h-4" />} color="green" />
+                <MetricCard label="Gastos"   valor={parseFloat(sesion.total_gastos)}   icono={<TrendingDown className="w-4 h-4" />} color="red" />
+              </div>
 
-          <div className="flex items-center justify-between bg-blue-50 dark:bg-blue-900/20 rounded-xl px-4 py-3">
-            <span className="text-sm font-medium text-blue-700 dark:text-blue-400">Efectivo esperado en caja</span>
-            <span className="text-base sm:text-lg font-bold text-blue-700 dark:text-blue-400">
-              Bs {(parseFloat(sesion.monto_apertura) + parseFloat(sesion.ventas_efectivo ?? 0) - parseFloat(sesion.total_gastos)).toFixed(2)}
-            </span>
-          </div>
+              <div className="flex items-center justify-between bg-blue-50 dark:bg-blue-900/20 rounded-xl px-4 py-3">
+                <span className="text-sm font-medium text-blue-700 dark:text-blue-400">Efectivo esperado en caja</span>
+                <span className="text-base sm:text-lg font-bold text-blue-700 dark:text-blue-400">
+                  Bs {(parseFloat(sesion.monto_apertura) + parseFloat(sesion.ventas_efectivo ?? 0) - parseFloat(sesion.total_gastos)).toFixed(2)}
+                </span>
+              </div>
+            </>
+          )}
         </div>
 
         <div className="bg-card border border-border rounded-2xl overflow-hidden">
@@ -345,7 +349,7 @@ export default function CajaPage() {
                         <User className="w-3 h-3" /> {s.usuario?.nombre ?? '—'}
                       </p>
                     </div>
-                    <span className={`text-sm font-bold ${diferenciaColor(dif)}`}>
+                    <span className={`text-sm font-bold ${diferenciaColor(dif, parseFloat(s.sucursal?.tolerancia_cierre_caja ?? 0))}`}>
                       {dif >= 0 ? '+' : ''}Bs {dif.toFixed(2)}
                     </span>
                   </div>
@@ -415,7 +419,7 @@ export default function CajaPage() {
                       <td className="px-4 py-3 text-right text-red-500 dark:text-red-400">
                         Bs {parseFloat(s.total_gastos).toFixed(2)}
                       </td>
-                      <td className={`px-4 py-3 text-right font-bold ${diferenciaColor(dif)}`}>
+                      <td className={`px-4 py-3 text-right font-bold ${diferenciaColor(dif, parseFloat(s.sucursal?.tolerancia_cierre_caja ?? 0))}`}>
                         {dif >= 0 ? '+' : ''}Bs {dif.toFixed(2)}
                       </td>
                       <td className="px-4 py-3 text-right">
@@ -631,7 +635,7 @@ function ModalCerrarCaja({ sesion, onClose, onExito }) {
         setEstado('esperando_confirmacion');
         return;
       }
-      if (err?.response?.status === 400 && estado !== 'justificando') {
+      if (data?.codigo === 'MOTIVO_REQUERIDO') {
         // Directo fuera de tolerancia (o segundo intento ciego): pide motivo.
         setEstado('justificando');
         return;
@@ -695,6 +699,7 @@ function ModalCerrarCaja({ sesion, onClose, onExito }) {
               value={notaDiferencia}
               onChange={e => setNotaDiferencia(e.target.value)}
               rows={3}
+              maxLength={255}
               placeholder="Ej: Di vuelto de más a mesa 4"
               className="w-full bg-background border border-input rounded-xl px-4 py-2.5 text-sm text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-ring transition resize-none"
             />

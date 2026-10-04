@@ -22,7 +22,10 @@ async function listar(alcance = {}) {
   const where = alcance.acceso_todas ? {} : { sucursal_id: alcance.sucursal_id };
   return SesionCaja.findAll({
     where,
-    include: [{ model: Usuario, as: 'usuario', attributes: ['id', 'nombre'] }],
+    include: [
+      { model: Usuario, as: 'usuario', attributes: ['id', 'nombre'] },
+      { model: Sucursal, as: 'sucursal', attributes: ['id', 'nombre', 'modo_cierre_caja', 'tolerancia_cierre_caja'] },
+    ],
     order: [['abierto_en', 'DESC']],
     limit: 50,
   });
@@ -122,6 +125,8 @@ async function cerrar(sesion_id, usuario_id, { denominaciones = [], monto_cierre
   }
 
   const sucursal = await Sucursal.findByPk(sesion.sucursal_id);
+  const modoCierre = sucursal?.modo_cierre_caja ?? 'directo';
+  const toleranciaSucursal = sucursal?.tolerancia_cierre_caja ?? 10;
 
   const ventasEfectivo = await LibroCaja.sum('monto', {
     where: { sesion_caja_id: sesion_id, tipo: 'ingreso', metodo_pago: 'efectivo' },
@@ -129,11 +134,11 @@ async function cerrar(sesion_id, usuario_id, { denominaciones = [], monto_cierre
 
   const efectivo_esperado = parseFloat(sesion.monto_apertura) + ventasEfectivo - parseFloat(sesion.total_gastos);
   const diferencia = total_fisico - efectivo_esperado;
-  const tolerancia = parseFloat(sucursal.tolerancia_cierre_caja);
+  const tolerancia = parseFloat(toleranciaSucursal);
   const fueraDeTolerancia = Math.abs(diferencia) > tolerancia;
 
   if (fueraDeTolerancia) {
-    if (sucursal.modo_cierre_caja === 'ciego' && !confirmar_pese_a_diferencia) {
+    if (modoCierre === 'ciego' && !confirmar_pese_a_diferencia) {
       // Primer intento en modo ciego: no se revela nada ni se persiste el
       // conteo — el cajero decide entre recontar o cerrar igual sin saber el
       // monto, que es todo el sentido del arqueo ciego.
@@ -142,8 +147,14 @@ async function cerrar(sesion_id, usuario_id, { denominaciones = [], monto_cierre
         codigo: 'DIFERENCIA_FUERA_TOLERANCIA',
       });
     }
-    if (!nota_diferencia || !nota_diferencia.trim()) {
-      throw Object.assign(new Error('Debes indicar el motivo de la diferencia para cerrar la caja'), { status: 400 });
+    if (typeof nota_diferencia !== 'string' || !nota_diferencia.trim()) {
+      throw Object.assign(new Error('Debes indicar el motivo de la diferencia para cerrar la caja'), {
+        status: 400,
+        codigo: 'MOTIVO_REQUERIDO',
+      });
+    }
+    if (nota_diferencia.trim().length > 255) {
+      throw Object.assign(new Error('El motivo no puede superar 255 caracteres'), { status: 400 });
     }
   }
 

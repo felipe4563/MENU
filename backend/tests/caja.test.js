@@ -453,4 +453,83 @@ describe('Caja — modo de cierre directo/ciego y tolerancia', () => {
     await Caja.destroy({ where: { id: cajaCero.id } });
     await Sucursal.destroy({ where: { id: sucursalCero.id } });
   });
+
+  it('nota_diferencia no-string (ej. número) fuera de tolerancia → 400 limpio, no 500', async () => {
+    const sesionId = await abrir(cajaDirecta.id);
+    const res = await request(app)
+      .post(`/api/v1/caja/${sesionId}/cerrar`)
+      .set('Authorization', `Bearer ${tokenDirecta}`)
+      .send({ monto_cierre: 150, nota_diferencia: 12345 }); // fuera de tolerancia 5, nota no-string
+    expect(res.status).toBe(400);
+    expect(res.body.codigo).toBe('MOTIVO_REQUERIDO');
+    await liberarSesion(sesionId, tokenDirecta);
+  });
+
+  it('nota_diferencia requerida ausente trae codigo MOTIVO_REQUERIDO en el 400', async () => {
+    const sesionId = await abrir(cajaDirecta.id);
+    const res = await request(app)
+      .post(`/api/v1/caja/${sesionId}/cerrar`)
+      .set('Authorization', `Bearer ${tokenDirecta}`)
+      .send({ monto_cierre: 150 });
+    expect(res.status).toBe(400);
+    expect(res.body.codigo).toBe('MOTIVO_REQUERIDO');
+    await liberarSesion(sesionId, tokenDirecta);
+  });
+
+  it('nota_diferencia de más de 255 caracteres → 400', async () => {
+    const sesionId = await abrir(cajaDirecta.id);
+    const res = await request(app)
+      .post(`/api/v1/caja/${sesionId}/cerrar`)
+      .set('Authorization', `Bearer ${tokenDirecta}`)
+      .send({ monto_cierre: 150, nota_diferencia: 'x'.repeat(256) });
+    expect(res.status).toBe(400);
+    await liberarSesion(sesionId, tokenDirecta);
+  });
+});
+
+describe('Caja — listar() incluye datos de sucursal (modo y tolerancia)', () => {
+  let sucursal, caja, usuarioId, token, sesionId;
+
+  beforeAll(async () => {
+    sucursal = await Sucursal.create({ nombre: 'Sucursal Listar Incluye Test', tolerancia_cierre_caja: 7 });
+    caja = await Caja.create({ sucursal_id: sucursal.id, nombre: 'Caja Listar Incluye Test' });
+
+    const rol = await Rol.findOne({ where: { nombre: 'Cajero' } });
+    const hash = await bcrypt.hash('clave123', 10);
+    const usuario = await Usuario.create({ rol_id: rol.id, nombre: 'Listar Incluye Test', email: 'listar-incluye-test@restaurante.com', contrasena: hash });
+    await usuario.addSucursal(sucursal);
+    usuarioId = usuario.id;
+
+    const login = await request(app).post('/api/v1/auth/login').send({ email: 'listar-incluye-test@restaurante.com', contrasena: 'clave123' });
+    token = login.body.datos.token;
+
+    const abrir = await request(app)
+      .post('/api/v1/caja/abrir')
+      .set('Authorization', `Bearer ${token}`)
+      .send({ caja_id: caja.id, monto_apertura: 100 });
+    sesionId = abrir.body.datos.id;
+    await request(app)
+      .post(`/api/v1/caja/${sesionId}/cerrar`)
+      .set('Authorization', `Bearer ${token}`)
+      .send({ monto_cierre: 100 });
+  });
+
+  afterAll(async () => {
+    await SesionCaja.destroy({ where: { usuario_id: usuarioId } });
+    await Usuario.destroy({ where: { id: usuarioId } });
+    await Caja.destroy({ where: { id: caja.id } });
+    await Sucursal.destroy({ where: { id: sucursal.id } });
+  });
+
+  it('GET /api/v1/caja (listar) expone sesion.sucursal con modo_cierre_caja y tolerancia_cierre_caja', async () => {
+    const res = await request(app)
+      .get('/api/v1/caja')
+      .set('Authorization', `Bearer ${token}`);
+    expect(res.status).toBe(200);
+    const propia = res.body.datos.find(s => s.id === sesionId);
+    expect(propia).toBeTruthy();
+    expect(propia.sucursal).toBeTruthy();
+    expect(propia.sucursal.modo_cierre_caja).toBe('directo');
+    expect(parseFloat(propia.sucursal.tolerancia_cierre_caja)).toBe(7);
+  });
 });

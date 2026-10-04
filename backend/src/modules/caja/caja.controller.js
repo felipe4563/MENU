@@ -59,6 +59,9 @@ async function cerrar(req, res, next) {
     if (err.status === 409 && err.codigo === 'DIFERENCIA_FUERA_TOLERANCIA') {
       return res.status(409).json({ ok: false, codigo: err.codigo, requiere_confirmacion: true, mensaje: err.message });
     }
+    if (err.status === 400 && err.codigo === 'MOTIVO_REQUERIDO') {
+      return res.status(400).json({ ok: false, codigo: err.codigo, mensaje: err.message });
+    }
     next(err);
   }
 }
