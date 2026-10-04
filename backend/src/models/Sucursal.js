@@ -9,6 +9,8 @@ const Sucursal = sequelize.define('Sucursal', {
   latitud: { type: DataTypes.DECIMAL(10, 7) },
   longitud: { type: DataTypes.DECIMAL(10, 7) },
   radio_geocerca_metros: { type: DataTypes.INTEGER.UNSIGNED, allowNull: false, defaultValue: 150 },
+  modo_cierre_caja: { type: DataTypes.ENUM('directo', 'ciego'), allowNull: false, defaultValue: 'directo' },
+  tolerancia_cierre_caja: { type: DataTypes.DECIMAL(10, 2), allowNull: false, defaultValue: 10.00 },
   activo: { type: DataTypes.TINYINT(1), defaultValue: 1 },
 }, {
   tableName: 'sucursales',

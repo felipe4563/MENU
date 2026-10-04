@@ -11,6 +11,7 @@ const SesionCaja = sequelize.define('SesionCaja', {
   total_ventas: { type: DataTypes.DECIMAL(10,2), defaultValue: 0 },
   total_gastos: { type: DataTypes.DECIMAL(10,2), defaultValue: 0 },
   diferencia: { type: DataTypes.DECIMAL(10,2) },
+  nota_diferencia: { type: DataTypes.STRING(255) },
   abierto_en: { type: DataTypes.DATE, defaultValue: DataTypes.NOW },
   cerrado_en: { type: DataTypes.DATE },
   estado: { type: DataTypes.ENUM('abierta','cerrada'), defaultValue: 'abierta' },
