@@ -41,9 +41,10 @@ function duracion(desde) {
   return h > 0 ? `${h}h ${m}m` : `${m}m`;
 }
 
-function diferenciaColor(d) {
+function diferenciaColor(d, tolerancia = 0) {
   if (Math.abs(d) < 0.01) return 'text-green-600 dark:text-green-400';
-  return d > 0 ? 'text-blue-600 dark:text-blue-400' : 'text-red-600 dark:text-red-400';
+  if (Math.abs(d) <= tolerancia) return 'text-amber-600 dark:text-amber-400';
+  return 'text-red-600 dark:text-red-400';
 }
 
 /* ─────────────────────────────────────────────────────── página principal ── */
@@ -588,8 +589,18 @@ function ModalCerrarCaja({ sesion, onClose, onExito }) {
   );
   const [montoTotal, setMontoTotal] = useState('');
   const [error, setError] = useState(null);
+  const [estado, setEstado] = useState('contando'); // 'contando' | 'esperando_confirmacion' | 'justificando'
+  const [intentoFallido, setIntentoFallido] = useState(false);
+  const [notaDiferencia, setNotaDiferencia] = useState('');
+
+  const esCiego = sesion.sucursal?.modo_cierre_caja === 'ciego';
 
   const setCant = (den, val) => setCantidades(c => ({ ...c, [den]: val }));
+
+  const limpiarConteo = () => {
+    setCantidades(Object.fromEntries(DENOMINACIONES.map(d => [d, ''])));
+    setMontoTotal('');
+  };
 
   const totalDetallado = DENOMINACIONES.reduce((sum, d) => {
     return sum + (parseInt(cantidades[d]) || 0) * d;
@@ -599,19 +610,34 @@ function ModalCerrarCaja({ sesion, onClose, onExito }) {
 
   const cerrar = useMutation({
     mutationFn: () => {
+      const payload = { confirmar_pese_a_diferencia: intentoFallido };
+      if (estado === 'justificando') payload.nota_diferencia = notaDiferencia;
       if (modo === 'detallado') {
-        const denominaciones = DENOMINACIONES
+        payload.denominaciones = DENOMINACIONES
           .filter(d => parseInt(cantidades[d]) > 0)
           .map(d => ({ denominacion: d, cantidad: parseInt(cantidades[d]) }));
-        return cerrarCaja(sesion.id, { denominaciones });
+      } else {
+        payload.monto_cierre = parseFloat(montoTotal);
       }
-      return cerrarCaja(sesion.id, { monto_cierre: parseFloat(montoTotal) });
+      return cerrarCaja(sesion.id, payload);
     },
     onSuccess: async () => {
       const reporte = await getReporte(sesion.id);
       onExito(reporte);
     },
-    onError: (err) => setError(err?.response?.data?.mensaje ?? 'Error al cerrar la caja'),
+    onError: (err) => {
+      const data = err?.response?.data;
+      if (data?.codigo === 'DIFERENCIA_FUERA_TOLERANCIA') {
+        setEstado('esperando_confirmacion');
+        return;
+      }
+      if (err?.response?.status === 400 && estado !== 'justificando') {
+        // Directo fuera de tolerancia (o segundo intento ciego): pide motivo.
+        setEstado('justificando');
+        return;
+      }
+      setError(data?.mensaje ?? 'Error al cerrar la caja');
+    },
   });
 
   const apertura       = parseFloat(sesion.monto_apertura);
@@ -622,27 +648,105 @@ function ModalCerrarCaja({ sesion, onClose, onExito }) {
   const esperado       = apertura + ventasEfectivo - gastos;
   const diferencia     = totalFisico - esperado;
 
+  if (estado === 'esperando_confirmacion') {
+    return (
+      <Modal titulo="Cerrar Caja — Arqueo" onClose={onClose} ancho="max-w-md">
+        <div className="space-y-5">
+          <div className="flex flex-col items-center gap-3 text-center py-2">
+            <AlertCircle className="w-10 h-10 text-amber-500" />
+            <p className="font-semibold text-foreground">Hay una diferencia con lo esperado</p>
+            <p className="text-sm text-muted-foreground">
+              ¿Querés volver a contar el efectivo antes de cerrar?
+            </p>
+          </div>
+          <div className="flex justify-end gap-3">
+            <button
+              onClick={() => { setIntentoFallido(true); setEstado('justificando'); }}
+              className="px-4 py-2 rounded-xl text-sm text-muted-foreground hover:text-foreground hover:bg-accent transition-colors"
+            >
+              Cerrar igual
+            </button>
+            <button
+              onClick={() => { setIntentoFallido(true); limpiarConteo(); setEstado('contando'); }}
+              className="px-5 py-2 rounded-xl text-sm bg-primary hover:bg-primary/90 text-primary-foreground font-semibold transition-colors"
+            >
+              Recontar
+            </button>
+          </div>
+        </div>
+      </Modal>
+    );
+  }
+
+  if (estado === 'justificando') {
+    return (
+      <Modal titulo="Cerrar Caja — Arqueo" onClose={onClose} ancho="max-w-md">
+        <div className="space-y-4">
+          <div className="flex items-center gap-2 px-3 py-2.5 bg-amber-50 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-800 rounded-xl text-sm text-amber-700 dark:text-amber-400">
+            <AlertCircle className="w-4 h-4 shrink-0" />
+            Hay una diferencia fuera del margen permitido. Indicá el motivo para poder cerrar.
+          </div>
+          <div>
+            <label className="block text-xs font-semibold text-muted-foreground uppercase tracking-wide mb-1.5">
+              ¿Por qué hay diferencia?
+            </label>
+            <textarea
+              autoFocus
+              value={notaDiferencia}
+              onChange={e => setNotaDiferencia(e.target.value)}
+              rows={3}
+              placeholder="Ej: Di vuelto de más a mesa 4"
+              className="w-full bg-background border border-input rounded-xl px-4 py-2.5 text-sm text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-ring transition resize-none"
+            />
+          </div>
+          {error && <p className="text-sm text-destructive">{error}</p>}
+          <div className="flex justify-end gap-3">
+            <button onClick={onClose} className="px-4 py-2 rounded-xl text-sm text-muted-foreground hover:text-foreground hover:bg-accent transition-colors">
+              Cancelar
+            </button>
+            <button
+              onClick={() => cerrar.mutate()}
+              disabled={cerrar.isPending || !notaDiferencia.trim()}
+              className="px-5 py-2 rounded-xl text-sm bg-destructive hover:bg-destructive/90 text-destructive-foreground font-semibold transition-colors disabled:opacity-60"
+            >
+              {cerrar.isPending ? 'Cerrando...' : 'Confirmar cierre'}
+            </button>
+          </div>
+        </div>
+      </Modal>
+    );
+  }
+
   return (
     <Modal titulo="Cerrar Caja — Arqueo" onClose={onClose} ancho="max-w-2xl">
       <div className="space-y-4">
 
-        <div className="grid grid-cols-1 xs:grid-cols-3 sm:grid-cols-3 gap-2">
-          <div className="bg-blue-50 dark:bg-blue-900/20 rounded-xl p-3 text-center">
-            <p className="text-xs text-blue-600 dark:text-blue-400 font-medium mb-1">Apertura</p>
-            <p className="text-base font-bold text-blue-700 dark:text-blue-300">Bs {apertura.toFixed(2)}</p>
+        {!esCiego && (
+          <div className="grid grid-cols-1 xs:grid-cols-3 sm:grid-cols-3 gap-2">
+            <div className="bg-blue-50 dark:bg-blue-900/20 rounded-xl p-3 text-center">
+              <p className="text-xs text-blue-600 dark:text-blue-400 font-medium mb-1">Apertura</p>
+              <p className="text-base font-bold text-blue-700 dark:text-blue-300">Bs {apertura.toFixed(2)}</p>
+            </div>
+            <div className="bg-green-50 dark:bg-green-900/20 rounded-xl p-3 text-center">
+              <p className="text-xs text-green-600 dark:text-green-400 font-medium mb-1">Ventas total</p>
+              <p className="text-base font-bold text-green-700 dark:text-green-300">Bs {ventasTotal.toFixed(2)}</p>
+              {ventasQR > 0 && (
+                <p className="text-xs text-purple-500 dark:text-purple-400 mt-0.5">QR: Bs {ventasQR.toFixed(2)}</p>
+              )}
+            </div>
+            <div className="bg-red-50 dark:bg-red-900/20 rounded-xl p-3 text-center">
+              <p className="text-xs text-red-600 dark:text-red-400 font-medium mb-1">Gastos</p>
+              <p className="text-base font-bold text-red-700 dark:text-red-300">Bs {gastos.toFixed(2)}</p>
+            </div>
           </div>
-          <div className="bg-green-50 dark:bg-green-900/20 rounded-xl p-3 text-center">
-            <p className="text-xs text-green-600 dark:text-green-400 font-medium mb-1">Ventas total</p>
-            <p className="text-base font-bold text-green-700 dark:text-green-300">Bs {ventasTotal.toFixed(2)}</p>
-            {ventasQR > 0 && (
-              <p className="text-xs text-purple-500 dark:text-purple-400 mt-0.5">QR: Bs {ventasQR.toFixed(2)}</p>
-            )}
+        )}
+
+        {esCiego && (
+          <div className="flex items-center gap-2 px-3 py-2.5 bg-muted rounded-xl text-sm text-muted-foreground">
+            <AlertCircle className="w-4 h-4 shrink-0" />
+            Cierre ciego: contá el efectivo sin ver el monto esperado por el sistema.
           </div>
-          <div className="bg-red-50 dark:bg-red-900/20 rounded-xl p-3 text-center">
-            <p className="text-xs text-red-600 dark:text-red-400 font-medium mb-1">Gastos</p>
-            <p className="text-base font-bold text-red-700 dark:text-red-300">Bs {gastos.toFixed(2)}</p>
-          </div>
-        </div>
+        )}
 
         <div>
           <div className="flex items-center justify-between mb-3">
@@ -717,30 +821,34 @@ function ModalCerrarCaja({ sesion, onClose, onExito }) {
         </div>
 
         <div className="border-t border-border pt-4 space-y-2">
-          {ventasQR > 0 && (
-            <div className="flex justify-between text-sm text-purple-600 dark:text-purple-400">
-              <span>Ventas cobradas por QR (no en caja)</span>
-              <span className="font-semibold">Bs {ventasQR.toFixed(2)}</span>
-            </div>
-          )}
-          <div className="flex justify-between text-sm text-muted-foreground">
-            <span>Efectivo esperado en caja</span>
-            <span className="font-semibold">Bs {esperado.toFixed(2)}</span>
-          </div>
           <div className="flex justify-between text-sm text-muted-foreground">
             <span>Efectivo contado</span>
             <span className="font-semibold">Bs {totalFisico.toFixed(2)}</span>
           </div>
-          <div className={`flex justify-between font-bold text-base rounded-xl px-3 py-2 ${
-            Math.abs(diferencia) < 0.01
-              ? 'bg-green-50 dark:bg-green-900/20 text-green-700 dark:text-green-400'
-              : diferencia > 0
-              ? 'bg-blue-50 dark:bg-blue-900/20 text-blue-700 dark:text-blue-400'
-              : 'bg-red-50 dark:bg-red-900/20 text-red-700 dark:text-red-400'
-          }`}>
-            <span>Diferencia</span>
-            <span>{diferencia >= 0 ? '+' : ''}Bs {diferencia.toFixed(2)}</span>
-          </div>
+          {!esCiego && (
+            <>
+              {ventasQR > 0 && (
+                <div className="flex justify-between text-sm text-purple-600 dark:text-purple-400">
+                  <span>Ventas cobradas por QR (no en caja)</span>
+                  <span className="font-semibold">Bs {ventasQR.toFixed(2)}</span>
+                </div>
+              )}
+              <div className="flex justify-between text-sm text-muted-foreground">
+                <span>Efectivo esperado en caja</span>
+                <span className="font-semibold">Bs {esperado.toFixed(2)}</span>
+              </div>
+              <div className={`flex justify-between font-bold text-base rounded-xl px-3 py-2 ${
+                Math.abs(diferencia) < 0.01
+                  ? 'bg-green-50 dark:bg-green-900/20 text-green-700 dark:text-green-400'
+                  : diferencia > 0
+                  ? 'bg-blue-50 dark:bg-blue-900/20 text-blue-700 dark:text-blue-400'
+                  : 'bg-red-50 dark:bg-red-900/20 text-red-700 dark:text-red-400'
+              }`}>
+                <span>Diferencia</span>
+                <span>{diferencia >= 0 ? '+' : ''}Bs {diferencia.toFixed(2)}</span>
+              </div>
+            </>
+          )}
         </div>
 
         {totalFisico === 0 && (
@@ -828,6 +936,7 @@ function ModalGasto({ sesionId, onClose, onExito }) {
 
 function ModalReporte({ reporte, config = {}, onClose }) {
   const { sesion, ventas_por_metodo = [], pedidos = [], efectivo_esperado } = reporte;
+  const tolerancia = parseFloat(sesion.sucursal?.tolerancia_cierre_caja ?? 0);
 
   const [reimprimiendoId, setReimprimiendoId] = useState(null);
   const [errorReimprimirId, setErrorReimprimirId] = useState(null);
@@ -922,10 +1031,16 @@ function ModalReporte({ reporte, config = {}, onClose }) {
               <span className={`font-medium ${color}`}>{val}</span>
             </div>
           ))}
-          <div className={`flex justify-between font-bold text-base border-t border-border pt-2 ${diferenciaColor(diferencia)}`}>
+          <div className={`flex justify-between font-bold text-base border-t border-border pt-2 ${diferenciaColor(diferencia, tolerancia)}`}>
             <span>Diferencia</span>
             <span>{diferencia >= 0 ? '+' : ''}Bs {diferencia.toFixed(2)}</span>
           </div>
+          {sesion.nota_diferencia && (
+            <div className="flex justify-between text-sm text-foreground pt-1">
+              <span className="text-muted-foreground">Motivo</span>
+              <span className="font-medium text-right max-w-[60%]">{sesion.nota_diferencia}</span>
+            </div>
+          )}
         </div>
 
         {pedidos.length > 0 && (
