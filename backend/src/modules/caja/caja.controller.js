@@ -53,9 +53,14 @@ async function listarGastos(req, res, next) {
 
 async function cerrar(req, res, next) {
   try {
-    const { denominaciones = [], monto_cierre } = req.body;
-    res.json({ ok: true, datos: await svc.cerrar(req.params.id, req.usuario.id, { denominaciones, monto_cierre }, _alcance(req)) });
-  } catch (err) { next(err); }
+    const { denominaciones = [], monto_cierre, confirmar_pese_a_diferencia, nota_diferencia } = req.body;
+    res.json({ ok: true, datos: await svc.cerrar(req.params.id, req.usuario.id, { denominaciones, monto_cierre, confirmar_pese_a_diferencia, nota_diferencia }, _alcance(req)) });
+  } catch (err) {
+    if (err.status === 409 && err.codigo === 'DIFERENCIA_FUERA_TOLERANCIA') {
+      return res.status(409).json({ ok: false, codigo: err.codigo, requiere_confirmacion: true, mensaje: err.message });
+    }
+    next(err);
+  }
 }
 
 async function reporte(req, res, next) {

@@ -1,4 +1,4 @@
-const { SesionCaja, DetalleArqueo, Gasto, LibroCaja, Usuario, Pedido, Mesa, Caja, sequelize } = require('../../models');
+const { SesionCaja, DetalleArqueo, Gasto, LibroCaja, Usuario, Pedido, Mesa, Caja, Sucursal, sequelize } = require('../../models');
 
 async function listarConEstado(sucursal_id) {
   const cajas = await Caja.findAll({
@@ -7,7 +7,10 @@ async function listarConEstado(sucursal_id) {
   });
   const sesiones = await SesionCaja.findAll({
     where: { caja_id: cajas.map(c => c.id), estado: 'abierta' },
-    include: [{ model: Usuario, as: 'usuario', attributes: ['id', 'nombre'] }],
+    include: [
+      { model: Usuario, as: 'usuario', attributes: ['id', 'nombre'] },
+      { model: Sucursal, as: 'sucursal', attributes: ['id', 'nombre', 'modo_cierre_caja', 'tolerancia_cierre_caja'] },
+    ],
   });
   return cajas.map(c => {
     const sesion = sesiones.find(s => s.caja_id === c.id) ?? null;
@@ -35,6 +38,7 @@ async function obtener(id, alcance) {
   const s = await SesionCaja.findByPk(id, {
     include: [
       { model: Usuario, as: 'usuario', attributes: ['id', 'nombre'] },
+      { model: Sucursal, as: 'sucursal', attributes: ['id', 'nombre', 'modo_cierre_caja', 'tolerancia_cierre_caja'] },
       { model: DetalleArqueo, as: 'detalle_arqueo' },
       { model: Gasto, as: 'gastos' },
     ],
@@ -98,7 +102,7 @@ async function listarGastos(sesion_id, alcance) {
   });
 }
 
-async function cerrar(sesion_id, usuario_id, { denominaciones = [], monto_cierre } = {}, alcance) {
+async function cerrar(sesion_id, usuario_id, { denominaciones = [], monto_cierre, confirmar_pese_a_diferencia = false, nota_diferencia } = {}, alcance) {
   const sesion = await SesionCaja.findByPk(sesion_id);
   if (!sesion) throw Object.assign(new Error('Sesión no encontrada'), { status: 404 });
   _verificarAlcance(sesion, alcance);
@@ -117,6 +121,32 @@ async function cerrar(sesion_id, usuario_id, { denominaciones = [], monto_cierre
     throw Object.assign(new Error('Debes indicar el conteo de efectivo o el monto total para cerrar la caja'), { status: 400 });
   }
 
+  const sucursal = await Sucursal.findByPk(sesion.sucursal_id);
+
+  const ventasEfectivo = await LibroCaja.sum('monto', {
+    where: { sesion_caja_id: sesion_id, tipo: 'ingreso', metodo_pago: 'efectivo' },
+  }) || 0;
+
+  const efectivo_esperado = parseFloat(sesion.monto_apertura) + ventasEfectivo - parseFloat(sesion.total_gastos);
+  const diferencia = total_fisico - efectivo_esperado;
+  const tolerancia = parseFloat(sucursal.tolerancia_cierre_caja);
+  const fueraDeTolerancia = Math.abs(diferencia) > tolerancia;
+
+  if (fueraDeTolerancia) {
+    if (sucursal.modo_cierre_caja === 'ciego' && !confirmar_pese_a_diferencia) {
+      // Primer intento en modo ciego: no se revela nada ni se persiste el
+      // conteo — el cajero decide entre recontar o cerrar igual sin saber el
+      // monto, que es todo el sentido del arqueo ciego.
+      throw Object.assign(new Error('Hay una diferencia con lo esperado'), {
+        status: 409,
+        codigo: 'DIFERENCIA_FUERA_TOLERANCIA',
+      });
+    }
+    if (!nota_diferencia || !nota_diferencia.trim()) {
+      throw Object.assign(new Error('Debes indicar el motivo de la diferencia para cerrar la caja'), { status: 400 });
+    }
+  }
+
   if (denominaciones.length > 0) {
     await DetalleArqueo.destroy({ where: { sesion_caja_id: sesion_id } });
     await DetalleArqueo.bulkCreate(
@@ -129,16 +159,10 @@ async function cerrar(sesion_id, usuario_id, { denominaciones = [], monto_cierre
     );
   }
 
-  const ventasEfectivo = await LibroCaja.sum('monto', {
-    where: { sesion_caja_id: sesion_id, tipo: 'ingreso', metodo_pago: 'efectivo' },
-  }) || 0;
-
-  const efectivo_esperado = parseFloat(sesion.monto_apertura) + ventasEfectivo - parseFloat(sesion.total_gastos);
-  const diferencia = total_fisico - efectivo_esperado;
-
   await sesion.update({
     monto_cierre: total_fisico,
     diferencia,
+    nota_diferencia: fueraDeTolerancia ? nota_diferencia.trim() : null,
     estado: 'cerrada',
     cerrado_en: new Date(),
   });
