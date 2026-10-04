@@ -76,6 +76,39 @@ describe('Sucursales API', () => {
     await request(app).delete(`/api/v1/sucursales/${crear.body.datos.id}`).set('Authorization', `Bearer ${adminToken}`);
   });
 
+  it('crea con modo_cierre_caja y tolerancia_cierre_caja, y los puede editar después', async () => {
+    const crear = await request(app)
+      .post('/api/v1/sucursales')
+      .set('Authorization', `Bearer ${adminToken}`)
+      .send({ nombre: 'Sucursal Modo Cierre Test', modo_cierre_caja: 'ciego', tolerancia_cierre_caja: 25 });
+    expect(crear.status).toBe(201);
+    expect(crear.body.datos.modo_cierre_caja).toBe('ciego');
+    expect(parseFloat(crear.body.datos.tolerancia_cierre_caja)).toBe(25);
+    const id = crear.body.datos.id;
+
+    const editar = await request(app)
+      .put(`/api/v1/sucursales/${id}`)
+      .set('Authorization', `Bearer ${adminToken}`)
+      .send({ modo_cierre_caja: 'directo', tolerancia_cierre_caja: 15 });
+    expect(editar.status).toBe(200);
+    expect(editar.body.datos.modo_cierre_caja).toBe('directo');
+    expect(parseFloat(editar.body.datos.tolerancia_cierre_caja)).toBe(15);
+
+    await request(app).delete(`/api/v1/sucursales/${id}`).set('Authorization', `Bearer ${adminToken}`);
+  });
+
+  it('crea una sucursal sin especificar modo/tolerancia y usa los defaults', async () => {
+    const crear = await request(app)
+      .post('/api/v1/sucursales')
+      .set('Authorization', `Bearer ${adminToken}`)
+      .send({ nombre: 'Sucursal Defaults Cierre Test' });
+    expect(crear.status).toBe(201);
+    expect(crear.body.datos.modo_cierre_caja).toBe('directo');
+    expect(parseFloat(crear.body.datos.tolerancia_cierre_caja)).toBe(10);
+
+    await request(app).delete(`/api/v1/sucursales/${crear.body.datos.id}`).set('Authorization', `Bearer ${adminToken}`);
+  });
+
   it('rechaza crear sin nombre', async () => {
     const res = await request(app)
       .post('/api/v1/sucursales')
