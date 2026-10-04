@@ -625,7 +625,7 @@ describe('Reportes — Arqueos de caja', () => {
   // en vez de mutar el fixture compartido (que otros archivos de test
   // también usan en paralelo).
   const timestamp = Date.now();
-  let adminToken, sucursalArqueos, cajaArqueos, usuarioAdminId, usuarioArqueos, sesionDentro, sesionFuera;
+  let adminToken, sucursalArqueos, cajaArqueos, usuarioAdminId, usuarioArqueos, sesionDentro, sesionFuera, sesionVieja;
 
   beforeAll(async () => {
     sucursalArqueos = await Sucursal.create({ nombre: `Sucursal Arqueos Test ${timestamp}`, tolerancia_cierre_caja: 5 });
@@ -657,6 +657,14 @@ describe('Reportes — Arqueos de caja', () => {
       monto_apertura: 100, monto_cierre: 150, diferencia: 50, nota_diferencia: 'Diferencia de prueba',
       estado: 'cerrada', cerrado_en: new Date(),
     });
+    // Sesión cerrada hace 10 días — usada para probar que el filtro desde/hasta
+    // de /reportes/arqueos filtra por `cerrado_en` (no por `creado_en`, columna
+    // que SesionCaja ni siquiera tiene) sin romper la consulta en la BD.
+    sesionVieja = await SesionCaja.create({
+      usuario_id: usuarioArqueos.id, sucursal_id: sucursalArqueos.id, caja_id: cajaArqueos.id,
+      monto_apertura: 100, monto_cierre: 100, diferencia: 0, estado: 'cerrada',
+      cerrado_en: new Date(Date.now() - 10 * 24 * 60 * 60 * 1000),
+    });
 
     const loginAdmin = await request(app)
       .post('/api/v1/auth/login')
@@ -669,7 +677,7 @@ describe('Reportes — Arqueos de caja', () => {
   });
 
   afterAll(async () => {
-    await SesionCaja.destroy({ where: { id: [sesionDentro.id, sesionFuera.id] } });
+    await SesionCaja.destroy({ where: { id: [sesionDentro.id, sesionFuera.id, sesionVieja.id] } });
     await Usuario.destroy({ where: { id: [usuarioArqueos.id, usuarioAdminId] } });
     await Caja.destroy({ where: { id: cajaArqueos.id } });
     await Sucursal.destroy({ where: { id: sucursalArqueos.id } });
@@ -691,6 +699,28 @@ describe('Reportes — Arqueos de caja', () => {
     expect(fuera.fuera_de_tolerancia).toBe(true);
     const dentro = res.body.datos.filas.find(f => f.id === sesionDentro.id);
     expect(dentro.fuera_de_tolerancia).toBe(false);
+  });
+
+  it('GET /reportes/arqueos con desde/hasta filtra por cerrado_en sin romper la consulta', async () => {
+    const hoy = new Date().toISOString().slice(0, 10);
+
+    // Filtrando desde "hoy" excluye la sesión cerrada hace 10 días pero incluye
+    // las cerradas en este mismo test run.
+    const resDesdeHoy = await request(app)
+      .get('/api/v1/reportes/arqueos')
+      .query({ sucursal_id: sucursalArqueos.id, desde: hoy, limite: 0 })
+      .set('Authorization', `Bearer ${adminToken}`);
+    expect(resDesdeHoy.status).toBe(200);
+    expect(resDesdeHoy.body.datos.filas.some(f => f.id === sesionVieja.id)).toBe(false);
+    expect(resDesdeHoy.body.datos.filas.some(f => f.id === sesionFuera.id)).toBe(true);
+
+    // Sin filtro de fecha, la sesión vieja sí aparece.
+    const resSinFiltro = await request(app)
+      .get('/api/v1/reportes/arqueos')
+      .query({ sucursal_id: sucursalArqueos.id, limite: 0 })
+      .set('Authorization', `Bearer ${adminToken}`);
+    expect(resSinFiltro.status).toBe(200);
+    expect(resSinFiltro.body.datos.filas.some(f => f.id === sesionVieja.id)).toBe(true);
   });
 
   it('GET /reportes/arqueos/resumen calcula cantidad_fuera_tolerancia y el cajero con más incidencias', async () => {

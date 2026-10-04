@@ -435,9 +435,22 @@ async function cajaResumen(filtros = {}, alcance) {
   return { total_ingresos: parseFloat(totalIngresos || 0), total_egresos: parseFloat(totalEgresos || 0), filtros: filtrosResp };
 }
 
+// SesionCaja tiene `timestamps: false` y no tiene columna `creado_en` (solo
+// `abierto_en`/`cerrado_en`) — filtroFecha() asume `creado_en` y rompería la
+// consulta en la BD. Un arqueo "ocurre" cuando la sesión se cierra, no cuando
+// se abrió, así que se filtra por `cerrado_en` (el mismo campo por el que ya
+// ordena arqueos()), con el mismo offset fijo de Bolivia que usa filtroFecha.
+function _filtroFechaCierre(desde, hasta) {
+  if (!desde && !hasta) return {};
+  const range = {};
+  if (desde) range[Op.gte] = new Date(`${desde}T00:00:00-04:00`);
+  if (hasta) range[Op.lte] = new Date(`${hasta}T23:59:59-04:00`);
+  return { cerrado_en: range };
+}
+
 function _whereArqueos(filtros, alcance) {
   const { desde, hasta, usuario_id } = filtros;
-  const where = { estado: 'cerrada', ...filtroFecha(desde, hasta) };
+  const where = { estado: 'cerrada', ..._filtroFechaCierre(desde, hasta) };
   if (!alcance.acceso_todas) where.sucursal_id = alcance.sucursal_id;
   else if (filtros.sucursal_id) where.sucursal_id = filtros.sucursal_id;
   if (usuario_id) where.usuario_id = usuario_id;
