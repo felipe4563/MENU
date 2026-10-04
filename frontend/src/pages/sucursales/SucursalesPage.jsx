@@ -239,6 +239,8 @@ function ModalSucursal({ sucursal, onClose, onExito }) {
   const [latitud, setLatitud]     = useState(sucursal?.latitud ?? '');
   const [longitud, setLongitud]   = useState(sucursal?.longitud ?? '');
   const [radioGeocerca, setRadioGeocerca] = useState(sucursal?.radio_geocerca_metros ?? 150);
+  const [modoCierre, setModoCierre] = useState(sucursal?.modo_cierre_caja ?? 'directo');
+  const [toleranciaCierre, setToleranciaCierre] = useState(sucursal?.tolerancia_cierre_caja ?? 10);
   const [activo, setActivo]       = useState(sucursal?.activo ?? 1);
   const [error, setError]         = useState(null);
   const [buscandoUbicacion, setBuscandoUbicacion] = useState(false);
@@ -271,6 +273,8 @@ function ModalSucursal({ sucursal, onClose, onExito }) {
         latitud: latitud === '' ? null : parseFloat(latitud),
         longitud: longitud === '' ? null : parseFloat(longitud),
         radio_geocerca_metros: radioGeocerca === '' ? 150 : parseInt(radioGeocerca, 10),
+        modo_cierre_caja: modoCierre,
+        tolerancia_cierre_caja: toleranciaCierre === '' ? 10 : parseFloat(toleranciaCierre),
         activo,
       };
       return esNuevo ? crearSucursal(datos) : actualizarSucursal(sucursal.id, datos);
@@ -366,6 +370,50 @@ function ModalSucursal({ sucursal, onClose, onExito }) {
           <p className="text-xs text-muted-foreground mt-1.5">
             Distancia máxima a la ubicación de arriba para que el control de personal acepte una marcación
             de entrada/salida como "dentro de rango". Por defecto 150m.
+          </p>
+        </div>
+        <div>
+          <label className="block text-xs font-semibold text-muted-foreground uppercase tracking-wide mb-1.5">
+            Modo de cierre de caja
+          </label>
+          <div className="flex bg-muted rounded-lg p-0.5 w-fit">
+            <button
+              type="button"
+              onClick={() => setModoCierre('directo')}
+              className={`px-3 py-1.5 rounded-md text-xs font-medium transition-colors ${
+                modoCierre === 'directo' ? 'bg-card text-foreground shadow-sm' : 'text-muted-foreground'
+              }`}
+            >
+              Directo
+            </button>
+            <button
+              type="button"
+              onClick={() => setModoCierre('ciego')}
+              className={`px-3 py-1.5 rounded-md text-xs font-medium transition-colors ${
+                modoCierre === 'ciego' ? 'bg-card text-foreground shadow-sm' : 'text-muted-foreground'
+              }`}
+            >
+              Ciego
+            </button>
+          </div>
+          <p className="text-xs text-muted-foreground mt-1.5">
+            Directo: el cajero ve el efectivo esperado mientras cuenta. Ciego: no lo ve hasta después de cerrar.
+          </p>
+        </div>
+        <div>
+          <label className="block text-xs font-semibold text-muted-foreground uppercase tracking-wide mb-1.5">
+            Tolerancia de cierre (Bs)
+          </label>
+          <input
+            type="number"
+            min="0"
+            step="0.5"
+            value={toleranciaCierre}
+            onChange={e => setToleranciaCierre(e.target.value)}
+            className="w-full bg-background border border-input rounded-xl px-4 py-2.5 text-sm text-foreground focus:outline-none focus:ring-2 focus:ring-ring transition"
+          />
+          <p className="text-xs text-muted-foreground mt-1.5">
+            Diferencia máxima entre lo contado y lo esperado que se considera cuadrado. Por defecto Bs 10.
           </p>
         </div>
         {!esNuevo && (
