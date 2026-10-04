@@ -612,3 +612,94 @@ describe('GET /api/v1/reportes/caja — paginación, resumen y filtro tipo', () 
     expect(res.body.datos.total_ingresos).toBeGreaterThanOrEqual(30);
   });
 });
+
+describe('Reportes — Arqueos de caja', () => {
+  // NOTA sobre el fixture admin@restaurante.com: ese usuario está asignado a
+  // UNA sola sucursal (acceso_todas_sucursales = 0), así que un login directo
+  // con él nunca produce un token con acceso_todas — _whereArqueos() ignora
+  // entonces el `sucursal_id` de la query y fuerza su propia sucursal. Para
+  // poder aislar este test en una sucursal nueva (y no depender de datos
+  // preexistentes de "Sucursal Principal"), se crea aquí un admin dedicado
+  // con acceso_todas_sucursales = 1 y se hace el login en dos pasos — el
+  // mismo patrón que ya usa el describe 'alcance por sucursal' más arriba —
+  // en vez de mutar el fixture compartido (que otros archivos de test
+  // también usan en paralelo).
+  const timestamp = Date.now();
+  let adminToken, sucursalArqueos, cajaArqueos, usuarioAdminId, usuarioArqueos, sesionDentro, sesionFuera;
+
+  beforeAll(async () => {
+    sucursalArqueos = await Sucursal.create({ nombre: `Sucursal Arqueos Test ${timestamp}`, tolerancia_cierre_caja: 5 });
+    cajaArqueos = await Caja.create({ sucursal_id: sucursalArqueos.id, nombre: 'Caja Arqueos Test' });
+
+    const rolAdmin = await Rol.findOne({ where: { nombre: 'Administrador' } });
+    const rolCajero = await Rol.findOne({ where: { nombre: 'Cajero' } });
+    const hash = await bcrypt.hash('clave123', 10);
+
+    const usuarioAdmin = await Usuario.create({
+      rol_id: rolAdmin.id, nombre: `Reportes Arqueos Admin ${timestamp}`,
+      email: `reportes-arqueos-admin-${timestamp}@restaurante.com`, contrasena: hash,
+      acceso_todas_sucursales: 1,
+    });
+    usuarioAdminId = usuarioAdmin.id;
+
+    usuarioArqueos = await Usuario.create({
+      rol_id: rolCajero.id, nombre: 'Cajero Arqueos Test', email: `cajero-arqueos-test-${timestamp}@restaurante.com`,
+      contrasena: await bcrypt.hash('clave123', 10),
+    });
+    await usuarioArqueos.addSucursal(sucursalArqueos);
+
+    sesionDentro = await SesionCaja.create({
+      usuario_id: usuarioArqueos.id, sucursal_id: sucursalArqueos.id, caja_id: cajaArqueos.id,
+      monto_apertura: 100, monto_cierre: 102, diferencia: 2, estado: 'cerrada', cerrado_en: new Date(),
+    });
+    sesionFuera = await SesionCaja.create({
+      usuario_id: usuarioArqueos.id, sucursal_id: sucursalArqueos.id, caja_id: cajaArqueos.id,
+      monto_apertura: 100, monto_cierre: 150, diferencia: 50, nota_diferencia: 'Diferencia de prueba',
+      estado: 'cerrada', cerrado_en: new Date(),
+    });
+
+    const loginAdmin = await request(app)
+      .post('/api/v1/auth/login')
+      .send({ email: `reportes-arqueos-admin-${timestamp}@restaurante.com`, contrasena: 'clave123' });
+    const sucursalTodas = loginAdmin.body.datos.sucursales.find(s => s.id === null);
+    const loginAdminSucursal = await request(app)
+      .post('/api/v1/auth/login/sucursal')
+      .send({ pre_token: loginAdmin.body.datos.pre_token, sucursal_id: sucursalTodas.id });
+    adminToken = loginAdminSucursal.body.datos.token;
+  });
+
+  afterAll(async () => {
+    await SesionCaja.destroy({ where: { id: [sesionDentro.id, sesionFuera.id] } });
+    await Usuario.destroy({ where: { id: [usuarioArqueos.id, usuarioAdminId] } });
+    await Caja.destroy({ where: { id: cajaArqueos.id } });
+    await Sucursal.destroy({ where: { id: sucursalArqueos.id } });
+  });
+
+  it('GET /reportes/arqueos requiere token', async () => {
+    const res = await request(app).get('/api/v1/reportes/arqueos');
+    expect(res.status).toBe(401);
+  });
+
+  it('GET /reportes/arqueos lista las sesiones cerradas con su sucursal y nota', async () => {
+    const res = await request(app)
+      .get('/api/v1/reportes/arqueos')
+      .query({ sucursal_id: sucursalArqueos.id, limite: 0 })
+      .set('Authorization', `Bearer ${adminToken}`);
+    expect(res.status).toBe(200);
+    const fuera = res.body.datos.filas.find(f => f.id === sesionFuera.id);
+    expect(fuera.nota_diferencia).toBe('Diferencia de prueba');
+    expect(fuera.fuera_de_tolerancia).toBe(true);
+    const dentro = res.body.datos.filas.find(f => f.id === sesionDentro.id);
+    expect(dentro.fuera_de_tolerancia).toBe(false);
+  });
+
+  it('GET /reportes/arqueos/resumen calcula cantidad_fuera_tolerancia y el cajero con más incidencias', async () => {
+    const res = await request(app)
+      .get('/api/v1/reportes/arqueos/resumen')
+      .query({ sucursal_id: sucursalArqueos.id })
+      .set('Authorization', `Bearer ${adminToken}`);
+    expect(res.status).toBe(200);
+    expect(res.body.datos.cantidad_fuera_tolerancia).toBeGreaterThanOrEqual(1);
+    expect(res.body.datos.cajero_top_diferencias.id).toBe(usuarioArqueos.id);
+  });
+});

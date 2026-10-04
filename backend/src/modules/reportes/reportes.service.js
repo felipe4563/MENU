@@ -435,9 +435,104 @@ async function cajaResumen(filtros = {}, alcance) {
   return { total_ingresos: parseFloat(totalIngresos || 0), total_egresos: parseFloat(totalEgresos || 0), filtros: filtrosResp };
 }
 
+function _whereArqueos(filtros, alcance) {
+  const { desde, hasta, usuario_id } = filtros;
+  const where = { estado: 'cerrada', ...filtroFecha(desde, hasta) };
+  if (!alcance.acceso_todas) where.sucursal_id = alcance.sucursal_id;
+  else if (filtros.sucursal_id) where.sucursal_id = filtros.sucursal_id;
+  if (usuario_id) where.usuario_id = usuario_id;
+  return where;
+}
+
+function _fueraDeTolerancia(sesion) {
+  const tolerancia = parseFloat(sesion.sucursal?.tolerancia_cierre_caja ?? 0);
+  return Math.abs(parseFloat(sesion.diferencia ?? 0)) > tolerancia;
+}
+
+async function arqueos(filtros = {}, alcance) {
+  const where = _whereArqueos(filtros, alcance);
+  const { pagina, limite } = _paginaLimite(filtros);
+
+  const { rows, count } = await SesionCaja.findAndCountAll({
+    where,
+    include: [
+      { model: Usuario, as: 'usuario', attributes: ['id', 'nombre'] },
+      { model: Sucursal, as: 'sucursal', attributes: ['id', 'nombre', 'tolerancia_cierre_caja'] },
+    ],
+    order: [['cerrado_en', 'DESC']],
+    distinct: true,
+    ...(limite ? { limit: limite, offset: (pagina - 1) * limite } : {}),
+  });
+
+  const filas = rows.map((s) => {
+    const plano = s.toJSON();
+    plano.fuera_de_tolerancia = _fueraDeTolerancia(plano);
+    return plano;
+  });
+
+  return { filas, pagina, limite, total: count, total_paginas: limite ? Math.ceil(count / limite) : 1 };
+}
+
+async function arqueosResumen(filtros = {}, alcance) {
+  const where = _whereArqueos(filtros, alcance);
+
+  const sesiones = await SesionCaja.findAll({
+    where,
+    include: [
+      { model: Usuario, as: 'usuario', attributes: ['id', 'nombre'] },
+      { model: Sucursal, as: 'sucursal', attributes: ['id', 'nombre', 'tolerancia_cierre_caja'] },
+    ],
+  });
+
+  const porCajero = new Map();
+  let cantidadFuera = 0;
+  sesiones.forEach((s) => {
+    const plano = s.toJSON();
+    if (!_fueraDeTolerancia(plano)) return;
+    cantidadFuera += 1;
+    const id = plano.usuario?.id;
+    if (id == null) return;
+    const entrada = porCajero.get(id) || { id, nombre: plano.usuario.nombre, cantidad: 0 };
+    entrada.cantidad += 1;
+    porCajero.set(id, entrada);
+  });
+
+  let cajeroTop = null;
+  for (const entrada of porCajero.values()) {
+    if (!cajeroTop || entrada.cantidad > cajeroTop.cantidad) cajeroTop = entrada;
+  }
+
+  const cajerosRaw = await SesionCaja.findAll({
+    where,
+    include: [{ model: Usuario, as: 'usuario', attributes: ['id', 'nombre'] }],
+    attributes: [],
+    group: ['usuario.id', 'usuario.nombre'],
+    raw: true,
+  });
+  const cajeros = cajerosRaw
+    .map((f) => ({ id: f['usuario.id'], nombre: f['usuario.nombre'] }))
+    .filter((c) => c.id != null);
+
+  const filtrosResp = { cajeros };
+  if (alcance.acceso_todas) {
+    const whereSucursales = { ...where };
+    delete whereSucursales.sucursal_id;
+    const sucursalesRaw = await SesionCaja.findAll({
+      where: whereSucursales, include: [INCLUDE_SUCURSAL], attributes: [],
+      group: ['sucursal.id', 'sucursal.nombre'], raw: true,
+    });
+    filtrosResp.sucursales = sucursalesRaw
+      .map((f) => ({ id: f['sucursal.id'], nombre: f['sucursal.nombre'] }))
+      .filter((s) => s.id != null);
+  }
+
+  return { cantidad_fuera_tolerancia: cantidadFuera, cajero_top_diferencias: cajeroTop, filtros: filtrosResp };
+}
+
 module.exports = {
   ventas, ventasResumen, ventasProductos, ventasVariantes,
   inventario, inventarioResumen,
   compras, comprasResumen,
   caja, cajaResumen,
+  arqueos, arqueosResumen,
 };
