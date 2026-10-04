@@ -10,3 +10,5 @@ export const getReporteCompras        = (params = {}) => api.get('/reportes/comp
 export const getReporteComprasResumen = (params = {}) => api.get('/reportes/compras/resumen',    { params }).then(r => r.data.datos);
 export const getReporteCaja           = (params = {}) => api.get('/reportes/caja',              { params }).then(r => r.data.datos);
 export const getReporteCajaResumen    = (params = {}) => api.get('/reportes/caja/resumen',       { params }).then(r => r.data.datos);
+export const getReporteArqueos        = (params = {}) => api.get('/reportes/arqueos',         { params }).then(r => r.data.datos);
+export const getReporteArqueosResumen = (params = {}) => api.get('/reportes/arqueos/resumen',  { params }).then(r => r.data.datos);
