@@ -94,13 +94,25 @@ export default function LoginPage() {
   const [email, setEmail]                       = useState('');
   const [contrasena, setContrasena]             = useState('');
   const [mostrarContrasena, setMostrarContrasena] = useState(false);
-  const [error, setError]                       = useState('');
+  const [error, setError]                       = useState(() =>
+    new URLSearchParams(window.location.search).get('motivo') === 'sesion_otro_dispositivo'
+      ? 'Tu sesión se cerró porque iniciaste sesión en otro dispositivo.'
+      : ''
+  );
   const [cargando, setCargando]                 = useState(false);
   const [paso, setPaso]                         = useState('credenciales'); // 'credenciales' | 'sucursal'
   const [preToken, setPreToken]                 = useState(null);
   const [sucursales, setSucursales]             = useState([]);
   const setAuth   = useAuthStore((s) => s.setAuth);
   const navigate  = useNavigate();
+
+  // Limpia el ?motivo= de la URL una vez leído, para que no reaparezca el
+  // aviso si el usuario simplemente refresca la página de login.
+  useEffect(() => {
+    if (window.location.search.includes('motivo=')) {
+      window.history.replaceState({}, '', window.location.pathname);
+    }
+  }, []);
 
   // Load display font for restaurant name
   useEffect(() => {

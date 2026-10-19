@@ -12,6 +12,7 @@ router.post('/', verificarPermiso('configuracion', 'editar'), requiereSucursalAc
 router.get('/:id', verificarPermiso('ventas', 'ver'), ctrl.obtenerMesa);
 router.put('/:id', verificarPermiso('configuracion', 'editar'), ctrl.actualizarMesa);
 router.delete('/:id', verificarPermiso('configuracion', 'editar'), ctrl.eliminarMesa);
+router.post('/:id/regenerar-qr', verificarPermiso('configuracion', 'editar'), ctrl.regenerarCodigoQr);
 router.post('/:id/sesion', verificarPermiso('ventas', 'crear'), requiereSucursalActiva, ctrl.abrirSesionMesa);
 router.delete('/:id/sesion', verificarPermiso('ventas', 'crear'), ctrl.cerrarSesionMesa);
 

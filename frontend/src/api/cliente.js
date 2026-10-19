@@ -30,9 +30,10 @@ api.interceptors.response.use(
         useAuthStore.getState().setToken(data.datos.token);
         config.headers.Authorization = `Bearer ${data.datos.token}`;
         return api(config);
-      } catch {
+      } catch (errorRefresh) {
         useAuthStore.getState().logout();
-        window.location.href = '/login';
+        const motivo = errorRefresh.response?.data?.codigo === 'SESION_REEMPLAZADA' ? '?motivo=sesion_otro_dispositivo' : '';
+        window.location.href = `/login${motivo}`;
       }
     }
     return Promise.reject(error);

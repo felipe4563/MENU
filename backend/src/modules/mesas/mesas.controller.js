@@ -54,6 +54,11 @@ async function eliminarMesa(req, res, next) {
   catch (err) { next(err); }
 }
 
+async function regenerarCodigoQr(req, res, next) {
+  try { res.json({ ok: true, datos: await svc.regenerarCodigoQr(req.params.id, _alcance(req)) }); }
+  catch (err) { next(err); }
+}
+
 async function abrirSesionMesa(req, res, next) {
   try {
     const mesa = await svc.obtenerMesa(req.params.id, _alcance(req));
@@ -72,6 +77,6 @@ async function cerrarSesionMesa(req, res, next) {
 
 module.exports = {
   listarAreas, crearArea, actualizarArea, eliminarArea,
-  listarMesas, obtenerMesa, crearMesa, actualizarMesa, eliminarMesa,
+  listarMesas, obtenerMesa, crearMesa, actualizarMesa, eliminarMesa, regenerarCodigoQr,
   abrirSesionMesa, cerrarSesionMesa,
 };

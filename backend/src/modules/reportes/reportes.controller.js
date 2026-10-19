@@ -52,10 +52,19 @@ async function getArqueosResumen(req, res, next) {
   try { res.json({ ok: true, datos: await svc.arqueosResumen(req.query, _alcance(req)) }); } catch (e) { next(e); }
 }
 
+async function getFinanzasResumen(req, res, next) {
+  try { res.json({ ok: true, datos: await svc.finanzasResumen(req.query, _alcance(req)) }); } catch (e) { next(e); }
+}
+
+async function getFinanzasSerie(req, res, next) {
+  try { res.json({ ok: true, datos: await svc.finanzasSerie(req.query, _alcance(req)) }); } catch (e) { next(e); }
+}
+
 module.exports = {
   getVentas, getVentasResumen, getVentasProductos, getVentasVariantes,
   getInventario, getInventarioResumen,
   getCompras, getComprasResumen,
   getCaja, getCajaResumen,
   getArqueos, getArqueosResumen,
+  getFinanzasResumen, getFinanzasSerie,
 };

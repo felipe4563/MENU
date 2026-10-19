@@ -33,6 +33,9 @@ async function refresh(req, res, next) {
     const datos = await authService.refresh(refresh_token);
     res.json({ ok: true, datos });
   } catch (err) {
+    if (err.status === 401 && err.codigo === 'SESION_REEMPLAZADA') {
+      return res.status(401).json({ ok: false, codigo: err.codigo, mensaje: err.message });
+    }
     next(err);
   }
 }

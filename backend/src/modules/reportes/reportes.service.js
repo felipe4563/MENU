@@ -542,10 +542,96 @@ async function arqueosResumen(filtros = {}, alcance) {
   return { cantidad_fuera_tolerancia: cantidadFuera, cajero_top_diferencias: cajeroTop, filtros: filtrosResp };
 }
 
+// Resultado neto del período: ingresos de ventas menos gastos operativos
+// (Libro Caja) menos costo de compras recibidas. Las compras recibidas ya
+// generan su propio registro de egreso en Libro Caja (compras.service.js),
+// así que acá se excluyen esos egresos (sesion_caja_id null) del lado de
+// "gastos operativos" para no contar el mismo gasto dos veces — compras se
+// suma aparte, con su propio total y su propio filtro de sucursal directo
+// (Compra.sucursal_id), que es más confiable que el de Libro Caja para
+// egresos sin sesión de caja asociada.
+function _wheresFinanzas(filtros, alcance) {
+  return {
+    whereVentas: _whereVentas(filtros, alcance),
+    whereGastos: { tipo: 'egreso', sesion_caja_id: { [Op.ne]: null }, ...filtroFecha(filtros.desde, filtros.hasta) },
+    whereCompras: _whereCompras({ ...filtros, estado: 'recibido' }, alcance),
+  };
+}
+
+async function finanzasResumen(filtros = {}, alcance) {
+  const { whereVentas, whereGastos, whereCompras } = _wheresFinanzas(filtros, alcance);
+
+  const [ingresos, gastosOperativos, comprasTotal] = await Promise.all([
+    Pedido.sum('total', { where: whereVentas }),
+    LibroCaja.sum('monto', { where: whereGastos, include: [_includeSesionCaja(filtros, alcance)] }),
+    Compra.sum('total', { where: whereCompras }),
+  ]);
+
+  const filtrosResp = {};
+  if (alcance.acceso_todas) {
+    const whereSucursales = { ...whereVentas };
+    delete whereSucursales.sucursal_id;
+    const sucursalesRaw = await Pedido.findAll({
+      where: whereSucursales, include: [INCLUDE_SUCURSAL], attributes: [],
+      group: ['sucursal.id', 'sucursal.nombre'], raw: true,
+    });
+    filtrosResp.sucursales = sucursalesRaw
+      .map((f) => ({ id: f['sucursal.id'], nombre: f['sucursal.nombre'] }))
+      .filter((s) => s.id != null);
+  }
+
+  const totalIngresos = parseFloat(ingresos || 0);
+  const totalGastos = parseFloat(gastosOperativos || 0);
+  const totalCompras = parseFloat(comprasTotal || 0);
+
+  return {
+    ingresos: totalIngresos,
+    gastos_operativos: totalGastos,
+    compras: totalCompras,
+    resultado_neto: totalIngresos - totalGastos - totalCompras,
+    filtros: filtrosResp,
+  };
+}
+
+// Fecha local (Bolivia, -04:00) en formato YYYY-MM-DD, para agrupar por día
+// con el mismo offset fijo que filtroFecha() usa para el rango de consulta.
+function _fechaLocalYMD(fecha) {
+  return new Date(new Date(fecha).getTime() - 4 * 60 * 60 * 1000).toISOString().slice(0, 10);
+}
+
+// Desglose día por día del mismo cálculo que finanzasResumen, para el
+// gráfico y el detalle del PDF — agrupado en JS (no con funciones de fecha
+// SQL) para no depender del dialecto de la base y para reusar exactamente
+// los mismos where de finanzasResumen sin duplicar su lógica de alcance.
+async function finanzasSerie(filtros = {}, alcance) {
+  const { whereVentas, whereGastos, whereCompras } = _wheresFinanzas(filtros, alcance);
+
+  const [pedidos, gastos, compras] = await Promise.all([
+    Pedido.findAll({ where: whereVentas, attributes: ['total', 'creado_en'], raw: true }),
+    LibroCaja.findAll({ where: whereGastos, include: [_includeSesionCaja(filtros, alcance)], attributes: ['monto', 'creado_en'], raw: true }),
+    Compra.findAll({ where: whereCompras, attributes: ['total', 'creado_en'], raw: true }),
+  ]);
+
+  const porDia = new Map();
+  const sumar = (campo, clave) => (registro) => {
+    const dia = _fechaLocalYMD(registro.creado_en);
+    if (!porDia.has(dia)) porDia.set(dia, { fecha: dia, ingresos: 0, gastos_operativos: 0, compras: 0 });
+    porDia.get(dia)[clave] += parseFloat(registro[campo] || 0);
+  };
+  pedidos.forEach(sumar('total', 'ingresos'));
+  gastos.forEach(sumar('monto', 'gastos_operativos'));
+  compras.forEach(sumar('total', 'compras'));
+
+  return Array.from(porDia.values())
+    .map((d) => ({ ...d, resultado_neto: d.ingresos - d.gastos_operativos - d.compras }))
+    .sort((a, b) => a.fecha.localeCompare(b.fecha));
+}
+
 module.exports = {
   ventas, ventasResumen, ventasProductos, ventasVariantes,
   inventario, inventarioResumen,
   compras, comprasResumen,
   caja, cajaResumen,
   arqueos, arqueosResumen,
+  finanzasResumen, finanzasSerie,
 };

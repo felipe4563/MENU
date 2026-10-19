@@ -18,5 +18,7 @@ router.get('/caja/resumen',   verificarPermiso('reportes', 'ver'), ctrl.getCajaR
 router.get('/caja',           verificarPermiso('reportes', 'ver'), ctrl.getCaja);
 router.get('/arqueos/resumen', verificarPermiso('reportes', 'ver'), ctrl.getArqueosResumen);
 router.get('/arqueos',         verificarPermiso('reportes', 'ver'), ctrl.getArqueos);
+router.get('/finanzas/resumen', verificarPermiso('reportes', 'ver'), ctrl.getFinanzasResumen);
+router.get('/finanzas/serie',   verificarPermiso('reportes', 'ver'), ctrl.getFinanzasSerie);
 
 module.exports = router;

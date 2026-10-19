@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
-import { BarChart2, FileText, Package, Truck, BookOpen, Trophy, ListTree, Landmark } from 'lucide-react';
+import { BarChart2, FileText, Package, Truck, BookOpen, Trophy, ListTree, Landmark, Wallet } from 'lucide-react';
 import { getConfiguracion, logoSrc } from '../../api/configuracion';
 import { usePermisos } from '../../hooks/usePermisos';
 import TabVentas     from './tabs/TabVentas';
@@ -10,6 +10,7 @@ import TabInventario from './tabs/TabInventario';
 import TabCompras    from './tabs/TabCompras';
 import TabCaja       from './tabs/TabCaja';
 import TabArqueos    from './tabs/TabArqueos';
+import TabFinanzas   from './tabs/TabFinanzas';
 
 const TABS = [
   { id: 'ventas',     label: 'Ventas',        Icono: FileText, Comp: TabVentas },
@@ -19,6 +20,7 @@ const TABS = [
   { id: 'compras',    label: 'Compras',       Icono: Truck,    Comp: TabCompras },
   { id: 'caja',       label: 'Caja',          Icono: BookOpen, Comp: TabCaja },
   { id: 'arqueos',    label: 'Arqueos',       Icono: Landmark, Comp: TabArqueos },
+  { id: 'finanzas',   label: 'Finanzas',      Icono: Wallet,   Comp: TabFinanzas },
 ];
 
 export default function ReportesPage() {

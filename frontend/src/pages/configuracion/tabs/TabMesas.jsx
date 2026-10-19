@@ -1,9 +1,9 @@
 import { useEffect, useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { Plus, Pencil, Trash2, Grid3x3, Users, RefreshCw, QrCode, Download, Smartphone } from 'lucide-react';
+import { Plus, Pencil, Trash2, Grid3x3, Users, RefreshCw, QrCode, Download, Smartphone, RotateCw, AlertTriangle } from 'lucide-react';
 import QRCode from 'qrcode';
 import { getAreas } from '../../../api/areas';
-import { getMesas, crearMesa, actualizarMesa, eliminarMesa, abrirSesionMesa, cerrarSesionMesa } from '../../../api/mesas';
+import { getMesas, crearMesa, actualizarMesa, eliminarMesa, abrirSesionMesa, cerrarSesionMesa, regenerarCodigoQrMesa } from '../../../api/mesas';
 import { getConfiguracion, logoSrc } from '../../../api/configuracion';
 import Modal from '../../../components/ui/Modal';
 import { SettingsCard } from '../shared';
@@ -14,6 +14,7 @@ export default function TabMesas({ puedeEditar }) {
   const qc = useQueryClient();
   const [modal, setModal] = useState(null);
   const [confirmEliminar, setConfirmEliminar] = useState(null);
+  const [confirmRegenerar, setConfirmRegenerar] = useState(null);
   const [filtroArea, setFiltroArea] = useState('');
   const [modalQr, setModalQr] = useState(null);
 
@@ -38,6 +39,15 @@ export default function TabMesas({ puedeEditar }) {
   const toggleSesion = useMutation({
     mutationFn: (mesa) => (mesa.sesiones?.length > 0 ? cerrarSesionMesa(mesa.id) : abrirSesionMesa(mesa.id)),
     onSuccess: () => qc.invalidateQueries({ queryKey: ['mesas'] }),
+  });
+
+  const regenerarQr = useMutation({
+    mutationFn: (id) => regenerarCodigoQrMesa(id),
+    onSuccess: (mesaActualizada) => {
+      qc.invalidateQueries({ queryKey: ['mesas'] });
+      setConfirmRegenerar(null);
+      setModalQr((actual) => (actual && actual.id === mesaActualizada.id ? mesaActualizada : actual));
+    },
   });
 
   // Agrupar por área si no hay filtro
@@ -120,10 +130,17 @@ export default function TabMesas({ puedeEditar }) {
                       </button>
                       <button
                         onClick={() => setModalQr(mesa)}
-                        title="Ver código QR"
+                        title={mesa.codigo_qr ? 'Ver código QR' : 'Sin código QR'}
+                        className={`p-1.5 rounded-lg transition-colors ${mesa.codigo_qr ? 'text-muted-foreground hover:text-primary hover:bg-primary/10' : 'text-amber-600 hover:bg-amber-100 dark:hover:bg-amber-900/30'}`}
+                      >
+                        {mesa.codigo_qr ? <QrCode className="w-3.5 h-3.5" /> : <AlertTriangle className="w-3.5 h-3.5" />}
+                      </button>
+                      <button
+                        onClick={() => setConfirmRegenerar(mesa)}
+                        title="Regenerar código QR"
                         className="p-1.5 rounded-lg text-muted-foreground hover:text-primary hover:bg-primary/10 transition-colors"
                       >
-                        <QrCode className="w-3.5 h-3.5" />
+                        <RotateCw className="w-3.5 h-3.5" />
                       </button>
                       <button
                         onClick={() => setModal({ modo: 'editar', mesa })}
@@ -182,10 +199,17 @@ export default function TabMesas({ puedeEditar }) {
                               </button>
                               <button
                                 onClick={() => setModalQr(mesa)}
-                                title="Ver código QR"
+                                title={mesa.codigo_qr ? 'Ver código QR' : 'Sin código QR'}
+                                className={`p-1.5 rounded-lg transition-colors ${mesa.codigo_qr ? 'text-muted-foreground hover:text-primary hover:bg-primary/10' : 'text-amber-600 hover:bg-amber-100 dark:hover:bg-amber-900/30'}`}
+                              >
+                                {mesa.codigo_qr ? <QrCode className="w-3.5 h-3.5" /> : <AlertTriangle className="w-3.5 h-3.5" />}
+                              </button>
+                              <button
+                                onClick={() => setConfirmRegenerar(mesa)}
+                                title="Regenerar código QR"
                                 className="p-1.5 rounded-lg text-muted-foreground hover:text-primary hover:bg-primary/10 transition-colors"
                               >
-                                <QrCode className="w-3.5 h-3.5" />
+                                <RotateCw className="w-3.5 h-3.5" />
                               </button>
                               <button
                                 onClick={() => setModal({ modo: 'editar', mesa })}
@@ -249,8 +273,38 @@ export default function TabMesas({ puedeEditar }) {
         </Modal>
       )}
 
+      {/* Confirmar regenerar código QR */}
+      {confirmRegenerar && (
+        <Modal titulo="Regenerar código QR" onClose={() => setConfirmRegenerar(null)}>
+          <p className="text-sm text-muted-foreground mb-4">
+            ¿Regenerar el código QR de <strong>{confirmRegenerar.nombre}</strong>? El código {confirmRegenerar.codigo_qr ? 'actual dejará de funcionar' : 'se generará por primera vez'} y se cerrará cualquier sesión de autoservicio activa en esta mesa.
+          </p>
+          {regenerarQr.error && (
+            <p className="text-sm text-destructive mb-3">{regenerarQr.error?.response?.data?.mensaje ?? 'Error al regenerar el código'}</p>
+          )}
+          <div className="flex justify-end gap-3">
+            <button onClick={() => setConfirmRegenerar(null)} className="px-4 py-2 rounded-xl text-sm text-muted-foreground hover:bg-accent hover:text-accent-foreground transition-colors">
+              Cancelar
+            </button>
+            <button
+              onClick={() => regenerarQr.mutate(confirmRegenerar.id)}
+              disabled={regenerarQr.isPending}
+              className="px-4 py-2 rounded-xl text-sm bg-primary hover:bg-primary/90 text-primary-foreground transition-colors disabled:opacity-60"
+            >
+              {regenerarQr.isPending ? 'Regenerando...' : 'Regenerar'}
+            </button>
+          </div>
+        </Modal>
+      )}
+
       {/* Modal QR */}
-      {modalQr && <ModalCodigoQr mesa={modalQr} onClose={() => setModalQr(null)} />}
+      {modalQr && (
+        <ModalCodigoQr
+          mesa={modalQr}
+          onClose={() => setModalQr(null)}
+          onRegenerar={() => setConfirmRegenerar(modalQr)}
+        />
+      )}
     </SettingsCard>
   );
 }
@@ -388,12 +442,13 @@ function dibujarRectRedondeado(ctx, x, y, w, h, r) {
   ctx.closePath();
 }
 
-function ModalCodigoQr({ mesa, onClose }) {
+function ModalCodigoQr({ mesa, onClose, onRegenerar }) {
   const [previewUrl, setPreviewUrl] = useState(null);
   const [imagenBlob, setImagenBlob] = useState(null);
-  const url = `${window.location.origin}/m/${mesa.codigo_qr}`;
+  const url = mesa.codigo_qr ? `${window.location.origin}/m/${mesa.codigo_qr}` : null;
 
   useEffect(() => {
+    if (!url) { setPreviewUrl(null); setImagenBlob(null); return; }
     let cancelado = false;
 
     async function componer() {
@@ -536,18 +591,33 @@ function ModalCodigoQr({ mesa, onClose }) {
   return (
     <Modal titulo={`QR — ${mesa.nombre}`} onClose={onClose}>
       <div className="flex flex-col items-center gap-4">
-        {previewUrl ? (
+        {!url ? (
+          <div className="w-full max-w-[280px] aspect-[580/862] flex flex-col items-center justify-center gap-2 text-center text-muted-foreground border border-dashed border-border rounded-xl p-4">
+            <AlertTriangle className="w-8 h-8 text-amber-600" />
+            <p className="text-sm">Esta mesa no tiene código QR todavía.</p>
+          </div>
+        ) : previewUrl ? (
           <img src={previewUrl} alt={`QR de ${mesa.nombre}`} className="w-full max-w-[280px] rounded-lg shadow-sm" />
         ) : (
           <div className="w-full max-w-[280px] aspect-[580/862] flex items-center justify-center text-muted-foreground">Generando...</div>
         )}
-        <button
-          onClick={descargar}
-          disabled={!imagenBlob}
-          className="flex items-center gap-2 px-4 py-2 rounded-xl bg-primary hover:bg-primary/90 disabled:opacity-50 text-primary-foreground text-sm font-medium transition-colors"
-        >
-          <Download className="w-4 h-4" /> Descargar imagen
-        </button>
+        <div className="flex gap-2">
+          {url && (
+            <button
+              onClick={descargar}
+              disabled={!imagenBlob}
+              className="flex items-center gap-2 px-4 py-2 rounded-xl bg-primary hover:bg-primary/90 disabled:opacity-50 text-primary-foreground text-sm font-medium transition-colors"
+            >
+              <Download className="w-4 h-4" /> Descargar imagen
+            </button>
+          )}
+          <button
+            onClick={onRegenerar}
+            className="flex items-center gap-2 px-4 py-2 rounded-xl border border-border hover:bg-accent hover:text-accent-foreground text-sm font-medium transition-colors"
+          >
+            <RotateCw className="w-4 h-4" /> {url ? 'Regenerar código' : 'Generar código'}
+          </button>
+        </div>
       </div>
     </Modal>
   );

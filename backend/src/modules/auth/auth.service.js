@@ -2,8 +2,17 @@ const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
 const { Usuario, Rol, Permiso, Sucursal } = require('../../models');
 
-function emitirSesion(usuario, sucursalId, sucursalNombre) {
-  const payload = { id: usuario.id, sucursal_id: sucursalId };
+// Incrementar sesion_version acá (el único lugar que de verdad emite un
+// par de tokens funcional) invalida, en el próximo request, cualquier token
+// emitido antes para este usuario en otro dispositivo — así solo queda
+// activa la sesión más reciente. Sin esto, los pasos intermedios del login
+// (ej. pre_token de selección de sucursal) también la bumpearían sin haber
+// completado un login real.
+async function emitirSesion(usuario, sucursalId, sucursalNombre) {
+  await usuario.increment('sesion_version');
+  await usuario.reload();
+
+  const payload = { id: usuario.id, sucursal_id: sucursalId, sesion_version: usuario.sesion_version };
   const token = jwt.sign(payload, process.env.JWT_SECRET, { expiresIn: process.env.JWT_EXPIRES_IN });
   const refresh_token = jwt.sign(payload, process.env.JWT_REFRESH_SECRET, { expiresIn: process.env.JWT_REFRESH_EXPIRES_IN });
 
@@ -56,7 +65,7 @@ async function login(email, contrasena) {
   }
 
   if (sucursalesDisponibles.length === 1) {
-    return emitirSesion(usuario, sucursalesDisponibles[0].id, sucursalesDisponibles[0].nombre);
+    return await emitirSesion(usuario, sucursalesDisponibles[0].id, sucursalesDisponibles[0].nombre);
   }
 
   const pre_token = jwt.sign({ id: usuario.id, tipo: 'pre_login' }, process.env.JWT_SECRET, { expiresIn: '5m' });
@@ -95,7 +104,7 @@ async function loginConSucursal(pre_token, sucursal_id) {
     sucursalNombre = asignada.nombre;
   }
 
-  return emitirSesion(usuario, idNormalizado, sucursalNombre);
+  return await emitirSesion(usuario, idNormalizado, sucursalNombre);
 }
 
 async function refresh(refresh_token) {
@@ -107,8 +116,14 @@ async function refresh(refresh_token) {
   }
   const usuario = await Usuario.findOne({ where: { id: payload.id, activo: 1 } });
   if (!usuario) throw Object.assign(new Error('Usuario inactivo o no existe'), { status: 401 });
+  // Mismo chequeo de sesión única que el middleware de auth: un refresh
+  // token emitido antes de un login posterior (en otro dispositivo) no debe
+  // poder renovar nada.
+  if ((payload.sesion_version ?? 0) !== usuario.sesion_version) {
+    throw Object.assign(new Error('Sesión cerrada: iniciaste sesión en otro dispositivo'), { status: 401, codigo: 'SESION_REEMPLAZADA' });
+  }
   const token = jwt.sign(
-    { id: payload.id, sucursal_id: payload.sucursal_id ?? null },
+    { id: payload.id, sucursal_id: payload.sucursal_id ?? null, sesion_version: usuario.sesion_version },
     process.env.JWT_SECRET,
     { expiresIn: process.env.JWT_EXPIRES_IN }
   );

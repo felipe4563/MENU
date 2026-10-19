@@ -238,6 +238,7 @@ export default function VentasPage() {
 
   function handleProducto(prod) {
     if (!puedeCrear) return;
+    if (!prod.disponible_hoy) return;
     if (prod.es_pesable) {
       setModalPeso(prod);
       return;
@@ -396,7 +397,7 @@ export default function VentasPage() {
                       onClick={() => handleProducto(prod)}
                       disabled={!puedeCrear}
                       className={`relative flex flex-col rounded-xl border transition-all text-left overflow-hidden ${
-                        !puedeCrear
+                        !puedeCrear || !prod.disponible_hoy
                           ? 'opacity-50 cursor-not-allowed'
                           : cantidadEnCarrito
                           ? 'border-primary bg-primary/10 hover:bg-primary/15'

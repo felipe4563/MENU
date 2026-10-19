@@ -116,6 +116,17 @@ async function eliminarMesa(id, alcance) {
   await mesa.destroy();
 }
 
+// Genera un codigo_qr nuevo (mesa sin código, o código filtrado que hay que
+// invalidar) y cierra cualquier sesión de autoservicio activa: si el motivo
+// es un código filtrado, dejar viva una sesión abierta con el código viejo
+// anularía el propósito de regenerarlo.
+async function regenerarCodigoQr(id, alcance) {
+  const mesa = await obtenerMesa(id, alcance);
+  await mesa.update({ codigo_qr: _generarCodigoQr() });
+  await cerrarSesion(id);
+  return obtenerMesa(id, alcance);
+}
+
 // --- Sesión de mesa (autoservicio) ---
 
 async function obtenerSesionActiva(mesa_id) {
@@ -158,6 +169,6 @@ async function obtenerMesaPorCodigoQr(codigo_qr) {
 
 module.exports = {
   listarAreas, crearArea, actualizarArea, eliminarArea,
-  listarMesas, obtenerMesa, crearMesa, actualizarMesa, eliminarMesa,
+  listarMesas, obtenerMesa, crearMesa, actualizarMesa, eliminarMesa, regenerarCodigoQr,
   obtenerSesionActiva, abrirSesion, cerrarSesion, obtenerMesaPorCodigoQr,
 };

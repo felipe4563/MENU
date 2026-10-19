@@ -10,6 +10,7 @@ const Usuario = sequelize.define('Usuario', {
   email: { type: DataTypes.STRING(255), allowNull: false, unique: true },
   contrasena: { type: DataTypes.STRING(255), allowNull: false },
   debe_cambiar_contrasena: { type: DataTypes.TINYINT(1), defaultValue: 0 },
+  sesion_version: { type: DataTypes.INTEGER.UNSIGNED, defaultValue: 0 },
   activo: { type: DataTypes.TINYINT(1), defaultValue: 1 },
 }, {
   tableName: 'usuarios',

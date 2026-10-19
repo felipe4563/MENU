@@ -29,6 +29,13 @@ async function auth(req, res, next) {
       return res.status(401).json({ ok: false, mensaje: 'Usuario no encontrado' });
     }
 
+    // Una sola sesión activa por usuario: un login posterior en otro
+    // dispositivo bumpea sesion_version, y el token de este dispositivo
+    // (que trae la versión vieja) deja de servir en el próximo request.
+    if ((payload.sesion_version ?? 0) !== usuario.sesion_version) {
+      return res.status(401).json({ ok: false, codigo: 'SESION_REEMPLAZADA', mensaje: 'Sesión cerrada: iniciaste sesión en otro dispositivo' });
+    }
+
     const sucursalId = payload.sucursal_id ?? null;
 
     req.usuario = {
