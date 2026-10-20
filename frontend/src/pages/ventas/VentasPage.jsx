@@ -53,6 +53,8 @@ export default function VentasPage() {
   const [modalLlevar, setModalLlevar] = useState(false);
   const [modalMesas, setModalMesas] = useState(false);
   const [modalCobrar, setModalCobrar] = useState(false);
+  const [modalDestino, setModalDestino] = useState(false);
+  const [cobroPendiente, setCobroPendiente] = useState(false);
   const [tabMobile, setTabMobile] = useState('productos'); // 'productos' | 'orden'
   const [selectorOpcion, setSelectorOpcion] = useState(null); // producto con grupo_opciones, o null
   const [colaOpcionesCombo, setColaOpcionesCombo] = useState(null); // { combo, pendientes: [producto...], resueltas: [{producto_id, opcion_ids}] } | null
@@ -271,9 +273,34 @@ export default function VentasPage() {
     setCarrito((prev) => prev.filter((it) => it.linea_id !== linea_id));
   }
 
+  // Desde el modal de cobro: si se elimina la última línea, no queda nada
+  // que cobrar y el modal se cierra.
+  function quitarDesdeCobro(linea_id, soloUno) {
+    const item = carrito.find((it) => it.linea_id === linea_id);
+    const borraLinea = !soloUno || item?.cantidad <= 1;
+    if (borraLinea && carrito.length === 1) setModalCobrar(false);
+    if (soloUno) decrementar(linea_id); else quitar(linea_id);
+  }
+
   function handleClickMesaDisponible(mesa) {
     setModoLlevar(null);
-    setMesaSeleccionada((prev) => prev === mesa.id ? null : mesa.id);
+    setMesaSeleccionada(mesa.id);
+  }
+
+  // Si falta mesa o "para llevar", primero se pregunta el destino y, al
+  // elegirlo, se continúa directo al cobro.
+  function iniciarCobro() {
+    if (puedeCobrarAhora) {
+      setModalCobrar(true);
+    } else if (totalItems > 0) {
+      setCobroPendiente(true);
+      setModalDestino(true);
+    }
+  }
+
+  function continuarCobroPendiente() {
+    if (cobroPendiente) setModalCobrar(true);
+    setCobroPendiente(false);
   }
 
   function handleClickMesaOcupada(mesa) {
@@ -377,7 +404,7 @@ export default function VentasPage() {
             </div>
           )}
 
-          <div className="flex-1 overflow-y-auto mt-2 pb-4">
+          <div className={`flex-1 overflow-y-auto mt-2 ${puedeCobrar ? 'pb-28 md:pb-4' : 'pb-4'}`}>
             {cargandoProductos ? (
               <div className="flex items-center justify-center h-32 gap-2 text-muted-foreground">
                 <RefreshCw className="w-4 h-4 animate-spin" /><span className="text-sm">Cargando...</span>
@@ -450,7 +477,7 @@ export default function VentasPage() {
         </div>
 
         {/* Panel derecho: orden + mesas + cobro */}
-        <aside className={`flex flex-col w-full md:w-[320px] lg:w-[360px] xl:w-[400px] shrink-0 overflow-y-auto gap-4 ${tabMobile === 'productos' ? 'hidden md:flex' : 'flex'}`}>
+        <aside className={`flex flex-col w-full md:w-[320px] lg:w-[360px] xl:w-[400px] shrink-0 overflow-y-auto gap-4 ${puedeCobrar ? 'pb-28 md:pb-0' : ''} ${tabMobile === 'productos' ? 'hidden md:flex' : 'flex'}`}>
 
           {/* Carrito */}
           <div className="flex flex-col bg-card border border-border rounded-2xl overflow-hidden shrink-0">
@@ -574,9 +601,9 @@ export default function VentasPage() {
           {/* Cobrar */}
           {puedeCobrar && (
             <button
-              onClick={() => setModalCobrar(true)}
-              disabled={!puedeCobrarAhora}
-              className="w-full flex items-center justify-center gap-2 py-3.5 bg-primary hover:bg-primary/90 active:bg-primary/80 disabled:opacity-50 text-primary-foreground rounded-xl font-bold text-base transition-colors shadow-sm shrink-0"
+              onClick={iniciarCobro}
+              disabled={totalItems === 0}
+              className="hidden md:flex w-full items-center justify-center gap-2 py-3.5 bg-primary hover:bg-primary/90 active:bg-primary/80 disabled:opacity-50 text-primary-foreground rounded-xl font-bold text-base transition-colors shadow-sm shrink-0"
             >
               <CreditCard className="w-5 h-5" /> Cobrar
             </button>
@@ -584,16 +611,67 @@ export default function VentasPage() {
         </aside>
       </div>
 
+      {/* Cobrar flotante (móvil) */}
+      {puedeCobrar && (
+        <div className="md:hidden fixed inset-x-0 bottom-0 z-30 px-4 pt-3 pb-[max(0.75rem,env(safe-area-inset-bottom))] bg-gradient-to-t from-background via-background/95 to-transparent pointer-events-none">
+          <button
+            onClick={iniciarCobro}
+            disabled={totalItems === 0}
+            className="pointer-events-auto w-full flex items-center gap-3 px-4 py-3.5 bg-primary active:bg-primary/80 disabled:opacity-50 text-primary-foreground rounded-2xl shadow-lg"
+          >
+            <span className="relative shrink-0">
+              <CreditCard className="w-5 h-5" />
+              {totalItems > 0 && (
+                <span className="absolute -top-2 -right-2.5 min-w-4 h-4 px-1 bg-primary-foreground text-primary text-[10px] font-bold rounded-full flex items-center justify-center">
+                  {totalItems}
+                </span>
+              )}
+            </span>
+            <span className="flex-1 min-w-0 text-left">
+              <span className="block font-bold text-base leading-tight">Cobrar</span>
+              {mesaActual ? (
+                <span className="block text-xs opacity-80 truncate">{mesaActual.nombre}</span>
+              ) : modoLlevar ? (
+                <span className="block text-xs opacity-80 truncate">Para llevar: {modoLlevar}</span>
+              ) : null}
+            </span>
+            <span className="font-bold text-base tabular-nums">Bs {total.toFixed(2)}</span>
+          </button>
+        </div>
+      )}
+
       {modalLlevar && (
         <ModalLlevar
           cargando={false}
-          onClose={() => setModalLlevar(false)}
+          onClose={() => { setModalLlevar(false); setCobroPendiente(false); }}
           onConfirmar={(nombre) => {
             setMesaSeleccionada(null);
             setModoLlevar(nombre || 'Cliente');
             setModalLlevar(false);
+            continuarCobroPendiente();
           }}
         />
+      )}
+
+      {modalDestino && (
+        <Modal titulo="¿Dónde es el pedido?" onClose={() => { setModalDestino(false); setCobroPendiente(false); }} ancho="max-w-sm">
+          <div className="grid grid-cols-2 gap-3">
+            <button
+              onClick={() => { setModalDestino(false); setModalMesas(true); }}
+              className="flex flex-col items-center gap-2 py-6 rounded-2xl border-2 border-border hover:border-primary active:bg-primary/10 transition-colors"
+            >
+              <LayoutGrid className="w-8 h-8 text-primary" />
+              <span className="font-semibold text-foreground">Mesa</span>
+            </button>
+            <button
+              onClick={() => { setModalDestino(false); setModalLlevar(true); }}
+              className="flex flex-col items-center gap-2 py-6 rounded-2xl border-2 border-border hover:border-orange-500 active:bg-orange-50 dark:active:bg-orange-900/20 transition-colors"
+            >
+              <ShoppingBag className="w-8 h-8 text-orange-500" />
+              <span className="font-semibold text-foreground">Para llevar</span>
+            </button>
+          </div>
+        </Modal>
       )}
 
       {modalMesas && (
@@ -601,8 +679,8 @@ export default function VentasPage() {
           mesas={mesas}
           pedidoPorMesa={pedidoPorMesa}
           mesaSeleccionada={mesaSeleccionada}
-          onSeleccionar={(mesa) => handleClickMesaDisponible(mesa)}
-          onClose={() => setModalMesas(false)}
+          onSeleccionar={(mesa) => { handleClickMesaDisponible(mesa); continuarCobroPendiente(); }}
+          onClose={() => { setModalMesas(false); setCobroPendiente(false); }}
         />
       )}
 
@@ -613,6 +691,13 @@ export default function VentasPage() {
           tipo={modoLlevar ? 'llevar' : 'mesa'}
           mesaId={mesaSeleccionada}
           nombreCliente={modoLlevar}
+          mesaNombre={mesaActual?.nombre}
+          onElegirMesa={() => setModalMesas(true)}
+          onElegirLlevar={() => setModalLlevar(true)}
+          onIncrementar={incrementar}
+          onDecrementar={(id) => quitarDesdeCobro(id, true)}
+          onQuitar={(id) => quitarDesdeCobro(id, false)}
+          onAgregarMas={() => { setModalCobrar(false); setTabMobile('productos'); }}
           sesionCajaId={cajaActiva?.id}
           onClose={() => setModalCobrar(false)}
           onExito={() => {
@@ -655,7 +740,7 @@ export default function VentasPage() {
 
 /* ─── Modal Cobrar ──────────────────────────────────────────────────────── */
 
-function ModalCobrar({ total, carrito, tipo, mesaId, nombreCliente, sesionCajaId, onClose, onExito }) {
+function ModalCobrar({ total, carrito, tipo, mesaId, nombreCliente, mesaNombre, onElegirMesa, onElegirLlevar, onIncrementar, onDecrementar, onQuitar, onAgregarMas, sesionCajaId, onClose, onExito }) {
   const qc = useQueryClient();
   const { tienePermiso } = usePermisos();
   const [metodo, setMetodo] = useState('efectivo');
@@ -673,6 +758,14 @@ function ModalCobrar({ total, carrito, tipo, mesaId, nombreCliente, sesionCajaId
   const puedeCanjearPuntos = metodo === 'qr' ? config.fidelidad_canje_qr === 'true' : config.fidelidad_canje_efectivo !== 'false';
 
   const descuentoCupon = cuponAplicado?.descuento ?? 0;
+  const tieneDestino = tipo === 'llevar' || mesaId != null;
+
+  // El descuento del cupón se calculó sobre los ítems de ese momento: si la
+  // orden cambia, hay que volver a aplicarlo.
+  function editarOrden(accion, linea_id) {
+    setCuponAplicado(null);
+    accion(linea_id);
+  }
   const totalFinal = Math.max(0, total - (puedeCanjearPuntos ? descuentoPuntos : 0) - descuentoCupon);
 
   const reimprimir = useMutation({
@@ -774,6 +867,106 @@ function ModalCobrar({ total, carrito, tipo, mesaId, nombreCliente, sesionCajaId
           )}
         </div>
 
+        {/* Destino: mesa o para llevar (se puede corregir aquí mismo) */}
+        <div>
+          <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wide mb-2">Destino</p>
+          <div className="grid grid-cols-2 gap-2">
+            <button
+              type="button"
+              onClick={onElegirMesa}
+              className={`flex items-center gap-2 px-3 py-2.5 rounded-xl border-2 text-left transition-colors ${
+                tipo === 'mesa' && mesaId != null ? 'border-primary bg-primary/10' : 'border-border hover:border-primary/50'
+              }`}
+            >
+              <LayoutGrid className={`w-5 h-5 shrink-0 ${tipo === 'mesa' && mesaId != null ? 'text-primary' : 'text-muted-foreground'}`} />
+              <span className="min-w-0">
+                <span className="block text-sm font-semibold text-foreground">Mesa</span>
+                <span className="block text-xs text-muted-foreground truncate">
+                  {tipo === 'mesa' && mesaNombre ? mesaNombre : 'Elegir'}
+                </span>
+              </span>
+            </button>
+            <button
+              type="button"
+              onClick={onElegirLlevar}
+              className={`flex items-center gap-2 px-3 py-2.5 rounded-xl border-2 text-left transition-colors ${
+                tipo === 'llevar' ? 'border-orange-500 bg-orange-50 dark:bg-orange-900/20' : 'border-border hover:border-orange-400'
+              }`}
+            >
+              <ShoppingBag className={`w-5 h-5 shrink-0 ${tipo === 'llevar' ? 'text-orange-500' : 'text-muted-foreground'}`} />
+              <span className="min-w-0">
+                <span className="block text-sm font-semibold text-foreground">Para llevar</span>
+                <span className="block text-xs text-muted-foreground truncate">
+                  {tipo === 'llevar' ? nombreCliente : 'Elegir'}
+                </span>
+              </span>
+            </button>
+          </div>
+        </div>
+
+        {/* Detalle de lo que se está cobrando (solo móvil: en tablet/escritorio
+            la orden ya se ve en el panel derecho) */}
+        <div className="md:hidden border border-border rounded-xl overflow-hidden">
+          <div className="px-3 py-2 bg-muted flex items-center justify-between">
+            <span className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">Detalle</span>
+            <span className="text-xs text-muted-foreground">
+              {carrito.reduce((s, it) => s + it.cantidad, 0)} ítem(s)
+            </span>
+          </div>
+          <ul className="max-h-56 overflow-y-auto divide-y divide-border">
+            {carrito.map((it) => (
+              <li key={it.linea_id} className="px-3 py-1.5 flex items-center gap-2 text-sm">
+                <span className="flex-1 min-w-0">
+                  <span className="block text-foreground font-medium leading-tight truncate">
+                    {it.nombre}{it.peso != null && ` (${it.peso.toFixed(3)} kg)`}
+                  </span>
+                  {it.combo_contenido && <span className="block text-[11px] text-muted-foreground italic truncate">{it.combo_contenido}</span>}
+                  {it.nota && <span className="block text-[11px] text-amber-600 dark:text-amber-400 truncate">{it.nota}</span>}
+                  <span className="block text-[11px] text-muted-foreground tabular-nums">
+                    Bs {(it.cantidad * it.precio).toFixed(2)}
+                  </span>
+                </span>
+                {it.peso == null && (
+                  <div className="flex items-center shrink-0 bg-muted rounded-lg">
+                    <button
+                      type="button"
+                      onClick={() => editarOrden(onDecrementar, it.linea_id)}
+                      aria-label="Quitar uno"
+                      className="w-8 h-8 rounded-lg active:bg-foreground/10 flex items-center justify-center"
+                    >
+                      <Minus className="w-3.5 h-3.5" />
+                    </button>
+                    <span className="w-6 text-center font-bold text-foreground tabular-nums">{it.cantidad}</span>
+                    <button
+                      type="button"
+                      onClick={() => editarOrden(onIncrementar, it.linea_id)}
+                      aria-label="Agregar uno"
+                      className="w-8 h-8 rounded-lg active:bg-foreground/10 flex items-center justify-center"
+                    >
+                      <Plus className="w-3.5 h-3.5" />
+                    </button>
+                  </div>
+                )}
+                <button
+                  type="button"
+                  onClick={() => editarOrden(onQuitar, it.linea_id)}
+                  aria-label="Eliminar"
+                  className="w-8 h-8 shrink-0 rounded-lg text-muted-foreground hover:text-destructive active:bg-destructive/10 flex items-center justify-center"
+                >
+                  <Trash2 className="w-3.5 h-3.5" />
+                </button>
+              </li>
+            ))}
+          </ul>
+          <button
+            type="button"
+            onClick={onAgregarMas}
+            className="w-full flex items-center justify-center gap-1.5 py-2.5 border-t border-border text-sm font-semibold text-primary hover:bg-primary/5 active:bg-primary/10 transition-colors"
+          >
+            <Plus className="w-4 h-4" /> Agregar productos
+          </button>
+        </div>
+
         <ClienteFidelidad
           cliente={clienteFidelidad}
           onCambiarCliente={setClienteFidelidad}
@@ -837,7 +1030,7 @@ function ModalCobrar({ total, carrito, tipo, mesaId, nombreCliente, sesionCajaId
           </button>
           <button
             onClick={() => iniciar.mutate()}
-            disabled={iniciar.isPending}
+            disabled={iniciar.isPending || !tieneDestino}
             className="px-5 py-2 rounded-xl text-sm bg-primary hover:bg-primary/90 text-primary-foreground font-semibold transition-colors disabled:opacity-60"
           >
             {iniciar.isPending ? 'Procesando...' : 'Confirmar cobro'}

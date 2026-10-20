@@ -26,6 +26,7 @@ const MODULO_LABELS = {
   configuracion:'Configuración',
   roles:        'Roles',
   reportes:     'Reportes',
+  pedidos_externos: 'Pedidos externos',
 };
 
 /* ── Colores por módulo ─────────────────────────────────────────────────── */
@@ -46,6 +47,7 @@ const MODULO_COLOR = {
   roles:        'rose',
   configuracion:'gray',
   reportes:     'sky',
+  pedidos_externos: 'orange',
 };
 
 const COLOR_CLASSES = {

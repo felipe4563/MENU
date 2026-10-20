@@ -3,6 +3,7 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { Truck, MapPin, Phone, RefreshCw, DollarSign } from 'lucide-react';
 import { getVentas, cobrarVenta } from '../../api/ventas';
 import Modal from '../../components/ui/Modal';
+import { usePermisos } from '../../hooks/usePermisos';
 import ModalPagoQr from '../ventas/components/ModalPagoQr';
 
 const ESTADO_LABEL = {
@@ -10,12 +11,24 @@ const ESTADO_LABEL = {
 };
 
 export default function PedidosExternosPage() {
+  const { tienePermiso } = usePermisos();
+  const puedeVer = tienePermiso('pedidos_externos', 'ver');
   const { data: pedidos = [], isLoading } = useQuery({
     queryKey: ['ventas', { origen: 'app_externa' }],
     queryFn: () => getVentas({ origen: 'app_externa' }),
     refetchInterval: 15000,
+    enabled: puedeVer,
   });
   const [pedidoACobrar, setPedidoACobrar] = useState(null);
+
+  if (!puedeVer) {
+    return (
+      <div className="flex flex-col items-center justify-center h-64 gap-3 text-muted-foreground">
+        <Truck className="w-10 h-10" />
+        <p className="font-medium">No tenés permiso para ver esta pantalla</p>
+      </div>
+    );
+  }
 
   return (
     <div className="space-y-4">

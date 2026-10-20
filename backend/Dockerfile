@@ -9,4 +9,6 @@ COPY . .
 
 EXPOSE 3001
 
-CMD ["node", "src/server.js"]
+# Aplica migraciones pendientes (y configura el admin en una instalación
+# nueva) antes de arrancar. Si falla, el servidor no arranca.
+CMD ["sh", "-c", "node database/preparar.js && node src/server.js"]

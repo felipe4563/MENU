@@ -25,7 +25,7 @@ export default function App() {
       <BrandTheme />
       <OfflineIndicator />
       <InstallPrompt />
-      <RouterProvider router={router} />
+      <RouterProvider router={router} future={{ v7_startTransition: true }} />
     </QueryClientProvider>
   );
 }

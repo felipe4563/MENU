@@ -17,6 +17,10 @@ services:
       retries: 10
 
   backend:
+    # Imagen construida por GitHub Actions (.github/workflows/imagenes.yml).
+    # TAG lo exporta deploy.sh con el commit actual; `build:` queda para
+    # construir a mano si hace falta.
+    image: ghcr.io/felipe4563/menu-backend:${TAG:-latest}
     build: ./backend
     restart: unless-stopped
     depends_on:
@@ -34,9 +38,12 @@ services:
       JWT_REFRESH_SECRET: ${JWT_REFRESH_SECRET:?JWT_REFRESH_SECRET es obligatorio}
       JWT_EXPIRES_IN: ${JWT_EXPIRES_IN:-8h}
       JWT_REFRESH_EXPIRES_IN: ${JWT_REFRESH_EXPIRES_IN:-7d}
-      CORS_ORIGIN: ${CORS_ORIGIN:-https://cdemo.codewave.com.bo}
-      PUBLIC_API_URL: ${PUBLIC_API_URL:-https://cdemo.codewave.com.bo}
-      ADMIN_PASSWORD: ${ADMIN_PASSWORD:?ADMIN_PASSWORD es obligatorio}
+      CORS_ORIGIN: ${CORS_ORIGIN:?CORS_ORIGIN es obligatorio (https://dominio del restaurante)}
+      PUBLIC_API_URL: ${PUBLIC_API_URL:?PUBLIC_API_URL es obligatorio (https://dominio del restaurante)}
+      # Solo se usan en la instalación nueva (ver backend/database/preparar.js).
+      ADMIN_EMAIL: ${ADMIN_EMAIL:-}
+      ADMIN_PASSWORD: ${ADMIN_PASSWORD:-}
+      NOMBRE_NEGOCIO: ${NOMBRE_NEGOCIO:-}
       CODEPAY_SANDBOX: ${CODEPAY_SANDBOX:-true}
       CODEPAY_API_URL: ${CODEPAY_API_URL:-https://payapi.codewave.com.bo/api}
       CODEPAY_PUBLIC_KEY: ${CODEPAY_PUBLIC_KEY:-}
@@ -56,15 +63,14 @@ services:
       - uploads:/app/uploads
 
   frontend:
-    build:
-      context: ./frontend
-      args:
-        VITE_API_URL: ${VITE_API_URL:-https://cdemo.codewave.com.bo/api/v1}
+    # Misma imagen para todos los restaurantes: usa /api/v1 relativo.
+    image: ghcr.io/felipe4563/menu-frontend:${TAG:-latest}
+    build: ./frontend
     restart: unless-stopped
     depends_on:
       - backend
     ports:
-      - "127.0.0.1:${FRONTEND_PORT:-8081}:80"
+      - "127.0.0.1:${FRONTEND_PORT:?FRONTEND_PORT es obligatorio}:80"
     volumes:
       - uploads:/usr/share/nginx/uploads:ro
 

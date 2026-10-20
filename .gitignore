@@ -38,3 +38,5 @@ api_personas/
 # Simulador de la app de pedidos externa — herramienta de pruebas local, no
 # es parte del producto.
 frontend/public/simulador-app-externa.html
+# Un .env por restaurante en el VPS (contraseñas y secretos) — ver deploy.sh.
+instancias/

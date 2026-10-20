@@ -7,6 +7,9 @@ export default defineConfig(({ mode }) => {
   const env = loadEnv(mode, process.cwd(), '');
   // Strip /api/v1 to get the server origin (e.g. http://localhost:3001)
   const apiBase = (env.VITE_API_URL ?? 'http://localhost:3001/api/v1').replace('/api/v1', '');
+  // Con VITE_API_URL relativa (/api/v1, el build de producción) apiBase queda
+  // vacío y la API está en el mismo dominio que la app, sea cual sea.
+  const origenApi = apiBase || 'https?://[^/]+';
 
   return {
     plugins: [
@@ -84,7 +87,7 @@ export default defineConfig(({ mode }) => {
           runtimeCaching: [
             {
               // Static uploads (logos, product images) — cache-first, 30 days
-              urlPattern: new RegExp(`^${apiBase}/uploads/`),
+              urlPattern: new RegExp(`^${origenApi}/uploads/`),
               handler: 'CacheFirst',
               options: {
                 cacheName: 'uploads-cache',
@@ -94,7 +97,7 @@ export default defineConfig(({ mode }) => {
             },
             {
               // GET API calls — network-first (10 s timeout), falls back to cache
-              urlPattern: new RegExp(`^${apiBase}/api/`),
+              urlPattern: new RegExp(`^${origenApi}/api/`),
               handler: 'NetworkFirst',
               options: {
                 cacheName: 'api-cache',

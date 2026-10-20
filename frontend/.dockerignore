@@ -1,4 +1,7 @@
 node_modules
 npm-debug.log
 dist
+dev-dist
 .env
+.env.*
+public/simulador-app-externa.html

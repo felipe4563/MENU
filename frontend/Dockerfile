@@ -7,7 +7,9 @@ RUN npm install
 
 COPY . .
 
-ARG VITE_API_URL=https://cdemo.codewave.com.bo/api/v1
+# Ruta relativa: la misma imagen sirve para todos los restaurantes, cada uno
+# en su dominio (nginx del contenedor reenvía /api al backend).
+ARG VITE_API_URL=/api/v1
 ENV VITE_API_URL=$VITE_API_URL
 
 RUN npm run build

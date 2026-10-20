@@ -945,7 +945,7 @@ CREATE TABLE `sesiones_caja` (
   `total_gastos` decimal(10,2) NOT NULL DEFAULT 0.00,
   `diferencia` decimal(10,2) DEFAULT NULL,
   `abierto_en` timestamp NOT NULL DEFAULT current_timestamp(),
-  `cerrado_en` timestamp NOT NULL DEFAULT '0000-00-00 00:00:00',
+  `cerrado_en` timestamp NULL DEFAULT NULL,
   `estado` enum('abierta','cerrada') NOT NULL DEFAULT 'abierta'
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
@@ -1000,7 +1000,7 @@ CREATE TABLE `usuarios` (
 --
 
 INSERT INTO `usuarios` (`id`, `rol_id`, `acceso_todas_sucursales`, `nombre`, `avatar`, `email`, `contrasena`, `debe_cambiar_contrasena`, `activo`, `creado_en`, `actualizado_en`) VALUES
-(1, 1, 1, 'Administrador', NULL, 'felipe@codeculinary.com', '$2b$10$dn9nFMmWEPE./bYgQzGbKOVOgOQaxdpz/DhJSostRCV6pMzSCn4/m', 0, 1, '2026-07-01 00:23:31', '2026-09-07 17:54:15');
+(1, 1, 1, 'Administrador', NULL, 'admin@instalacion.local', '$2b$10$dn9nFMmWEPE./bYgQzGbKOVOgOQaxdpz/DhJSostRCV6pMzSCn4/m', 0, 1, '2026-07-01 00:23:31', '2026-09-07 17:54:15');
 
 -- --------------------------------------------------------
 
@@ -1862,6 +1862,70 @@ CREATE TABLE `marcaciones_personal` (
   CONSTRAINT `marcaciones_personal_ibfk_2` FOREIGN KEY (`sucursal_id`) REFERENCES `sucursales` (`id`),
   CONSTRAINT `marcaciones_personal_ibfk_3` FOREIGN KEY (`aprobado_por`) REFERENCES `usuarios` (`id`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+--
+-- Control de migraciones (ver backend/database/migrar.js). Este volcado ya
+-- incluye el esquema hasta la 051; las siguientes las aplica el backend al
+-- arrancar. Al regenerar el volcado, actualizar esta lista.
+--
+
+CREATE TABLE `migraciones` (
+  `nombre` varchar(150) NOT NULL PRIMARY KEY,
+  `aplicada_en` datetime NOT NULL DEFAULT current_timestamp()
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+INSERT INTO `migraciones` (`nombre`) VALUES
+('001_roles_permisos'),
+('002_usuarios'),
+('003_areas_mesas'),
+('004_categorias_productos'),
+('005_clientes'),
+('006_sesiones_caja'),
+('007_pedidos'),
+('008_inventario'),
+('009_compras'),
+('010_caja_libro'),
+('011_reservaciones_config'),
+('012_sucursales'),
+('013_sucursal_operativa'),
+('014_cajas'),
+('015_pagos_qr'),
+('016_produccion_sucursal_shinahota'),
+('017_opciones_producto'),
+('018_productos_pesables'),
+('019_opciones_multipaso'),
+('020_debe_cambiar_contrasena'),
+('021_avatar_usuario'),
+('022_precio_opciones'),
+('023_combos_promociones'),
+('024_fidelidad'),
+('025_cupones'),
+('026_fidelidad_canje_metodos'),
+('027_cupones_multiuso'),
+('028_cumpleanos'),
+('029_productos_quitar_campos_no_usados'),
+('030_ruleta_premios'),
+('031_ruleta_premios_producto_combo'),
+('032_cupon_productos'),
+('033_promocion_productos'),
+('034_ruleta_premios_probabilidad'),
+('035_impresion_movil'),
+('036_ancho_papel_bluetooth'),
+('037_insumos_recetas'),
+('038_autoservicio_qr'),
+('039_clientes_pin'),
+('040_recuperar_pin'),
+('041_impresion_dedicada'),
+('042_ticket_cliente_por_caja'),
+('043_opciones_combo'),
+('044_integracion_pedidos_externos'),
+('045_libro_caja_metodo_pago_app_externa'),
+('046_sucursal_ubicacion_negocio_portada'),
+('047_disponibilidad_diaria_productos'),
+('048_estado_cocina_independiente'),
+('049_estado_cocina_backfill_pedidos_abiertos'),
+('050_permiso_dashboard'),
+('051_control_personal');
 
 COMMIT;
 

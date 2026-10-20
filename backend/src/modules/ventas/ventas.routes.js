@@ -9,7 +9,12 @@ router.use(auth);
 
 router.get('/cocina', verificarPermiso('cocina', 'ver'), ctrl.listarCocina);
 router.get('/mis-ventas-hoy', verificarPermiso('ventas', 'ver'), ctrl.misVentasHoy);
-router.get('/', verificarPermiso('ventas', 'ver'), ctrl.listar);
+// La lista de pedidos de apps externas tiene su propio permiso (pantalla "Pedidos externos").
+router.get('/', (req, res, next) => (
+  req.query.origen === 'app_externa'
+    ? verificarPermiso('pedidos_externos', 'ver')
+    : verificarPermiso('ventas', 'ver')
+)(req, res, next), ctrl.listar);
 router.post('/', verificarPermiso('ventas', 'crear'), requiereSucursalActiva, ctrl.crear);
 router.post('/completa', verificarPermiso('ventas', 'crear'), requiereSucursalActiva, ctrl.crearCompleta);
 router.get('/:id', verificarPermiso('ventas', 'ver'), ctrl.obtener);
