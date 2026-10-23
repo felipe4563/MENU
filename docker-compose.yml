@@ -1,6 +1,9 @@
 services:
   db:
     image: mysql:8.0
+    # Ajustado para la base chica de un restaurante: por defecto MySQL 8
+    # reserva ~350 MB; así queda en ~120-150 MB y entran más en el mismo VPS.
+    command: --performance-schema=OFF --innodb-buffer-pool-size=64M --max-connections=50
     restart: unless-stopped
     environment:
       MYSQL_DATABASE: ${DB_NAME:-restaurante_db}
