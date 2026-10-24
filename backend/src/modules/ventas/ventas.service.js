@@ -589,10 +589,55 @@ async function _finalizarVenta({ pedido, detalles, metodo_pago, monto_recibido, 
   return monto_neto;
 }
 
-async function _emitirImpresion(pedido, metodo_pago, cambio, sucursal_id, numeroOrdenDiarioOverride, { esReimpresion = false, suprimirCocina = false } = {}) {
+// Config del negocio + datos de la caja que hizo la venta (modo y ancho de
+// impresión). Compartido por la impresión de venta/cocina y el aviso de anulación.
+async function _contextoImpresion(pedido) {
   const cfgRows = await Configuracion.findAll({ where: { clave: ['nombre_negocio', 'simbolo_moneda', 'direccion', 'telefono', 'flujo_cocina', 'cocina_destino', 'cocina_pantalla_dedicada', 'logo'] } });
   const cfg = cfgRows.reduce((o, r) => { o[r.clave] = r.valor; return o; }, {});
+  let caja_id = null;
+  let modo_impresion = 'fisica';
+  let ancho_papel_bluetooth = '80mm';
+  let imprimirTicketCliente = true;
+  if (pedido.sesion_caja_id) {
+    const sesion = await SesionCaja.findByPk(pedido.sesion_caja_id, {
+      attributes: ['caja_id'],
+      include: [{ model: Caja, as: 'caja', attributes: ['modo_impresion', 'ancho_papel_bluetooth', 'imprimir_ticket_cliente'] }],
+    });
+    caja_id = sesion ? sesion.caja_id : null;
+    modo_impresion = sesion?.caja?.modo_impresion || 'fisica';
+    ancho_papel_bluetooth = sesion?.caja?.ancho_papel_bluetooth || '80mm';
+    imprimirTicketCliente = sesion?.caja?.imprimir_ticket_cliente !== 0;
+  }
+  return { cfg, caja_id, modo_impresion, ancho_papel_bluetooth, imprimirTicketCliente };
+}
 
+// Avisa a cocina de productos anulados: ticket "ANULAR ..." por el mismo
+// canal que una comanda. Solo con cocina física y pedido aún pendiente en
+// cocina. Devuelve el payload (para el agente local del navegador) o null.
+// Llamar DESPUÉS del commit de la anulación.
+async function emitirAnulacionCocina(pedido_id, lineasAnuladas) {
+  const pedido = await Pedido.findByPk(pedido_id, { include: INCLUDE_PEDIDO_COMPLETO });
+  if (!pedido || pedido.estado_cocina !== 'pendiente') return null;
+  const { cfg, caja_id, modo_impresion, ancho_papel_bluetooth } = await _contextoImpresion(pedido);
+  if (cfg.flujo_cocina !== 'fisico') return null;
+
+  const cantidades = new Map(lineasAnuladas.map(l => [Number(l.detalle_pedido_id), Number(l.cantidad)]));
+  const json = pedido.toJSON();
+  json.detalles = (json.detalles || [])
+    .filter(d => cantidades.has(d.id))
+    .map(d => ({ ...d, cantidad: cantidades.get(d.id) }));
+  json.notas = '*** ANULAR ESTOS PRODUCTOS ***';
+  if (json.detalles.length === 0) return null;
+
+  const numero_orden_diario = await _numeroOrdenDiarioOriginal(pedido);
+  const cocinaPorCaja = cfg.cocina_destino === 'por_caja';
+  const datosCocina = { pedido: json, config: cfg, numero_orden_diario, modo_impresion, ancho_papel_bluetooth, caja_id: cocinaPorCaja ? caja_id : null };
+  if (cocinaPorCaja) emitir('print:cocina', datosCocina, pedido.sucursal_id, caja_id);
+  else emitir('print:cocina', datosCocina, pedido.sucursal_id);
+  return datosCocina;
+}
+
+async function _emitirImpresion(pedido, metodo_pago, cambio, sucursal_id, numeroOrdenDiarioOverride, { esReimpresion = false, suprimirCocina = false } = {}) {
   // Los llamadores normales (crearCompleta, cobrar, _confirmarPagoQr) no
   // pasan override: se recalcula en vivo, como siempre. `reimprimir` sí pasa
   // un valor explícito (el número que tenía el pedido el día que se vendió)
@@ -611,20 +656,7 @@ async function _emitirImpresion(pedido, metodo_pago, cambio, sucursal_id, numero
   // cruzados. `modo_impresion` viaja en el payload para que el navegador que
   // hizo la venta sepa, sin otra consulta, si tiene que mandarlo al agente
   // local (física) o armar el ESC/POS y disparar RawBT (bluetooth).
-  let caja_id = null;
-  let modo_impresion = 'fisica';
-  let ancho_papel_bluetooth = '80mm';
-  let imprimirTicketCliente = true;
-  if (pedido.sesion_caja_id) {
-    const sesion = await SesionCaja.findByPk(pedido.sesion_caja_id, {
-      attributes: ['caja_id'],
-      include: [{ model: Caja, as: 'caja', attributes: ['modo_impresion', 'ancho_papel_bluetooth', 'imprimir_ticket_cliente'] }],
-    });
-    caja_id = sesion ? sesion.caja_id : null;
-    modo_impresion = sesion?.caja?.modo_impresion || 'fisica';
-    ancho_papel_bluetooth = sesion?.caja?.ancho_papel_bluetooth || '80mm';
-    imprimirTicketCliente = sesion?.caja?.imprimir_ticket_cliente !== 0;
-  }
+  const { cfg, caja_id, modo_impresion, ancho_papel_bluetooth, imprimirTicketCliente } = await _contextoImpresion(pedido);
 
   // La reimpresión manual ("Imprimir de nuevo") ignora el flag a propósito:
   // el cajero puede necesitar dar el comprobante puntualmente aunque esa
@@ -1272,5 +1304,5 @@ module.exports = {
   listar, listarCocina, obtener, misVentasHoy, reimprimir, crear, crearCompleta, agregarItem, actualizarItem, eliminarItem,
   cobrar, cancelar, marcarListo, marcarEntregado,
   consultarEstadoPagoQr, cancelarPagoQr, procesarWebhookPagoQr, revertirPagosQrVencidos,
-  recalcularTotal: _recalcularTotal, verificarAlcance: _verificarAlcance,
+  recalcularTotal: _recalcularTotal, emitirAnulacionCocina, verificarAlcance: _verificarAlcance,
 };

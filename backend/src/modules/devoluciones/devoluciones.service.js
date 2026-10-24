@@ -26,7 +26,16 @@ async function anular(pedido_id, usuario_id, { items, motivo, nota, forma }, alc
   });
 
   emitir('restaurante:actualizar', { tipo: 'pedido_items' });
-  return { ...resultado, impresion: { cocina: null } };
+  // Ya con la transacción confirmada: avisar a cocina (best-effort).
+  let cocina = null;
+  try {
+    cocina = await ventasService.emitirAnulacionCocina(
+      pedido_id, items.map(i => ({ detalle_pedido_id: i.detalle_pedido_id, cantidad: i.cantidad })),
+    );
+  } catch (e) {
+    console.error('Error avisando anulación a cocina:', e.message);
+  }
+  return { ...resultado, impresion: { cocina } };
 }
 
 // Valida las cantidades contra la cantidad vigente (ya con el pedido bloqueado).

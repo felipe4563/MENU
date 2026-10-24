@@ -3,7 +3,7 @@ const app = require('../src/app');
 const bcrypt = require('bcryptjs');
 const {
   Sucursal, Categoria, Producto, Usuario, Rol, Permiso, Caja, SesionCaja, Pedido, DetallePedido,
-  Devolucion, DevolucionItem, LibroCaja, ProductoStockSucursal, RegistroInventario, Cliente,
+  Devolucion, DevolucionItem, LibroCaja, ProductoStockSucursal, RegistroInventario, Cliente, Configuracion,
 } = require('../src/models');
 
 describe('POST /ventas/:id/anular - pedidos sin cobrar', () => {
@@ -404,5 +404,109 @@ describe('POST /ventas/:id/anular - pedidos cobrados', () => {
     const items = res.body.datos.devolucion.items;
     expect(items.find((i) => i.detalle_pedido_id === v.detalles[0].id).vuelve_stock).toBeTruthy();
     expect(items.find((i) => i.detalle_pedido_id === v.detalles[1].id).vuelve_stock).toBeFalsy();
+  });
+});
+
+describe('POST /ventas/:id/anular - aviso a cocina', () => {
+  let sucursalId, usuarioId, cajaId, sesionId, token, productoId, categoriaId;
+  let flujoOriginal, destinoOriginal;
+
+  const nuevoPedido = async () => {
+    const p = await request(app).post('/api/v1/ventas').set('Authorization', `Bearer ${token}`).send({ tipo: 'llevar', sesion_caja_id: sesionId });
+    expect(p.status).toBe(201);
+    const it = await request(app).post(`/api/v1/ventas/${p.body.datos.id}/items`).set('Authorization', `Bearer ${token}`)
+      .send({ producto_id: productoId, cantidad: 3 });
+    expect(it.status).toBe(201);
+    const det = await DetallePedido.findOne({ where: { pedido_id: p.body.datos.id } });
+    return { pedidoId: p.body.datos.id, detalleId: det.id };
+  };
+  const anular = (id, body) => request(app).post(`/api/v1/ventas/${id}/anular`).set('Authorization', `Bearer ${token}`).send(body);
+
+  beforeAll(async () => {
+    flujoOriginal = await Configuracion.findOne({ where: { clave: 'flujo_cocina' } });
+    destinoOriginal = await Configuracion.findOne({ where: { clave: 'cocina_destino' } });
+    const sucursal = await Sucursal.create({ nombre: 'Sucursal Aviso Cocina Test' });
+    sucursalId = sucursal.id;
+    const hash = await bcrypt.hash('clave123', 10);
+    const rol = await Rol.findOne({ where: { nombre: 'Cajero' } });
+    const usuario = await Usuario.create({ rol_id: rol.id, nombre: 'Aviso Cocina Test', email: 'aviso-cocina-test@restaurante.com', contrasena: hash });
+    usuarioId = usuario.id;
+    await usuario.addSucursal(sucursal);
+    token = (await request(app).post('/api/v1/auth/login').send({ email: 'aviso-cocina-test@restaurante.com', contrasena: 'clave123' })).body.datos.token;
+    cajaId = (await Caja.create({ sucursal_id: sucursalId, nombre: 'Caja Aviso Cocina Test' })).id;
+    sesionId = (await SesionCaja.create({ usuario_id: usuarioId, sucursal_id: sucursalId, caja_id: cajaId, monto_apertura: 0 })).id;
+    categoriaId = (await Categoria.create({ nombre: 'Categoria Aviso Cocina Test' })).id;
+    productoId = (await Producto.create({ categoria_id: categoriaId, nombre: 'Producto Aviso Cocina Test', precio: 10 })).id;
+  });
+
+  afterAll(async () => {
+    if (flujoOriginal) await Configuracion.upsert({ clave: 'flujo_cocina', valor: flujoOriginal.valor });
+    else await Configuracion.destroy({ where: { clave: 'flujo_cocina' } });
+    if (destinoOriginal) await Configuracion.upsert({ clave: 'cocina_destino', valor: destinoOriginal.valor });
+    else await Configuracion.destroy({ where: { clave: 'cocina_destino' } });
+    const ids = (await Pedido.findAll({ where: { sucursal_id: sucursalId }, attributes: ['id'] })).map((p) => p.id);
+    const devs = await Devolucion.findAll({ where: { pedido_id: ids }, attributes: ['id'] });
+    await DevolucionItem.destroy({ where: { devolucion_id: devs.map((d) => d.id) } });
+    await Devolucion.destroy({ where: { pedido_id: ids } });
+    await DetallePedido.destroy({ where: { pedido_id: ids } });
+    await Pedido.destroy({ where: { id: ids } });
+    await SesionCaja.destroy({ where: { id: sesionId } });
+    await Caja.destroy({ where: { id: cajaId } });
+    await Producto.destroy({ where: { id: productoId } });
+    await Categoria.destroy({ where: { id: categoriaId } });
+    await Usuario.destroy({ where: { id: usuarioId } });
+    await Sucursal.destroy({ where: { id: sucursalId } });
+  });
+
+  const body = (detalleId) => ({ items: [{ detalle_pedido_id: detalleId, cantidad: 2 }], motivo: 'demora' });
+
+  it('fisico + estado_cocina pendiente -> payload solo con la linea anulada y nota ANULAR', async () => {
+    await Configuracion.upsert({ clave: 'flujo_cocina', valor: 'fisico' });
+    const { pedidoId, detalleId } = await nuevoPedido();
+    await Pedido.update({ estado_cocina: 'pendiente' }, { where: { id: pedidoId } });
+    const res = await anular(pedidoId, body(detalleId));
+    expect(res.status).toBe(201);
+    const c = res.body.datos.impresion.cocina;
+    expect(c).not.toBeNull();
+    expect(c.pedido.notas).toBe('*** ANULAR ESTOS PRODUCTOS ***');
+    expect(c.pedido.detalles).toHaveLength(1);
+    expect(c.pedido.detalles[0].id).toBe(detalleId);
+    expect(c.pedido.detalles[0].cantidad).toBe(2);
+    expect(c.config.flujo_cocina).toBe('fisico');
+    expect(c.modo_impresion).toBeDefined();
+  });
+
+  it('cocina_destino por_caja -> caja_id en el payload; compartida -> null', async () => {
+    await Configuracion.upsert({ clave: 'flujo_cocina', valor: 'fisico' });
+    await Configuracion.upsert({ clave: 'cocina_destino', valor: 'por_caja' });
+    const a = await nuevoPedido();
+    await Pedido.update({ estado_cocina: 'pendiente' }, { where: { id: a.pedidoId } });
+    const r1 = await anular(a.pedidoId, body(a.detalleId));
+    expect(r1.body.datos.impresion.cocina.caja_id).toBe(cajaId);
+    await Configuracion.upsert({ clave: 'cocina_destino', valor: 'compartida' });
+    const b = await nuevoPedido();
+    await Pedido.update({ estado_cocina: 'pendiente' }, { where: { id: b.pedidoId } });
+    const r2 = await anular(b.pedidoId, body(b.detalleId));
+    expect(r2.body.datos.impresion.cocina.caja_id).toBeNull();
+  });
+
+  it('estado_cocina listo o null -> cocina null', async () => {
+    await Configuracion.upsert({ clave: 'flujo_cocina', valor: 'fisico' });
+    for (const estado of ['listo', null]) {
+      const { pedidoId, detalleId } = await nuevoPedido();
+      await Pedido.update({ estado_cocina: estado }, { where: { id: pedidoId } });
+      const res = await anular(pedidoId, body(detalleId));
+      expect(res.status).toBe(201);
+      expect(res.body.datos.impresion.cocina).toBeNull();
+    }
+  });
+
+  it('flujo digital -> cocina null', async () => {
+    await Configuracion.upsert({ clave: 'flujo_cocina', valor: 'digital' });
+    const { pedidoId, detalleId } = await nuevoPedido();
+    await Pedido.update({ estado_cocina: 'pendiente' }, { where: { id: pedidoId } });
+    const res = await anular(pedidoId, body(detalleId));
+    expect(res.status).toBe(201);
+    expect(res.body.datos.impresion.cocina).toBeNull();
   });
 });
