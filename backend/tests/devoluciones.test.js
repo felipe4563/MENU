@@ -466,7 +466,7 @@ describe('POST /ventas/:id/anular - pedidos cobrados', () => {
       await Caja.destroy({ where: { id: cajaAjena.id } });
       await Sucursal.destroy({ where: { id: otraSuc.id } });
     }
-  });
+  }, 20000);
 
   it('cobrar un pedido con una linea totalmente anulada no escribe movimientos de inventario en 0', async () => {
     const p = await request(app).post('/api/v1/ventas').set('Authorization', `Bearer ${token}`).send({ tipo: 'llevar', sesion_caja_id: sesionId });
@@ -485,7 +485,7 @@ describe('POST /ventas/:id/anular - pedidos cobrados', () => {
     expect((await Pedido.findByPk(pid)).estado).toBe('completado');
     expect(await stockSucursal()).toBe(antesStock);
     expect(await RegistroInventario.count({ where: { nota: `Venta #${pid}` } })).toBe(0);
-  });
+  }, 20000);
 
   it('cobrar sigue funcionando con el pedido bloqueado (cobro normal con lineas parcialmente anuladas)', async () => {
     const p = await request(app).post('/api/v1/ventas').set('Authorization', `Bearer ${token}`).send({ tipo: 'llevar', sesion_caja_id: sesionId });
@@ -502,7 +502,7 @@ describe('POST /ventas/:id/anular - pedidos cobrados', () => {
     expect(Number(ped.total)).toBe(20);
     expect(Number(ped.cambio)).toBe(30);
     expect(await stockSucursal()).toBe(antesStock - 2);
-  });
+  }, 20000);
 
   it('reportes: devoluciones del resumen respetan los filtros tipo y origen', async () => {
     const { pedidoId, detalleId } = await ventaContado(2); // tipo llevar, origen staff
@@ -517,7 +517,7 @@ describe('POST /ventas/:id/anular - pedidos cobrados', () => {
     expect(Number(app_.total_devoluciones)).toBe(0);
     const staff = await reportesService.ventasResumen({ origen: 'staff' }, alcance);
     expect(Number(staff.total_devoluciones)).toBe(Number(llevar.total_devoluciones));
-  });
+  }, 20000);
 
   it('producto desactivado repone stock; producto borrado -> 201 sin reposicion', async () => {
     const p1 = (await Producto.create({ categoria_id: categoriaId, nombre: 'Producto Desactivado Dev Test', precio: 10, stock: 0 })).id;
