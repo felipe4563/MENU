@@ -147,8 +147,8 @@ async function ventasProductos(filtros = {}, alcance) {
       // el conteo `cantidad` de la línea — igual que ventasVariantes() más
       // abajo. Sumar solo `cantidad` (como antes) subestimaba/distorsionaba
       // el ranking de "Más vendidos" para cualquier producto pesable.
-      [literal('SUM(COALESCE(`DetallePedido`.`peso`, `DetallePedido`.`cantidad`))'), 'cantidad'],
-      [fn('SUM', literal('`DetallePedido`.`cantidad` * `DetallePedido`.`precio`')), 'monto'],
+      [literal('SUM(CASE WHEN `DetallePedido`.`cantidad_anulada` >= `DetallePedido`.`cantidad` THEN 0 ELSE COALESCE(`DetallePedido`.`peso`, `DetallePedido`.`cantidad` - `DetallePedido`.`cantidad_anulada`) END)'), 'cantidad'],
+      [fn('SUM', literal('(`DetallePedido`.`cantidad` - `DetallePedido`.`cantidad_anulada`) * `DetallePedido`.`precio`')), 'monto'],
       [literal("MAX(CASE WHEN `DetallePedido`.`peso` IS NOT NULL THEN 'kg' ELSE 'un' END)"), 'unidad'],
     ],
     group: ['DetallePedido.producto_id', 'DetallePedido.combo_id', 'producto.nombre', 'combo.nombre'],
@@ -225,16 +225,18 @@ async function ventasVariantes(filtros = {}, alcance) {
         ],
       },
     ],
-    attributes: ['producto_id', 'combo_id', 'cantidad', 'peso', 'precio'],
+    attributes: ['producto_id', 'combo_id', 'cantidad', 'cantidad_anulada', 'peso', 'precio'],
   });
 
   const mapa = new Map();
   detalles.forEach((d) => {
     if (d.producto?.id == null && d.combo?.id == null) return;
+    const vigente = (d.cantidad || 0) - (d.cantidad_anulada || 0);
+    if (vigente <= 0) return;
     const clave = _claveVariante(d);
     const esPesable = d.peso != null;
-    const cantidad = esPesable ? parseFloat(d.peso || 0) : (d.cantidad || 0);
-    const monto = (d.cantidad || 0) * parseFloat(d.precio || 0);
+    const cantidad = esPesable ? parseFloat(d.peso || 0) : vigente;
+    const monto = vigente * parseFloat(d.precio || 0);
     if (!mapa.has(clave)) {
       const conOpciones = _esLineaCombo(d) ? (d.combo_opciones || []).length > 0 : (d.opciones || []).length > 0;
       mapa.set(clave, {

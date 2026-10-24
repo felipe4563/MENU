@@ -199,7 +199,7 @@ async function reporte(sesion_id, alcance) {
   });
 
   const productosVendidos = await sequelize.query(
-    `SELECT pr.nombre, SUM(dp.cantidad) AS total_cantidad, SUM(dp.cantidad * dp.precio) AS total
+    `SELECT pr.nombre, SUM(dp.cantidad - dp.cantidad_anulada) AS total_cantidad, SUM((dp.cantidad - dp.cantidad_anulada) * dp.precio) AS total
      FROM detalle_pedidos dp
      JOIN pedidos pe ON pe.id = dp.pedido_id
      JOIN productos pr ON pr.id = dp.producto_id

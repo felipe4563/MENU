@@ -11,6 +11,7 @@ const { calcularPrecioPesable, redondearAMedio } = require('../../utils/precio')
 const { estaActivoHoy } = require('../../utils/disponibilidad');
 const { resolver: _resolverCupon } = require('../cupones/cupones.service');
 const mesasService = require('../mesas/mesas.service');
+const { cantidadVigente } = require('../devoluciones/calculo');
 
 // Rango del día calendario en hora de Bolivia (-04:00), sin depender de la
 // zona horaria del proceso de Node/VPS. Por defecto usa el momento actual;
@@ -209,6 +210,17 @@ function _urlAbsolutaImagen(ruta) {
   return `${base}${ruta}`;
 }
 
+// Copia del pedido (JSON) con `cantidad` = vigente y sin líneas totalmente
+// anuladas. No muta la instancia de Sequelize.
+function _detallesVigentes(pedidoJSON) {
+  return {
+    ...pedidoJSON,
+    detalles: (pedidoJSON.detalles || [])
+      .map((d) => ({ ...d, cantidad: cantidadVigente(d) }))
+      .filter((d) => d.cantidad > 0),
+  };
+}
+
 async function listarCocina({ sucursal_id, acceso_todas } = {}) {
   const where = { estado_cocina: { [Op.in]: ['pendiente', 'listo'] } };
   if (!acceso_todas) where.sucursal_id = sucursal_id;
@@ -222,7 +234,7 @@ async function listarCocina({ sucursal_id, acceso_todas } = {}) {
       if (detalle.producto) detalle.producto.imagen = _urlAbsolutaImagen(detalle.producto.imagen);
     });
   });
-  return pedidos;
+  return pedidos.map((pedido) => _detallesVigentes(pedido.toJSON()));
 }
 
 function _verificarAlcance(pedido, alcance) {
@@ -522,7 +534,7 @@ async function _finalizarVenta({ pedido, detalles, metodo_pago, monto_recibido, 
       });
       if (!combo) continue;
       for (const p of combo.productos) {
-        const cantidadComponente = detalle.cantidad * p.ComboProducto.cantidad;
+        const cantidadComponente = cantidadVigente(detalle) * p.ComboProducto.cantidad;
         if (p.stock !== null) {
           await ajustarStockSucursal({
             producto_id: p.id, sucursal_id: pedido.sucursal_id, tipo: 'venta', cantidad: cantidadComponente,
@@ -547,7 +559,7 @@ async function _finalizarVenta({ pedido, detalles, metodo_pago, monto_recibido, 
     const producto = await Producto.findByPk(detalle.producto_id, { transaction });
     if (producto && producto.stock !== null) {
       await ajustarStockSucursal({
-        producto_id: detalle.producto_id, sucursal_id: pedido.sucursal_id, tipo: 'venta', cantidad: detalle.cantidad,
+        producto_id: detalle.producto_id, sucursal_id: pedido.sucursal_id, tipo: 'venta', cantidad: cantidadVigente(detalle),
         usuario_id, nota: `Venta #${pedido.id}`, transaction,
       });
     }
@@ -556,7 +568,7 @@ async function _finalizarVenta({ pedido, detalles, metodo_pago, monto_recibido, 
         ? (await DetallePedidoOpcion.findAll({ where: { detalle_pedido_id: detalle.id }, transaction })).map(o => o.opcion_id)
         : [];
       await _descontarInsumosPorVenta({
-        producto_id: detalle.producto_id, opcion_ids: opcionesElegidas, cantidadVendida: detalle.cantidad,
+        producto_id: detalle.producto_id, opcion_ids: opcionesElegidas, cantidadVendida: cantidadVigente(detalle),
         sucursal_id: pedido.sucursal_id, usuario_id, notaBase: `Venta #${pedido.id}`, transaction,
       });
     }
@@ -614,14 +626,14 @@ async function _emitirImpresion(pedido, metodo_pago, cambio, sucursal_id, numero
   // intencional: significa "cualquier agente de la sucursal debe imprimirlo".
   let datosCaja = null;
   if (imprimirTicketCliente || esReimpresion) {
-    datosCaja = { pedido: pedido.toJSON(), metodo_pago, cambio, config: cfg, numero_orden_diario, modo_impresion, ancho_papel_bluetooth, caja_id };
+    datosCaja = { pedido: _detallesVigentes(pedido.toJSON()), metodo_pago, cambio, config: cfg, numero_orden_diario, modo_impresion, ancho_papel_bluetooth, caja_id };
     emitir('print:caja', datosCaja, sucursal_id, caja_id);
   }
 
   let datosCocina = null;
   if (cfg.flujo_cocina === 'fisico' && !suprimirCocina) {
     const cocinaPorCaja = cfg.cocina_destino === 'por_caja';
-    datosCocina = { pedido: pedido.toJSON(), config: cfg, numero_orden_diario, modo_impresion, ancho_papel_bluetooth, caja_id: cocinaPorCaja ? caja_id : null };
+    datosCocina = { pedido: _detallesVigentes(pedido.toJSON()), config: cfg, numero_orden_diario, modo_impresion, ancho_papel_bluetooth, caja_id: cocinaPorCaja ? caja_id : null };
     if (cocinaPorCaja) {
       // Cada caja imprime su propio ticket de cocina junto con el de venta
       // — para negocios chicos sin una estación de cocina fija compartida.
@@ -814,7 +826,7 @@ async function _confirmarPagoQr(pagoQrInicial) {
     if (!pagoQr || pagoQr.estado !== 'pendiente') return null; // ya resuelto por otra llamada concurrente
 
     const pedido = await Pedido.findByPk(pagoQr.pedido_id, { include: INCLUDE_PEDIDO_COMPLETO, transaction: t });
-    const detalles = pedido.detalles.map((d) => ({ id: d.id, producto_id: d.producto_id, combo_id: d.combo_id, cantidad: d.cantidad }));
+    const detalles = pedido.detalles.map((d) => ({ id: d.id, producto_id: d.producto_id, combo_id: d.combo_id, cantidad: d.cantidad, cantidad_anulada: d.cantidad_anulada }));
 
     await _finalizarVenta({
       pedido, detalles, metodo_pago: 'qr', monto_recibido: pagoQr.monto_neto,
@@ -1106,6 +1118,7 @@ async function actualizarItem(pedido_id, item_id, { cantidad, nota, estado, peso
   const pedido = await Pedido.findByPk(pedido_id);
   if (!pedido) throw Object.assign(new Error('Pedido no encontrado'), { status: 404 });
   _verificarAlcance(pedido, alcance);
+  if (pedido.estado !== 'pendiente') throw Object.assign(new Error('Pedido no modificable'), { status: 409 });
   const item = await DetallePedido.findOne({ where: { id: item_id, pedido_id } });
   if (!item) throw Object.assign(new Error('Item no encontrado'), { status: 404 });
 
@@ -1153,7 +1166,7 @@ async function cobrar(pedido_id, usuario_id, { metodo_pago, monto_recibido, desc
 
   const cfgFidelidad = await _configFidelidad();
   const { descuento: descuentoPuntos } = await _resolverCanje(pedido.cliente_id, puntos_canjear, cfgFidelidad, null, metodo_pago);
-  const itemsCupon = pedido.detalles.map((d) => ({ producto_id: d.producto_id, cantidad: d.cantidad, precio: parseFloat(d.precio) }));
+  const itemsCupon = pedido.detalles.map((d) => ({ producto_id: d.producto_id, cantidad: cantidadVigente(d), precio: parseFloat(d.precio) }));
   const { descuento: descuentoCupon } = await _resolverCupon(cupon_codigo, parseFloat(pedido.total) - parseFloat(descuento), pedido.cliente_id, undefined, itemsCupon);
   const monto_neto = Math.max(0, parseFloat(pedido.total) - parseFloat(descuento) - descuentoPuntos - descuentoCupon + parseFloat(propina));
 
@@ -1168,7 +1181,7 @@ async function cobrar(pedido_id, usuario_id, { metodo_pago, monto_recibido, desc
     return { pedido: await obtener(pedido_id), pago_qr };
   }
 
-  const detalles = pedido.detalles.map((d) => ({ id: d.id, producto_id: d.producto_id, combo_id: d.combo_id, cantidad: d.cantidad, precio: parseFloat(d.precio) }));
+  const detalles = pedido.detalles.map((d) => ({ id: d.id, producto_id: d.producto_id, combo_id: d.combo_id, cantidad: d.cantidad, cantidad_anulada: d.cantidad_anulada, precio: parseFloat(d.precio) }));
   await sequelize.transaction((t) => _finalizarVenta({ pedido, detalles, metodo_pago, monto_recibido, descuento, propina, usuario_id, puntos_canjear, cupon_codigo }, t));
   await Pedido.update({ estado_cocina: null }, { where: { id: pedido_id } });
 
@@ -1209,7 +1222,7 @@ async function cancelar(pedido_id, usuario_id, alcance) {
 
 async function _recalcularTotal(pedido_id) {
   const [result] = await sequelize.query(
-    'SELECT COALESCE(SUM(cantidad * precio), 0) as total FROM detalle_pedidos WHERE pedido_id = ?',
+    'SELECT COALESCE(SUM((cantidad - cantidad_anulada) * precio), 0) as total FROM detalle_pedidos WHERE pedido_id = ?',
     { replacements: [pedido_id], type: sequelize.QueryTypes.SELECT }
   );
   await Pedido.update({ total: result.total }, { where: { id: pedido_id } });
