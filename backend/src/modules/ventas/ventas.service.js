@@ -1,7 +1,7 @@
 const { Op } = require('sequelize');
 const {
   Pedido, DetallePedido, Mesa, Producto, Cliente, SesionCaja, Caja, LibroCaja, Configuracion, PagoQr, Opcion, Combo, ComboProducto, Promocion, Cupon,
-  RecetaInsumo, DetallePedidoOpcion, DetallePedidoComboOpcion, sequelize,
+  RecetaInsumo, DetallePedidoOpcion, DetallePedidoComboOpcion, Devolucion, DevolucionItem, Usuario, sequelize,
 } = require('../../models');
 const { emitir } = require('../../socket');
 const { ajustarStockSucursal } = require('../inventario/stock.service');
@@ -279,7 +279,19 @@ async function misVentasHoy(usuario_id, alcance, filtros = {}) {
 }
 
 async function obtener(id, alcance) {
-  const p = await Pedido.findByPk(id, { include: INCLUDE_PEDIDO_COMPLETO });
+  const p = await Pedido.findByPk(id, {
+    include: [
+      ...INCLUDE_PEDIDO_COMPLETO,
+      {
+        model: Devolucion, as: 'devoluciones', required: false,
+        include: [
+          { model: Usuario, as: 'usuario', attributes: ['id', 'nombre'] },
+          { model: DevolucionItem, as: 'items' },
+        ],
+      },
+    ],
+    order: [[{ model: Devolucion, as: 'devoluciones' }, 'creado_en', 'ASC']],
+  });
   if (!p) throw Object.assign(new Error('Pedido no encontrado'), { status: 404 });
   _verificarAlcance(p, alcance);
   return p;
@@ -1220,12 +1232,12 @@ async function cancelar(pedido_id, usuario_id, alcance) {
   return cancelado;
 }
 
-async function _recalcularTotal(pedido_id) {
+async function _recalcularTotal(pedido_id, { transaction } = {}) {
   const [result] = await sequelize.query(
     'SELECT COALESCE(SUM((cantidad - cantidad_anulada) * precio), 0) as total FROM detalle_pedidos WHERE pedido_id = ?',
-    { replacements: [pedido_id], type: sequelize.QueryTypes.SELECT }
+    { replacements: [pedido_id], type: sequelize.QueryTypes.SELECT, transaction }
   );
-  await Pedido.update({ total: result.total }, { where: { id: pedido_id } });
+  await Pedido.update({ total: result.total }, { where: { id: pedido_id }, transaction });
 }
 
 async function marcarListo(pedido_id, alcance) {
@@ -1260,4 +1272,5 @@ module.exports = {
   listar, listarCocina, obtener, misVentasHoy, reimprimir, crear, crearCompleta, agregarItem, actualizarItem, eliminarItem,
   cobrar, cancelar, marcarListo, marcarEntregado,
   consultarEstadoPagoQr, cancelarPagoQr, procesarWebhookPagoQr, revertirPagosQrVencidos,
+  recalcularTotal: _recalcularTotal, verificarAlcance: _verificarAlcance,
 };

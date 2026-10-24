@@ -4,6 +4,9 @@ const auth = require('../../middlewares/auth');
 const { verificarPermiso } = require('../../middlewares/permisos');
 const { requiereSucursalActiva } = require('../../middlewares/sucursalActiva');
 
+const devolucionesCtrl = require('../devoluciones/devoluciones.controller');
+const { validarAnular } = require('../devoluciones/devoluciones.validators');
+
 const router = Router();
 router.use(auth);
 
@@ -18,6 +21,7 @@ router.get('/', (req, res, next) => (
 router.post('/', verificarPermiso('ventas', 'crear'), requiereSucursalActiva, ctrl.crear);
 router.post('/completa', verificarPermiso('ventas', 'crear'), requiereSucursalActiva, ctrl.crearCompleta);
 router.get('/:id', verificarPermiso('ventas', 'ver'), ctrl.obtener);
+router.post('/:id/anular', verificarPermiso('ventas', 'anular'), validarAnular, devolucionesCtrl.anular);
 router.post('/:id/reimprimir', verificarPermiso('ventas', 'cobrar'), ctrl.reimprimir);
 router.post('/:id/items', verificarPermiso('ventas', 'crear'), ctrl.agregarItem);
 router.put('/:id/items/:item_id', verificarPermiso('ventas', 'crear'), ctrl.actualizarItem);
