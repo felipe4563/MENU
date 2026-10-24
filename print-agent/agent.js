@@ -168,22 +168,29 @@ async function imprimirCaja(datos, origen, forzar) {
 
 async function imprimirCocina(datos, origen, forzar) {
   var pid = datos.pedido ? datos.pedido.id : '?';
+  // Un aviso "ANULAR" comparte el id del pedido con su comanda original: se
+  // deduplica por la devolución (clave "cocina-anul:<devolucion_id>") para que
+  // no se descarte como si fuera la comanda repetida.
+  var esAnulacion = !!datos.anulacion;
+  var tipoDedup = esAnulacion ? 'cocina-anul' : 'cocina';
+  var claveDedup = esAnulacion ? datos.anulacion.devolucion_id : pid;
+  var etiqueta = esAnulacion ? 'Anulación #' + claveDedup + ' del pedido #' + pid : 'Pedido #' + pid;
   var motivo = motivoNoPertenece(datos);
   if (motivo) {
-    console.log('[' + ts() + '] .. print:cocina Pedido #' + pid + ' es de ' + motivo + ' (' + origen + ', omitido)');
+    console.log('[' + ts() + '] .. print:cocina ' + etiqueta + ' es de ' + motivo + ' (' + origen + ', omitido)');
     return;
   }
-  if (!forzar && yaImpreso('cocina', pid)) {
-    console.log('[' + ts() + '] .. print:cocina Pedido #' + pid + ' ya impreso (' + origen + ', omitido)');
+  if (!forzar && yaImpreso(tipoDedup, claveDedup)) {
+    console.log('[' + ts() + '] .. print:cocina ' + etiqueta + ' ya impreso (' + origen + ', omitido)');
     return;
   }
-  reservar('cocina', pid);
-  console.log('[' + ts() + '] >> print:cocina Pedido #' + pid + ' (' + origen + (forzar ? ', forzado' : '') + ')');
+  reservar(tipoDedup, claveDedup);
+  console.log('[' + ts() + '] >> print:cocina ' + etiqueta + ' (' + origen + (forzar ? ', forzado' : '') + ')');
   try {
     await printRaw(config.impresora_cocina, buildCocina(datos));
     console.log('[' + ts() + '] OK Cocina impreso');
   } catch (err) {
-    liberar('cocina', pid);
+    liberar(tipoDedup, claveDedup);
     throw err;
   }
 }
@@ -622,12 +629,16 @@ function buildCocina(data) {
   var ahora    = new Date();
   var hora     = ahora.toLocaleTimeString('es-BO', { hour: '2-digit', minute: '2-digit' });
   var sym      = cfg.simbolo_moneda || 'Bs.';
+  // Aviso de productos anulados: encabezado "ANULAR", cada línea con prefijo
+  // "ANULAR" y sin precios ni total, para que no parezca una comanda nueva.
+  var esAnulacion = !!data.anulacion;
 
   t.init().charset();
 
   // ── Encabezado cocina (visualmente diferente a caja: usa # y dblW) ────────
   t.rule('#');
-  t.center().bold(true).dblW().line('COCINA').normal().bold(false);
+  if (esAnulacion) t.center().bold(true).dbl().line('ANULAR').normal().bold(false);
+  else t.center().bold(true).dblW().line('COCINA').normal().bold(false);
   t.rule('#');
 
   // ── Tipo de orden + identificación ────────────────────────────────────────
@@ -662,7 +673,10 @@ function buildCocina(data) {
     var esCombo2 = !!d2.combo;
     var prod2    = String(esCombo2 ? ('COMBO: ' + d2.combo.nombre) : ((d2.producto && d2.producto.nombre) ? d2.producto.nombre : '')).toUpperCase();
     var sub2     = (parseFloat(d2.precio) * d2.cantidad).toFixed(2);
-    if (d2.peso != null) {
+    if (esAnulacion) {
+      var cantAnul = d2.peso != null ? parseFloat(d2.peso).toFixed(3) + 'kg' : d2.cantidad;
+      t.left().dbl().bold(true).line('ANULAR ' + cantAnul + '  ' + prod2).normal().bold(false);
+    } else if (d2.peso != null) {
       var pesoKg2   = parseFloat(d2.peso).toFixed(3);
       var precioKg2 = parseFloat((d2.producto && d2.producto.precio) || 0).toFixed(2);
       t.left().dbl().bold(true).line(pesoKg2 + 'kg  ' + prod2).normal().bold(false);
@@ -691,9 +705,11 @@ function buildCocina(data) {
   t.rule('#');
 
   // ── Total (pedido del dueño: que cocina también vea cuánto se consumió) ──
-  var totalCocina = detalles2.reduce(function(s, d) { return s + parseFloat(d.precio) * d.cantidad; }, 0);
-  t.left().bold(true).dblH().cols('TOTAL', sym + ' ' + totalCocina.toFixed(2)).normal().bold(false);
-  t.rule('#');
+  if (!esAnulacion) {
+    var totalCocina = detalles2.reduce(function(s, d) { return s + parseFloat(d.precio) * d.cantidad; }, 0);
+    t.left().bold(true).dblH().cols('TOTAL', sym + ' ' + totalCocina.toFixed(2)).normal().bold(false);
+    t.rule('#');
+  }
 
   // ── Notas del pedido (grande y visible) ───────────────────────────────────
   if (pedido.notas) {

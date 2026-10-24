@@ -18,7 +18,10 @@ function _opcionesPorProducto(comboOpciones) {
   return mapa;
 }
 
-export function imprimirTicketCocina(pedido, config = {}, numeroOrdenDiario = null) {
+// `anulacion` (opcional, del payload de cocina): aviso de productos anulados.
+// Se imprime con encabezado "ANULAR", cada línea con prefijo "ANULAR" y sin
+// precios ni total, para que cocina no lo confunda con una comanda nueva.
+export function imprimirTicketCocina(pedido, config = {}, numeroOrdenDiario = null, anulacion = null) {
   const nombre  = config.nombre_negocio ?? 'Restaurante';
   const dir     = config.direccion      ?? '';
   const tel     = config.telefono       ?? '';
@@ -58,6 +61,17 @@ export function imprimirTicketCocina(pedido, config = {}, numeroOrdenDiario = nu
     const opcionesProducto = !esCombo && d.opciones?.length
       ? `<br><span class="prod-combo-detalle">${d.opciones.map(o => o.nombre).join(', ')}</span>`
       : '';
+    if (anulacion) {
+      const nombreAnul = `ANULAR ${nombre}`;
+      return `
+    <tr class="fila-prod">
+      <td class="col-prod" style="width:90%">
+        <span class="prod-nombre" style="font-size:${_fsNombre(nombreAnul, 200, 13)}px">${nombreAnul}</span>${contenidoCombo}${opcionesProducto}
+        ${d.nota ? `<br><span class="prod-nota">» ${d.nota}</span>` : ''}
+      </td>
+      <td class="col-cant">${cantEtiqueta}</td>
+    </tr>`;
+    }
     const fsNombre = _fsNombre(nombre, 109, 13);
     return `
     <tr class="fila-prod">
@@ -243,7 +257,7 @@ export function imprimirTicketCocina(pedido, config = {}, numeroOrdenDiario = nu
 <body>
 
   <!-- Banner COCINA: bien grande y distinto al ticket de cliente -->
-  <div class="cocina-banner">COCINA</div>
+  <div class="cocina-banner">${anulacion ? 'ANULAR' : 'COCINA'}</div>
 
   <!-- Header -->
   <div class="header">
@@ -285,14 +299,14 @@ export function imprimirTicketCocina(pedido, config = {}, numeroOrdenDiario = nu
     <thead>
       <tr>
         <th style="text-align:left">Producto</th>
-        <th>Cant</th>
+        <th>Cant</th>${anulacion ? '' : `
         <th style="text-align:right">P.Unit</th>
-        <th style="text-align:right">Sub</th>
+        <th style="text-align:right">Sub</th>`}
       </tr>
     </thead>
     <tbody>${filas}</tbody>
   </table>
-
+${anulacion ? '' : `
   <!-- Total -->
   <div class="total-bloque">
     <div class="total-row principal">
@@ -300,7 +314,7 @@ export function imprimirTicketCocina(pedido, config = {}, numeroOrdenDiario = nu
       <span>${simbolo} ${total.toFixed(2)}</span>
     </div>
   </div>
-
+`}
   ${pedido.notas ? `
   <hr class="sdash"/>
   <div class="nota-general">

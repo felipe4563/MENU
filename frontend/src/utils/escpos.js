@@ -238,11 +238,15 @@ function buildCocina(data) {
   const ahora = new Date();
   const hora = ahora.toLocaleTimeString('es-BO', { hour: '2-digit', minute: '2-digit' });
   const sym = cfg.simbolo_moneda || 'Bs.';
+  // Aviso de productos anulados: encabezado "ANULAR", prefijo "ANULAR" por
+  // línea y sin precios ni total (ver buildCocina en print-agent/agent.js).
+  const esAnulacion = !!data.anulacion;
 
   t.init().charset();
 
   t.rule('#');
-  t.center().bold(true).dblW().line('COCINA').normal().bold(false);
+  if (esAnulacion) t.center().bold(true).dbl().line('ANULAR').normal().bold(false);
+  else t.center().bold(true).dblW().line('COCINA').normal().bold(false);
   t.rule('#');
 
   if (esDelivery) {
@@ -273,7 +277,10 @@ function buildCocina(data) {
     const esCombo2 = !!d2.combo;
     const prod2 = String(esCombo2 ? ('COMBO: ' + d2.combo.nombre) : ((d2.producto && d2.producto.nombre) ? d2.producto.nombre : '')).toUpperCase();
     const sub2 = (parseFloat(d2.precio) * d2.cantidad).toFixed(2);
-    if (d2.peso != null) {
+    if (esAnulacion) {
+      const cantAnul = d2.peso != null ? parseFloat(d2.peso).toFixed(3) + 'kg' : d2.cantidad;
+      t.left().dbl().bold(true).line('ANULAR ' + cantAnul + '  ' + prod2).normal().bold(false);
+    } else if (d2.peso != null) {
       const pesoKg2 = parseFloat(d2.peso).toFixed(3);
       const precioKg2 = parseFloat((d2.producto && d2.producto.precio) || 0).toFixed(2);
       t.left().dbl().bold(true).line(pesoKg2 + 'kg  ' + prod2).normal().bold(false);
@@ -301,9 +308,11 @@ function buildCocina(data) {
   t.rule('#');
 
   // Total: el dueño pidió que cocina también vea cuánto se consumió, no solo caja.
-  const totalCocina = detalles2.reduce((s, d) => s + parseFloat(d.precio) * d.cantidad, 0);
-  t.left().bold(true).dblH().cols('TOTAL', sym + ' ' + totalCocina.toFixed(2)).normal().bold(false);
-  t.rule('#');
+  if (!esAnulacion) {
+    const totalCocina = detalles2.reduce((s, d) => s + parseFloat(d.precio) * d.cantidad, 0);
+    t.left().bold(true).dblH().cols('TOTAL', sym + ' ' + totalCocina.toFixed(2)).normal().bold(false);
+    t.rule('#');
+  }
 
   if (pedido.notas) {
     t.center().bold(true).line('!! NOTA ESPECIAL !!').bold(false);

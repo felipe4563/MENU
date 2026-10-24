@@ -114,8 +114,8 @@ export function reimprimirConFallback(datosImpresion) {
       imprimirBluetoothCocina(datosImpresion.cocina);
     } else {
       postConTimeout(`${base}/imprimir/cocina?forzar=1`, datosImpresion.cocina).catch(() => {
-        const { pedido, config, numero_orden_diario } = datosImpresion.cocina;
-        imprimirTicketCocina(pedido, config, numero_orden_diario);
+        const { pedido, config, numero_orden_diario, anulacion } = datosImpresion.cocina;
+        imprimirTicketCocina(pedido, config, numero_orden_diario, anulacion);
       });
     }
   }

@@ -72,9 +72,14 @@ export default function PantallaCocinaImpresion() {
       const pedidoId = datos.pedido?.id;
       if (!pedidoId) return;
 
+      // Un aviso "ANULAR" comparte el id del pedido con su comanda: se
+      // deduplica por la devolución para no descartarlo como repetido.
+      const claveDedup = datos.anulacion
+        ? `cocina-anul:${datos.anulacion.devolucion_id}`
+        : pedidoId;
       limpiarVencidos();
-      if (dedupRef.current.has(pedidoId)) return;
-      dedupRef.current.set(pedidoId, Date.now());
+      if (dedupRef.current.has(claveDedup)) return;
+      dedupRef.current.set(claveDedup, Date.now());
 
       imprimirBluetoothCocina(datos);
 
@@ -84,7 +89,7 @@ export default function PantallaCocinaImpresion() {
           ? `Delivery — ${datos.pedido.nombre_cliente || 'Cliente'}`
           : `Para llevar — ${datos.pedido.nombre_cliente || 'Cliente'}`;
       const hora = new Date().toLocaleTimeString('es-BO', { hour: '2-digit', minute: '2-digit' });
-      setImpresos((prev) => [{ pedidoId, etiqueta, hora }, ...prev].slice(0, 30));
+      setImpresos((prev) => [{ pedidoId, clave: claveDedup, anulacion: !!datos.anulacion, etiqueta, hora }, ...prev].slice(0, 30));
     }
 
     socket.on('print:cocina', onPrintCocina);
@@ -141,8 +146,8 @@ export default function PantallaCocinaImpresion() {
         ) : (
           <div className="space-y-2">
             {impresos.map((item) => (
-              <div key={item.pedidoId} className="flex items-center justify-between text-sm border-b border-border pb-2">
-                <span className="text-foreground">Comanda #{item.pedidoId} — {item.etiqueta}</span>
+              <div key={item.clave ?? item.pedidoId} className="flex items-center justify-between text-sm border-b border-border pb-2">
+                <span className="text-foreground">{item.anulacion ? 'ANULAR' : 'Comanda'} #{item.pedidoId} — {item.etiqueta}</span>
                 <span className="text-muted-foreground text-xs">{item.hora}</span>
               </div>
             ))}
