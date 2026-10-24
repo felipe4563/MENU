@@ -50,14 +50,18 @@ export default function ModalAnularProductos({ pedido, onClose, onAnulado }) {
   const [vuelve, setVuelve] = useState({});  // detalle_id -> false si se desmarca
   const [motivo, setMotivo] = useState('');
   const [nota, setNota] = useState('');
-  const [forma, setForma] = useState(
-    pedido.metodo_pago === 'app_externa' ? 'app' : pedido.metodo_pago === 'qr' ? 'transferencia' : 'efectivo'
-  );
+  const [forma, setForma] = useState(pedido.metodo_pago === 'app_externa' ? 'app' : 'efectivo');
   const [error, setError] = useState(null);
   const [resultado, setResultado] = useState(null);
 
-  const seleccion = lineas.filter((d) => (cant[d.id] ?? 0) > 0);
-  const unidades = seleccion.reduce((s, d) => s + cant[d.id], 0);
+  // Si el pedido se refresca, la cantidad elegida no puede pasar de lo vigente.
+  const cantEf = useMemo(() => {
+    const o = {};
+    for (const d of lineas) o[d.id] = Math.min(cant[d.id] ?? 0, vigente(d));
+    return o;
+  }, [lineas, cant]);
+  const seleccion = lineas.filter((d) => cantEf[d.id] > 0);
+  const unidades = seleccion.reduce((s, d) => s + cantEf[d.id], 0);
 
   // Vista previa con la misma fórmula del backend (el backend es la fuente de verdad).
   const preview = useMemo(() => {
@@ -68,12 +72,12 @@ export default function ModalAnularProductos({ pedido, onClose, onAnulado }) {
     let restante = Math.max(0, round2(cob - Number(pedido.total_devuelto || 0)));
     let suma = 0;
     for (const d of seleccion) {
-      const m = Math.min(round2(Number(d.precio) * cant[d.id] * ratio), restante);
+      const m = Math.min(round2(Number(d.precio) * cantEf[d.id] * ratio), restante);
       restante = round2(restante - m);
       suma = round2(suma + m);
     }
     return suma;
-  }, [cobrado, pedido, seleccion, cant]);
+  }, [cobrado, pedido, seleccion, cantEf]);
 
   const notaOk = motivo !== 'otro' || nota.trim().length > 0;
   const valido = unidades > 0 && !!motivo && notaOk;
@@ -86,7 +90,7 @@ export default function ModalAnularProductos({ pedido, onClose, onAnulado }) {
     mutationFn: () => anularProductos(pedido.id, {
       items: seleccion.map((d) => ({
         detalle_pedido_id: d.id,
-        cantidad: cant[d.id],
+        cantidad: cantEf[d.id],
         ...(tieneStock(d) ? { vuelve_stock: vuelve[d.id] !== false } : {}),
       })),
       motivo,
@@ -94,11 +98,10 @@ export default function ModalAnularProductos({ pedido, onClose, onAnulado }) {
       ...(cobrado ? { forma } : {}),
     }),
     onSuccess: (res) => {
-      qc.invalidateQueries({ queryKey: ['venta-detalle', pedido.id] });
-      qc.invalidateQueries({ queryKey: ['venta-detalle', String(pedido.id)] });
+      // Prefijos: el id llega como número (Mis Ventas) o string (ruta de PedidoPage).
+      qc.invalidateQueries({ queryKey: ['venta-detalle'] });
       qc.invalidateQueries({ queryKey: ['mis-ventas-hoy'] });
-      qc.invalidateQueries({ queryKey: ['venta', pedido.id] });
-      qc.invalidateQueries({ queryKey: ['venta', String(pedido.id)] });
+      qc.invalidateQueries({ queryKey: ['venta'] });
       if (res.impresion?.cocina) imprimirLocal({ cocina: res.impresion.cocina });
       const dev = {
         ...res.devolucion,
@@ -108,7 +111,6 @@ export default function ModalAnularProductos({ pedido, onClose, onAnulado }) {
         }),
       };
       const conDinero = !!dev.forma && dev.forma !== 'sin_dinero';
-      if (conDinero) imprimirComprobanteDevolucion(pedido, dev, config);
       setResultado({ dev, conDinero });
     },
     onError: (err) => setError(err?.response?.data?.mensaje ?? 'No se pudo anular'),
@@ -128,18 +130,22 @@ export default function ModalAnularProductos({ pedido, onClose, onAnulado }) {
           ) : (
             <p className="text-sm text-foreground">Los productos fueron anulados del pedido y se avisó a cocina.</p>
           )}
-          <div className="flex justify-center gap-3">
+          <div className="flex flex-col gap-2">
             {resultado.conDinero && (
               <button
+                type="button"
                 onClick={() => imprimirComprobanteDevolucion(pedido, resultado.dev, config)}
-                className="px-4 py-2 rounded-xl text-sm border border-border text-foreground hover:bg-accent transition-colors"
+                className="w-full px-5 py-3 rounded-xl text-sm bg-blue-600 hover:bg-blue-700 text-white font-semibold transition-colors"
               >
                 🖨 Imprimir comprobante
               </button>
             )}
             <button
+              type="button"
               onClick={() => onAnulado?.(resultado.dev)}
-              className="px-5 py-2 rounded-xl text-sm bg-blue-600 hover:bg-blue-700 text-white font-semibold transition-colors"
+              className={resultado.conDinero
+                ? 'w-full px-4 py-2 rounded-xl text-sm border border-border text-foreground hover:bg-accent transition-colors'
+                : 'w-full px-5 py-3 rounded-xl text-sm bg-blue-600 hover:bg-blue-700 text-white font-semibold transition-colors'}
             >
               Cerrar
             </button>
@@ -155,7 +161,7 @@ export default function ModalAnularProductos({ pedido, onClose, onAnulado }) {
         <div className="divide-y divide-border rounded-xl border border-border overflow-hidden">
           {lineas.map((d) => {
             const v = vigente(d);
-            const n = cant[d.id] ?? 0;
+            const n = cantEf[d.id];
             const porPeso = d.peso !== null && d.peso !== undefined;
             return (
               <div key={d.id} className="px-3 py-2 space-y-1.5">
@@ -173,12 +179,12 @@ export default function ModalAnularProductos({ pedido, onClose, onAnulado }) {
                     </label>
                   ) : (
                     <div className="flex items-center gap-1 shrink-0">
-                      <button type="button" onClick={() => cambiar(d, n - 1)} disabled={n <= 0}
+                      <button type="button" aria-label={`Quitar una unidad de ${nombreLinea(d)}`} onClick={() => cambiar(d, n - 1)} disabled={n <= 0}
                         className="w-8 h-8 rounded-lg bg-muted hover:bg-accent flex items-center justify-center disabled:opacity-40 transition-colors">
                         <Minus className="w-3.5 h-3.5" />
                       </button>
                       <span className="w-7 text-center text-sm font-semibold text-foreground">{n}</span>
-                      <button type="button" onClick={() => cambiar(d, n + 1)} disabled={n >= v}
+                      <button type="button" aria-label={`Agregar una unidad de ${nombreLinea(d)}`} onClick={() => cambiar(d, n + 1)} disabled={n >= v}
                         className="w-8 h-8 rounded-lg bg-muted hover:bg-accent flex items-center justify-center disabled:opacity-40 transition-colors">
                         <Plus className="w-3.5 h-3.5" />
                       </button>
@@ -201,7 +207,7 @@ export default function ModalAnularProductos({ pedido, onClose, onAnulado }) {
           <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wide mb-1.5">Motivo</p>
           <div className="flex flex-wrap gap-1.5">
             {Object.entries(MOTIVOS_DEVOLUCION).map(([id, label]) => (
-              <button key={id} type="button" onClick={() => setMotivo(id)}
+              <button key={id} type="button" aria-pressed={motivo === id} onClick={() => setMotivo(id)}
                 className={`px-3 py-1.5 rounded-lg text-xs font-medium border transition-colors ${
                   motivo === id ? 'bg-blue-600 border-blue-600 text-white' : 'border-border text-foreground hover:bg-accent'
                 }`}>
@@ -210,6 +216,7 @@ export default function ModalAnularProductos({ pedido, onClose, onAnulado }) {
             ))}
           </div>
           <input
+            aria-label="Nota del motivo"
             value={nota}
             onChange={(e) => setNota(e.target.value)}
             maxLength={255}
@@ -227,7 +234,7 @@ export default function ModalAnularProductos({ pedido, onClose, onAnulado }) {
                 ['transferencia', 'Transferencia'],
                 ...(pedido.metodo_pago === 'app_externa' ? [['app', 'La devuelve la app']] : []),
               ].map(([id, label]) => (
-                <button key={id} type="button" onClick={() => setForma(id)}
+                <button key={id} type="button" aria-pressed={forma === id} onClick={() => setForma(id)}
                   className={`px-3 py-1.5 rounded-lg text-xs font-medium border transition-colors ${
                     forma === id ? 'bg-blue-600 border-blue-600 text-white' : 'border-border text-foreground hover:bg-accent'
                   }`}>
@@ -245,10 +252,11 @@ export default function ModalAnularProductos({ pedido, onClose, onAnulado }) {
         {error && <p className="text-sm text-destructive">{error}</p>}
 
         <div className="flex justify-end gap-3">
-          <button onClick={onClose} className="px-4 py-2 rounded-xl text-sm text-muted-foreground hover:bg-accent transition-colors">
+          <button type="button" onClick={onClose} className="px-4 py-2 rounded-xl text-sm text-muted-foreground hover:bg-accent transition-colors">
             Cancelar
           </button>
           <button
+            type="button"
             onClick={() => { setError(null); anular.mutate(); }}
             disabled={!valido || anular.isPending}
             className="flex items-center gap-1.5 px-4 py-2 rounded-xl text-sm bg-red-600 hover:bg-red-700 text-white font-semibold transition-colors disabled:opacity-50"

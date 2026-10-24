@@ -81,7 +81,7 @@ async function _anularSinCobrar(pedido, usuario_id, { items, motivo, nota }, tra
   await ventasService.recalcularTotal(pedido.id, { transaction });
   await pedido.reload({ transaction });
   const dev = await Devolucion.findByPk(devolucion.id, {
-    include: [{ model: DevolucionItem, as: 'items' }], transaction,
+    include: [{ model: DevolucionItem, as: 'items' }, { model: Usuario, as: 'usuario', attributes: ['id', 'nombre'] }], transaction,
   });
   return { pedido, devolucion: dev };
 }
@@ -160,7 +160,7 @@ async function _anularCobrado(pedido, usuario_id, { items, motivo, nota, forma }
 
   await pedido.reload({ transaction });
   const dev = await Devolucion.findByPk(devolucion.id, {
-    include: [{ model: DevolucionItem, as: 'items' }], transaction,
+    include: [{ model: DevolucionItem, as: 'items' }, { model: Usuario, as: 'usuario', attributes: ['id', 'nombre'] }], transaction,
   });
   return { pedido, devolucion: dev };
 }

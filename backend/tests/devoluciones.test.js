@@ -72,6 +72,7 @@ describe('POST /ventas/:id/anular - pedidos sin cobrar', () => {
     const res = await anular(pedidoId, { items: [{ detalle_pedido_id: detalleId, cantidad: 2 }], motivo: 'demora' });
     expect(res.status).toBe(201);
     expect(res.body.datos.devolucion.forma).toBe('sin_dinero');
+    expect(res.body.datos.devolucion.usuario.id).toBe(usuarioId);
     expect(Number(res.body.datos.devolucion.monto)).toBe(0);
     expect(res.body.datos.impresion).toEqual({ cocina: null });
     expect((await DetallePedido.findByPk(detalleId)).cantidad_anulada).toBe(2);
