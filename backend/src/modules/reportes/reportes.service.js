@@ -72,15 +72,18 @@ async function ventas(filtros = {}, alcance) {
 
 // Devoluciones con dinero del mismo período/alcance/filtros que las ventas.
 // El período filtra por devoluciones.creado_en; sucursal y método de pago
-// salen del pedido; el cajero filtra por quien registró la devolución.
+// salen del pedido, igual que tipo y origen; el cajero filtra por quien
+// registró la devolución.
 async function _devolucionesResumen(filtros, alcance) {
-  const { desde, hasta, usuario_id, metodo_pago } = filtros;
+  const { desde, hasta, usuario_id, metodo_pago, tipo, origen } = filtros;
   const where = { forma: { [Op.ne]: 'sin_dinero' }, ...filtroFecha(desde, hasta) };
   if (usuario_id) where.usuario_id = usuario_id;
   const wherePedido = {};
   if (!alcance.acceso_todas) wherePedido.sucursal_id = alcance.sucursal_id;
   else if (filtros.sucursal_id) wherePedido.sucursal_id = filtros.sucursal_id;
   if (metodo_pago) wherePedido.metodo_pago = metodo_pago;
+  if (tipo) wherePedido.tipo = tipo;
+  if (origen) wherePedido.origen = origen;
 
   const incluir = [{ model: Pedido, as: 'pedido', attributes: [], where: wherePedido, required: true }];
   const [porMotivo, porForma] = await Promise.all([

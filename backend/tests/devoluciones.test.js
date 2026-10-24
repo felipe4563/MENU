@@ -5,6 +5,8 @@ const {
   Sucursal, Categoria, Producto, Usuario, Rol, Permiso, Caja, SesionCaja, Pedido, DetallePedido,
   Devolucion, DevolucionItem, LibroCaja, ProductoStockSucursal, RegistroInventario, Cliente, Configuracion,
 } = require('../src/models');
+const ventasService = require('../src/modules/ventas/ventas.service');
+const reportesService = require('../src/modules/reportes/reportes.service');
 
 describe('POST /ventas/:id/anular - pedidos sin cobrar', () => {
   let sucursalId, otraSucursalId, usuarioId, sinPermisoId, cajaId, sesionId, token, tokenSinPermiso, productoId, categoriaId, rolTmpId;
@@ -152,6 +154,63 @@ describe('POST /ventas/:id/anular - pedidos sin cobrar', () => {
     const res = await anular(pedidoId, { items: [{ detalle_pedido_id: detalleId, cantidad: 1 }], motivo: 'demora' });
     expect(res.status).toBe(201);
     expect(res.body.datos.devolucion.forma).toBe('sin_dinero');
+  });
+
+  it('PUT item: cantidad menor a lo anulado -> 400; mayor o igual -> 200 y total por vigente', async () => {
+    const { pedidoId, detalleId } = await nuevoPedido(3);
+    expect((await anular(pedidoId, { items: [{ detalle_pedido_id: detalleId, cantidad: 2 }], motivo: 'demora' })).status).toBe(201);
+    const put = (cantidad) => request(app).put(`/api/v1/ventas/${pedidoId}/items/${detalleId}`)
+      .set('Authorization', `Bearer ${token}`).send({ cantidad });
+    const mal = await put(1);
+    expect(mal.status).toBe(400);
+    expect(JSON.stringify(mal.body)).toContain('menor a lo ya anulado');
+    expect((await DetallePedido.findByPk(detalleId)).cantidad).toBe(3);
+    const ok = await put(4);
+    expect(ok.status).toBe(200);
+    expect(Number((await Pedido.findByPk(pedidoId)).total)).toBe(20);
+  });
+
+  it('DELETE item con anulaciones: no se borra, queda totalmente anulado', async () => {
+    const { pedidoId, detalleId } = await nuevoPedido(3);
+    expect((await anular(pedidoId, { items: [{ detalle_pedido_id: detalleId, cantidad: 1 }], motivo: 'demora' })).status).toBe(201);
+    const del = await request(app).delete(`/api/v1/ventas/${pedidoId}/items/${detalleId}`).set('Authorization', `Bearer ${token}`);
+    expect(del.status).toBeLessThan(300);
+    const det = await DetallePedido.findByPk(detalleId);
+    expect(det).not.toBeNull();
+    expect(det.cantidad).toBe(1);
+    expect(det.cantidad_anulada).toBe(1);
+    expect(Number((await Pedido.findByPk(pedidoId)).total)).toBe(0);
+    expect(await DevolucionItem.count({ where: { detalle_pedido_id: detalleId } })).toBe(1);
+  });
+
+  it('DELETE item sin anulaciones se sigue borrando', async () => {
+    const { pedidoId, detalleId } = await nuevoPedido(2);
+    const del = await request(app).delete(`/api/v1/ventas/${pedidoId}/items/${detalleId}`).set('Authorization', `Bearer ${token}`);
+    expect(del.status).toBeLessThan(300);
+    expect(await DetallePedido.findByPk(detalleId)).toBeNull();
+  });
+
+  it('anular todo lo vigente saca el pedido de cocina; listarCocina omite pedidos sin lineas vigentes', async () => {
+    const a = await nuevoPedido(2);
+    await Pedido.update({ estado_cocina: 'listo' }, { where: { id: a.pedidoId } });
+    expect((await anular(a.pedidoId, { items: [{ detalle_pedido_id: a.detalleId, cantidad: 2 }], motivo: 'demora' })).status).toBe(201);
+    expect((await Pedido.findByPk(a.pedidoId)).estado_cocina).toBeNull();
+
+    // Parcial: sigue en cocina.
+    const b = await nuevoPedido(2);
+    await Pedido.update({ estado_cocina: 'pendiente' }, { where: { id: b.pedidoId } });
+    expect((await anular(b.pedidoId, { items: [{ detalle_pedido_id: b.detalleId, cantidad: 1 }], motivo: 'demora' })).status).toBe(201);
+    expect((await Pedido.findByPk(b.pedidoId)).estado_cocina).toBe('pendiente');
+
+    // Pedido "fantasma" (todo anulado pero aún marcado en cocina): no se lista.
+    const c = await nuevoPedido(2);
+    await DetallePedido.update({ cantidad_anulada: 2 }, { where: { id: c.detalleId } });
+    await Pedido.update({ estado_cocina: 'pendiente' }, { where: { id: c.pedidoId } });
+    const lista = await ventasService.listarCocina({ sucursal_id: sucursalId, acceso_todas: false });
+    const ids = lista.map((p) => p.id);
+    expect(ids).toContain(b.pedidoId);
+    expect(ids).not.toContain(c.pedidoId);
+    expect(ids).not.toContain(a.pedidoId);
   });
 
   it('detalle de otro pedido -> 400', async () => {
@@ -385,6 +444,81 @@ describe('POST /ventas/:id/anular - pedidos cobrados', () => {
     }
   });
 
+  it('efectivo con caja abierta solo en OTRA sucursal -> 409 sin cambios', async () => {
+    const { pedidoId, detalleId } = await ventaContado(2);
+    const otraSuc = await Sucursal.create({ nombre: 'Sucursal Ajena Dev Cobrado Test' });
+    const cajaAjena = await Caja.create({ sucursal_id: otraSuc.id, nombre: 'Caja Ajena Dev Cobrado Test' });
+    const sesionAjena = await SesionCaja.create({ usuario_id: usuarioId, sucursal_id: otraSuc.id, caja_id: cajaAjena.id, monto_apertura: 0 });
+    await SesionCaja.update({ estado: 'cerrada' }, { where: { id: sesionId } });
+    try {
+      const antesEg = await LibroCaja.count();
+      const res = await anular(pedidoId, { items: [{ detalle_pedido_id: detalleId, cantidad: 1 }], motivo: 'demora', forma: 'efectivo' });
+      expect(res.status).toBe(409);
+      expect(JSON.stringify(res.body)).toContain('Necesitas tu caja abierta para devolver efectivo');
+      expect(await LibroCaja.count()).toBe(antesEg);
+      expect(await Devolucion.count({ where: { pedido_id: pedidoId } })).toBe(0);
+      expect((await DetallePedido.findByPk(detalleId)).cantidad_anulada).toBe(0);
+      expect(Number((await Pedido.findByPk(pedidoId)).total_devuelto)).toBe(0);
+      expect(Number((await SesionCaja.findByPk(sesionAjena.id)).total_devoluciones)).toBe(0);
+    } finally {
+      await SesionCaja.update({ estado: 'abierta' }, { where: { id: sesionId } });
+      await SesionCaja.destroy({ where: { id: sesionAjena.id } });
+      await Caja.destroy({ where: { id: cajaAjena.id } });
+      await Sucursal.destroy({ where: { id: otraSuc.id } });
+    }
+  });
+
+  it('cobrar un pedido con una linea totalmente anulada no escribe movimientos de inventario en 0', async () => {
+    const p = await request(app).post('/api/v1/ventas').set('Authorization', `Bearer ${token}`).send({ tipo: 'llevar', sesion_caja_id: sesionId });
+    expect(p.status).toBe(201);
+    const pid = p.body.datos.id;
+    for (const [producto_id, cantidad] of [[contadoId, 2], [nullId, 1]]) {
+      const r = await request(app).post(`/api/v1/ventas/${pid}/items`).set('Authorization', `Bearer ${token}`).send({ producto_id, cantidad });
+      expect(r.status).toBe(201);
+    }
+    const lineaContado = await DetallePedido.findOne({ where: { pedido_id: pid, producto_id: contadoId } });
+    expect((await anular(pid, { items: [{ detalle_pedido_id: lineaContado.id, cantidad: 2 }], motivo: 'demora' })).status).toBe(201);
+    const antesStock = await stockSucursal();
+    const cobro = await request(app).post(`/api/v1/ventas/${pid}/cobrar`).set('Authorization', `Bearer ${token}`)
+      .send({ metodo_pago: 'efectivo', monto_recibido: 5 });
+    expect(cobro.status).toBe(200);
+    expect((await Pedido.findByPk(pid)).estado).toBe('completado');
+    expect(await stockSucursal()).toBe(antesStock);
+    expect(await RegistroInventario.count({ where: { nota: `Venta #${pid}` } })).toBe(0);
+  });
+
+  it('cobrar sigue funcionando con el pedido bloqueado (cobro normal con lineas parcialmente anuladas)', async () => {
+    const p = await request(app).post('/api/v1/ventas').set('Authorization', `Bearer ${token}`).send({ tipo: 'llevar', sesion_caja_id: sesionId });
+    const pid = p.body.datos.id;
+    await request(app).post(`/api/v1/ventas/${pid}/items`).set('Authorization', `Bearer ${token}`).send({ producto_id: contadoId, cantidad: 3 });
+    const linea = await DetallePedido.findOne({ where: { pedido_id: pid } });
+    expect((await anular(pid, { items: [{ detalle_pedido_id: linea.id, cantidad: 1 }], motivo: 'demora' })).status).toBe(201);
+    const antesStock = await stockSucursal();
+    const cobro = await request(app).post(`/api/v1/ventas/${pid}/cobrar`).set('Authorization', `Bearer ${token}`)
+      .send({ metodo_pago: 'efectivo', monto_recibido: 50 });
+    expect(cobro.status).toBe(200);
+    const ped = await Pedido.findByPk(pid);
+    expect(ped.estado).toBe('completado');
+    expect(Number(ped.total)).toBe(20);
+    expect(Number(ped.cambio)).toBe(30);
+    expect(await stockSucursal()).toBe(antesStock - 2);
+  });
+
+  it('reportes: devoluciones del resumen respetan los filtros tipo y origen', async () => {
+    const { pedidoId, detalleId } = await ventaContado(2); // tipo llevar, origen staff
+    expect((await anular(pedidoId, { items: [{ detalle_pedido_id: detalleId, cantidad: 1 }], motivo: 'demora', forma: 'transferencia' })).status).toBe(201);
+    const alcance = { acceso_todas: false, sucursal_id: sucursalId };
+    const llevar = await reportesService.ventasResumen({ tipo: 'llevar' }, alcance);
+    expect(Number(llevar.total_devoluciones)).toBeGreaterThan(0);
+    const mesa = await reportesService.ventasResumen({ tipo: 'mesa' }, alcance);
+    expect(Number(mesa.total_devoluciones)).toBe(0);
+    expect(mesa.devoluciones_por_motivo).toEqual([]);
+    const app_ = await reportesService.ventasResumen({ origen: 'app_externa' }, alcance);
+    expect(Number(app_.total_devoluciones)).toBe(0);
+    const staff = await reportesService.ventasResumen({ origen: 'staff' }, alcance);
+    expect(Number(staff.total_devoluciones)).toBe(Number(llevar.total_devoluciones));
+  });
+
   it('producto desactivado repone stock; producto borrado -> 201 sin reposicion', async () => {
     const p1 = (await Producto.create({ categoria_id: categoriaId, nombre: 'Producto Desactivado Dev Test', precio: 10, stock: 0 })).id;
     const p2 = (await Producto.create({ categoria_id: categoriaId, nombre: 'Producto Borrado Dev Test', precio: 10, stock: 0 })).id;
@@ -475,6 +609,20 @@ describe('POST /ventas/:id/anular - aviso a cocina', () => {
     expect(c.pedido.detalles[0].cantidad).toBe(2);
     expect(c.config.flujo_cocina).toBe('fisico');
     expect(c.modo_impresion).toBeDefined();
+    expect(c.anulacion).toEqual({ devolucion_id: res.body.datos.devolucion.id });
+  });
+
+  it('anular TODO lo vigente con cocina pendiente: igual avisa a cocina y saca el pedido de cocina', async () => {
+    await Configuracion.upsert({ clave: 'flujo_cocina', valor: 'fisico' });
+    const { pedidoId, detalleId } = await nuevoPedido();
+    await Pedido.update({ estado_cocina: 'pendiente' }, { where: { id: pedidoId } });
+    const res = await anular(pedidoId, { items: [{ detalle_pedido_id: detalleId, cantidad: 3 }], motivo: 'demora' });
+    expect(res.status).toBe(201);
+    const c = res.body.datos.impresion.cocina;
+    expect(c).not.toBeNull();
+    expect(c.anulacion.devolucion_id).toBe(res.body.datos.devolucion.id);
+    expect(c.pedido.detalles[0].cantidad).toBe(3);
+    expect((await Pedido.findByPk(pedidoId)).estado_cocina).toBeNull();
   });
 
   it('cocina_destino por_caja -> caja_id en el payload; compartida -> null', async () => {

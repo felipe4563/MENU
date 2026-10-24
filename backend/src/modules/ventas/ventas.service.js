@@ -234,7 +234,10 @@ async function listarCocina({ sucursal_id, acceso_todas } = {}) {
       if (detalle.producto) detalle.producto.imagen = _urlAbsolutaImagen(detalle.producto.imagen);
     });
   });
-  return pedidos.map((pedido) => _detallesVigentes(pedido.toJSON()));
+  // Un pedido con todo anulado no tiene nada que preparar: no se muestra.
+  return pedidos
+    .map((pedido) => _detallesVigentes(pedido.toJSON()))
+    .filter((pedido) => pedido.detalles.length > 0);
 }
 
 function _verificarAlcance(pedido, alcance) {
@@ -539,6 +542,9 @@ async function _finalizarVenta({ pedido, detalles, metodo_pago, monto_recibido, 
   await SesionCaja.increment('total_ventas', { by: monto_neto, where: { id: sesionDestinoId }, transaction });
 
   for (const detalle of detalles) {
+    // Línea totalmente anulada antes del cobro: no se vendió nada, no se
+    // descuenta stock ni insumos (evita movimientos de inventario en 0).
+    if (cantidadVigente(detalle) <= 0) continue;
     if (detalle.combo_id) {
       const combo = await Combo.findByPk(detalle.combo_id, {
         include: [{ model: Producto, as: 'productos', attributes: ['id', 'stock'], through: { attributes: ['cantidad'] } }],
@@ -615,9 +621,16 @@ async function _contextoImpresion(pedido) {
 // canal que una comanda. Solo con cocina física y pedido aún pendiente en
 // cocina. Devuelve el payload (para el agente local del navegador) o null.
 // Llamar DESPUÉS del commit de la anulación.
-async function emitirAnulacionCocina(pedido_id, lineasAnuladas) {
+// `anulacion.devolucion_id` viaja en el payload: los deduplicadores de
+// impresión (agente y pantalla de cocina) usan esa clave en vez del pedido,
+// para no descartar el aviso como si fuera la comanda repetida. Si la
+// anulación dejó el pedido vacío, ya limpió estado_cocina: se usa el estado
+// previo (`estadoCocinaPrevio`) para decidir si avisar.
+async function emitirAnulacionCocina(pedido_id, lineasAnuladas, { devolucion_id = null, estadoCocinaPrevio } = {}) {
   const pedido = await Pedido.findByPk(pedido_id, { include: INCLUDE_PEDIDO_COMPLETO });
-  if (!pedido || pedido.estado_cocina !== 'pendiente') return null;
+  if (!pedido) return null;
+  const estadoCocina = estadoCocinaPrevio !== undefined ? estadoCocinaPrevio : pedido.estado_cocina;
+  if (estadoCocina !== 'pendiente') return null;
   const { cfg, caja_id, modo_impresion, ancho_papel_bluetooth } = await _contextoImpresion(pedido);
   if (cfg.flujo_cocina !== 'fisico') return null;
 
@@ -631,7 +644,10 @@ async function emitirAnulacionCocina(pedido_id, lineasAnuladas) {
 
   const numero_orden_diario = await _numeroOrdenDiarioOriginal(pedido);
   const cocinaPorCaja = cfg.cocina_destino === 'por_caja';
-  const datosCocina = { pedido: json, config: cfg, numero_orden_diario, modo_impresion, ancho_papel_bluetooth, caja_id: cocinaPorCaja ? caja_id : null };
+  const datosCocina = {
+    pedido: json, config: cfg, numero_orden_diario, modo_impresion, ancho_papel_bluetooth,
+    caja_id: cocinaPorCaja ? caja_id : null, anulacion: { devolucion_id },
+  };
   if (cocinaPorCaja) emitir('print:cocina', datosCocina, pedido.sucursal_id, caja_id);
   else emitir('print:cocina', datosCocina, pedido.sucursal_id);
   return datosCocina;
@@ -1172,6 +1188,10 @@ async function actualizarItem(pedido_id, item_id, { cantidad, nota, estado, peso
     const linea = _datosLinea({ peso }, producto, precioBase);
     await item.update({ peso: linea.peso, precio: linea.precio, nota, estado });
   } else {
+    const anulada = Number(item.cantidad_anulada || 0);
+    if (cantidad !== undefined && cantidad !== null && Number(cantidad) < anulada) {
+      throw Object.assign(new Error(`La cantidad no puede ser menor a lo ya anulado (${anulada})`), { status: 400 });
+    }
     await item.update({ cantidad, nota, estado });
   }
 
@@ -1187,7 +1207,13 @@ async function eliminarItem(pedido_id, item_id, alcance) {
   if (pedido.estado !== 'pendiente') throw Object.assign(new Error('Pedido no modificable'), { status: 409 });
   const item = await DetallePedido.findOne({ where: { id: item_id, pedido_id } });
   if (!item) throw Object.assign(new Error('Item no encontrado'), { status: 404 });
-  await item.destroy();
+  if (Number(item.cantidad_anulada || 0) > 0) {
+    // Con anulaciones registradas la línea no se borra (devolucion_items la
+    // referencia y es parte del registro): queda totalmente anulada.
+    await item.update({ cantidad: item.cantidad_anulada });
+  } else {
+    await item.destroy();
+  }
   await _recalcularTotal(pedido_id);
   emitir('restaurante:actualizar', { tipo: 'pedido_items' });
 }
@@ -1225,8 +1251,20 @@ async function cobrar(pedido_id, usuario_id, { metodo_pago, monto_recibido, desc
     return { pedido: await obtener(pedido_id), pago_qr };
   }
 
-  const detalles = pedido.detalles.map((d) => ({ id: d.id, producto_id: d.producto_id, combo_id: d.combo_id, cantidad: d.cantidad, cantidad_anulada: d.cantidad_anulada, precio: parseFloat(d.precio) }));
-  await sequelize.transaction((t) => _finalizarVenta({ pedido, detalles, metodo_pago, monto_recibido, descuento, propina, usuario_id, puntos_canjear, cupon_codigo }, t));
+  await sequelize.transaction(async (t) => {
+    // Se relee el pedido bloqueado: una anulación confirmada entre la lectura
+    // de arriba y este punto no debe cobrarse ni descontarse de stock.
+    const bloqueado = await Pedido.findByPk(pedido_id, { transaction: t, lock: t.LOCK.UPDATE });
+    if (!bloqueado || !['pendiente', 'listo'].includes(bloqueado.estado)) {
+      throw Object.assign(new Error('El pedido no puede cobrarse'), { status: 409 });
+    }
+    if (parseFloat(bloqueado.total) !== parseFloat(pedido.total)) {
+      throw Object.assign(new Error('El pedido cambió mientras se cobraba. Vuelve a intentarlo'), { status: 409 });
+    }
+    const filas = await DetallePedido.findAll({ where: { pedido_id }, transaction: t });
+    const detalles = filas.map((d) => ({ id: d.id, producto_id: d.producto_id, combo_id: d.combo_id, cantidad: d.cantidad, cantidad_anulada: d.cantidad_anulada, precio: parseFloat(d.precio) }));
+    await _finalizarVenta({ pedido: bloqueado, detalles, metodo_pago, monto_recibido, descuento, propina, usuario_id, puntos_canjear, cupon_codigo }, t);
+  });
   await Pedido.update({ estado_cocina: null }, { where: { id: pedido_id } });
 
   const cobrado = await obtener(pedido_id);

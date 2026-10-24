@@ -25,17 +25,32 @@ async function anular(pedido_id, usuario_id, { items, motivo, nota, forma }, alc
     throw _error(`No se pueden anular productos de un pedido ${pedido.estado === 'pendiente_pago' ? 'pendiente de pago' : pedido.estado}`, 409);
   });
 
+  const { estadoCocinaPrevio, ...respuesta } = resultado;
   emitir('restaurante:actualizar', { tipo: 'pedido_items' });
   // Ya con la transacción confirmada: avisar a cocina (best-effort).
   let cocina = null;
   try {
     cocina = await ventasService.emitirAnulacionCocina(
       pedido_id, items.map(i => ({ detalle_pedido_id: i.detalle_pedido_id, cantidad: i.cantidad })),
+      { devolucion_id: respuesta.devolucion.id, estadoCocinaPrevio },
     );
   } catch (e) {
     console.error('Error avisando anulación a cocina:', e.message);
   }
-  return { ...resultado, impresion: { cocina } };
+  return { ...respuesta, impresion: { cocina } };
+}
+
+// Si ya no queda nada vigente en el pedido, sale de la pantalla de cocina
+// (no hay nada que preparar). Devuelve el estado_cocina previo para que el
+// aviso "ANULAR" a cocina igual se emita.
+async function _limpiarCocinaSiVacio(pedido, transaction) {
+  const previo = pedido.estado_cocina;
+  if (!previo) return previo;
+  const detalles = await DetallePedido.findAll({ where: { pedido_id: pedido.id }, transaction });
+  if (!detalles.some(d => cantidadVigente(d) > 0)) {
+    await pedido.update({ estado_cocina: null }, { transaction });
+  }
+  return previo;
 }
 
 // Valida las cantidades contra la cantidad vigente (ya con el pedido bloqueado).
@@ -80,10 +95,11 @@ async function _anularSinCobrar(pedido, usuario_id, { items, motivo, nota }, tra
 
   await ventasService.recalcularTotal(pedido.id, { transaction });
   await pedido.reload({ transaction });
+  const estadoCocinaPrevio = await _limpiarCocinaSiVacio(pedido, transaction);
   const dev = await Devolucion.findByPk(devolucion.id, {
     include: [{ model: DevolucionItem, as: 'items' }, { model: Usuario, as: 'usuario', attributes: ['id', 'nombre'] }], transaction,
   });
-  return { pedido, devolucion: dev };
+  return { pedido, devolucion: dev, estadoCocinaPrevio };
 }
 
 const FORMAS_COBRADO = ['efectivo', 'transferencia', 'app'];
@@ -106,7 +122,8 @@ async function _anularCobrado(pedido, usuario_id, { items, motivo, nota, forma }
   let sesion = null;
   if (forma === 'efectivo' && monto > 0) {
     sesion = await SesionCaja.findOne({
-      where: { usuario_id, estado: 'abierta' }, transaction, lock: transaction.LOCK.UPDATE,
+      where: { usuario_id, estado: 'abierta', sucursal_id: pedido.sucursal_id },
+      order: [['abierto_en', 'DESC']], transaction, lock: transaction.LOCK.UPDATE,
     });
     if (!sesion) throw _error('Necesitas tu caja abierta para devolver efectivo', 409);
   }
@@ -159,10 +176,11 @@ async function _anularCobrado(pedido, usuario_id, { items, motivo, nota, forma }
   }
 
   await pedido.reload({ transaction });
+  const estadoCocinaPrevio = await _limpiarCocinaSiVacio(pedido, transaction);
   const dev = await Devolucion.findByPk(devolucion.id, {
     include: [{ model: DevolucionItem, as: 'items' }, { model: Usuario, as: 'usuario', attributes: ['id', 'nombre'] }], transaction,
   });
-  return { pedido, devolucion: dev };
+  return { pedido, devolucion: dev, estadoCocinaPrevio };
 }
 
 // Devoluciones por transferencia bancaria que aún no se han hecho, del
