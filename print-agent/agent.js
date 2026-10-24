@@ -723,6 +723,7 @@ function buildCierre(data) {
   var apertura    = parseFloat(sesion.monto_apertura);
   var totalVentas = parseFloat(sesion.total_ventas);
   var totalGastos = parseFloat(sesion.total_gastos);
+  var totalDevoluciones = parseFloat(sesion.total_devoluciones || 0);
   var cierre      = parseFloat(sesion.monto_cierre || 0);
   var diferencia  = parseFloat(sesion.diferencia || 0);
   var cuadrado    = Math.abs(diferencia) < 0.01;
@@ -783,6 +784,7 @@ function buildCierre(data) {
   t.left().cols('Apertura', sym + ' ' + apertura.toFixed(2));
   t.left().cols('+ Efectivo ventas', sym + ' ' + parseFloat((totalEfectivo && totalEfectivo.total) || 0).toFixed(2));
   t.left().cols('- Gastos', sym + ' ' + totalGastos.toFixed(2));
+  if (totalDevoluciones > 0) t.left().cols('- Devoluciones', sym + ' ' + totalDevoluciones.toFixed(2));
   t.left().bold(true).cols('Esperado en caja', sym + ' ' + parseFloat(reporte.efectivo_esperado || 0).toFixed(2)).bold(false);
   t.left().cols('Contado fisico', sym + ' ' + cierre.toFixed(2));
   t.rule('=');

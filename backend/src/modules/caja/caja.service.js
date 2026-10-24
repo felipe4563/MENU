@@ -57,6 +57,8 @@ async function obtener(id, alcance) {
   const datos = s.toJSON();
   datos.ventas_efectivo = ventasEfectivo || 0;
   datos.ventas_qr       = ventasQR       || 0;
+  datos.efectivo_esperado = parseFloat(s.monto_apertura) + datos.ventas_efectivo
+    - parseFloat(s.total_gastos) - parseFloat(s.total_devoluciones || 0);
   return datos;
 }
 
@@ -132,7 +134,8 @@ async function cerrar(sesion_id, usuario_id, { denominaciones = [], monto_cierre
     where: { sesion_caja_id: sesion_id, tipo: 'ingreso', metodo_pago: 'efectivo' },
   }) || 0;
 
-  const efectivo_esperado = parseFloat(sesion.monto_apertura) + ventasEfectivo - parseFloat(sesion.total_gastos);
+  const efectivo_esperado = parseFloat(sesion.monto_apertura) + ventasEfectivo
+    - parseFloat(sesion.total_gastos) - parseFloat(sesion.total_devoluciones || 0);
   const diferencia = total_fisico - efectivo_esperado;
   const tolerancia = parseFloat(toleranciaSucursal);
   const fueraDeTolerancia = Math.abs(diferencia) > tolerancia;
@@ -212,7 +215,8 @@ async function reporte(sesion_id, alcance) {
   const efectivoEsperado =
     parseFloat(sesion.monto_apertura) +
     parseFloat(ventasPorMetodoArr.find(v => v.metodo_pago === 'efectivo')?.total ?? 0) -
-    parseFloat(sesion.total_gastos);
+    parseFloat(sesion.total_gastos) -
+    parseFloat(sesion.total_devoluciones || 0);
 
   return {
     sesion,

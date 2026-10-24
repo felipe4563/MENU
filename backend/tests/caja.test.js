@@ -533,3 +533,64 @@ describe('Caja — listar() incluye datos de sucursal (modo y tolerancia)', () =
     expect(parseFloat(propia.sucursal.tolerancia_cierre_caja)).toBe(7);
   });
 });
+
+describe('Caja — devoluciones en efectivo restan del esperado', () => {
+  const { Categoria, Producto, Pedido, DetallePedido, Devolucion, DevolucionItem, LibroCaja } = require('../src/models');
+  let sucursalId, cajaId, usuarioId, token, sesionId, categoriaId, productoId;
+
+  beforeAll(async () => {
+    sucursalId = (await Sucursal.create({ nombre: 'Sucursal Caja Devoluciones Test' })).id;
+    cajaId = (await Caja.create({ sucursal_id: sucursalId, nombre: 'Caja Devoluciones Cierre Test' })).id;
+    const rol = await Rol.findOne({ where: { nombre: 'Cajero' } });
+    const hash = await bcrypt.hash('clave123', 10);
+    const usuario = await Usuario.create({ rol_id: rol.id, nombre: 'Caja Devoluciones Test', email: 'caja-devoluciones-test@restaurante.com', contrasena: hash });
+    await usuario.addSucursal(await Sucursal.findByPk(sucursalId));
+    usuarioId = usuario.id;
+    token = (await request(app).post('/api/v1/auth/login').send({ email: 'caja-devoluciones-test@restaurante.com', contrasena: 'clave123' })).body.datos.token;
+    sesionId = (await SesionCaja.create({ usuario_id: usuarioId, sucursal_id: sucursalId, caja_id: cajaId, monto_apertura: 100 })).id;
+    categoriaId = (await Categoria.create({ nombre: 'Categoria Caja Devoluciones Test' })).id;
+    productoId = (await Producto.create({ categoria_id: categoriaId, nombre: 'Producto Caja Devoluciones Test', precio: 10 })).id;
+  });
+
+  afterAll(async () => {
+    const ids = (await Pedido.findAll({ where: { sucursal_id: sucursalId }, attributes: ['id'] })).map((p) => p.id);
+    const devs = (await Devolucion.findAll({ where: { pedido_id: ids }, attributes: ['id'] })).map((d) => d.id);
+    await DevolucionItem.destroy({ where: { devolucion_id: devs } });
+    await Devolucion.destroy({ where: { pedido_id: ids } });
+    await DetallePedido.destroy({ where: { pedido_id: ids } });
+    await Pedido.destroy({ where: { id: ids } });
+    await LibroCaja.destroy({ where: { usuario_id: usuarioId } });
+    await SesionCaja.destroy({ where: { id: sesionId } });
+    await Caja.destroy({ where: { id: cajaId } });
+    await Producto.destroy({ where: { id: productoId } });
+    await Categoria.destroy({ where: { id: categoriaId } });
+    await Usuario.destroy({ where: { id: usuarioId } });
+    await Sucursal.destroy({ where: { id: sucursalId } });
+  });
+
+  it('venta efectivo 50 y devolucion efectivo 20: esperado = apertura + 50 - 20 en GET, reporte y cierre', async () => {
+    const auth = { Authorization: `Bearer ${token}` };
+    const venta = await request(app).post('/api/v1/ventas/completa').set(auth).send({
+      tipo: 'llevar', items: [{ producto_id: productoId, cantidad: 5 }],
+      metodo_pago: 'efectivo', monto_recibido: 50, sesion_caja_id: sesionId,
+    });
+    expect(venta.status).toBe(201);
+    const det = await DetallePedido.findOne({ where: { pedido_id: venta.body.datos.id } });
+    const anul = await request(app).post(`/api/v1/ventas/${venta.body.datos.id}/anular`).set(auth).send({
+      items: [{ detalle_pedido_id: det.id, cantidad: 2 }], motivo: 'demora', forma: 'efectivo',
+    });
+    expect(anul.status).toBe(201);
+
+    const esperado = 100 + 50 - 20;
+    const get = await request(app).get(`/api/v1/caja/${sesionId}`).set(auth);
+    expect(Number(get.body.datos.total_devoluciones)).toBe(20);
+    expect(Number(get.body.datos.efectivo_esperado)).toBe(esperado);
+
+    const rep = await request(app).get(`/api/v1/caja/${sesionId}/reporte`).set(auth);
+    expect(Number(rep.body.datos.efectivo_esperado)).toBe(esperado);
+
+    const cierre = await request(app).post(`/api/v1/caja/${sesionId}/cerrar`).set(auth).send({ monto_cierre: esperado });
+    expect(cierre.status).toBe(200);
+    expect(Number(cierre.body.datos.diferencia)).toBe(0);
+  });
+});

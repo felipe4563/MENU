@@ -17,6 +17,7 @@ export function imprimirTicketCierreCaja(reporte, config = {}) {
   const apertura    = parseFloat(sesion.monto_apertura);
   const totalVentas = parseFloat(sesion.total_ventas);
   const totalGastos = parseFloat(sesion.total_gastos);
+  const totalDevoluciones = parseFloat(sesion.total_devoluciones ?? 0);
   const cierre      = parseFloat(sesion.monto_cierre ?? 0);
   const diferencia  = parseFloat(sesion.diferencia ?? 0);
 
@@ -244,6 +245,10 @@ export function imprimirTicketCierreCaja(reporte, config = {}) {
       <span>- Gastos</span>
       <span>${simbolo} ${totalGastos.toFixed(2)}</span>
     </div>
+    ${totalDevoluciones > 0 ? `<div class="resumen-row">
+      <span>- Devoluciones</span>
+      <span>${simbolo} ${totalDevoluciones.toFixed(2)}</span>
+    </div>` : ''}
     <div class="resumen-row" style="font-weight:700; border-top:1px solid #000; margin-top:2px; padding-top:2px">
       <span>Esperado en caja</span>
       <span>${simbolo} ${(efectivo_esperado ?? 0).toFixed(2)}</span>

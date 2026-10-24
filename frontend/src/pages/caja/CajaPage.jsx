@@ -202,16 +202,19 @@ export default function CajaPage() {
 
           {sesion.sucursal?.modo_cierre_caja !== 'ciego' && (
             <>
-              <div className="grid grid-cols-3 gap-2 sm:gap-3">
+              <div className={`grid gap-2 sm:gap-3 ${parseFloat(sesion.total_devoluciones ?? 0) > 0 ? 'grid-cols-2 sm:grid-cols-4' : 'grid-cols-3'}`}>
                 <MetricCard label="Apertura" valor={parseFloat(sesion.monto_apertura)} icono={<DollarSign className="w-4 h-4" />} color="blue" />
                 <MetricCard label="Ventas"   valor={parseFloat(sesion.total_ventas)}   icono={<TrendingUp  className="w-4 h-4" />} color="green" />
                 <MetricCard label="Gastos"   valor={parseFloat(sesion.total_gastos)}   icono={<TrendingDown className="w-4 h-4" />} color="red" />
+                {parseFloat(sesion.total_devoluciones ?? 0) > 0 && (
+                  <MetricCard label="Devoluciones" valor={parseFloat(sesion.total_devoluciones)} icono={<TrendingDown className="w-4 h-4" />} color="red" />
+                )}
               </div>
 
               <div className="flex items-center justify-between bg-blue-50 dark:bg-blue-900/20 rounded-xl px-4 py-3">
                 <span className="text-sm font-medium text-blue-700 dark:text-blue-400">Efectivo esperado en caja</span>
                 <span className="text-base sm:text-lg font-bold text-blue-700 dark:text-blue-400">
-                  Bs {(parseFloat(sesion.monto_apertura) + parseFloat(sesion.ventas_efectivo ?? 0) - parseFloat(sesion.total_gastos)).toFixed(2)}
+                  Bs {(parseFloat(sesion.monto_apertura) + parseFloat(sesion.ventas_efectivo ?? 0) - parseFloat(sesion.total_gastos) - parseFloat(sesion.total_devoluciones ?? 0)).toFixed(2)}
                 </span>
               </div>
             </>
@@ -649,7 +652,8 @@ function ModalCerrarCaja({ sesion, onClose, onExito }) {
   const ventasEfectivo = parseFloat(sesion.ventas_efectivo ?? ventasTotal);
   const ventasQR       = parseFloat(sesion.ventas_qr ?? 0);
   const gastos         = parseFloat(sesion.total_gastos);
-  const esperado       = apertura + ventasEfectivo - gastos;
+  const devoluciones   = parseFloat(sesion.total_devoluciones ?? 0);
+  const esperado       = apertura + ventasEfectivo - gastos - devoluciones;
   const diferencia     = totalFisico - esperado;
 
   if (estado === 'esperando_confirmacion') {
@@ -742,6 +746,9 @@ function ModalCerrarCaja({ sesion, onClose, onExito }) {
             <div className="bg-red-50 dark:bg-red-900/20 rounded-xl p-3 text-center">
               <p className="text-xs text-red-600 dark:text-red-400 font-medium mb-1">Gastos</p>
               <p className="text-base font-bold text-red-700 dark:text-red-300">Bs {gastos.toFixed(2)}</p>
+              {devoluciones > 0 && (
+                <p className="text-xs text-red-500 dark:text-red-400 mt-0.5">Devoluciones: Bs {devoluciones.toFixed(2)}</p>
+              )}
             </div>
           </div>
         )}
@@ -964,6 +971,7 @@ function ModalReporte({ reporte, config = {}, onClose }) {
   const totalApp      = ventas_por_metodo.find(v => v.metodo_pago === 'app_externa');
   const totalVentas   = parseFloat(sesion.total_ventas);
   const totalGastos   = parseFloat(sesion.total_gastos);
+  const totalDevoluciones = parseFloat(sesion.total_devoluciones ?? 0);
   const apertura      = parseFloat(sesion.monto_apertura);
   const cierre        = parseFloat(sesion.monto_cierre ?? 0);
   const diferencia    = parseFloat(sesion.diferencia ?? 0);
@@ -1028,6 +1036,7 @@ function ModalReporte({ reporte, config = {}, onClose }) {
             { label: 'Monto apertura',    val: `Bs ${apertura.toFixed(2)}`,                      color: '' },
             { label: 'Ventas efectivo',   val: `+Bs ${parseFloat(totalEfectivo?.total ?? 0).toFixed(2)}`, color: 'text-green-600' },
             { label: 'Gastos',            val: `-Bs ${totalGastos.toFixed(2)}`,                   color: 'text-red-600' },
+            ...(totalDevoluciones > 0 ? [{ label: 'Devoluciones', val: `-Bs ${totalDevoluciones.toFixed(2)}`, color: 'text-red-600' }] : []),
             { label: 'Esperado en caja',  val: `Bs ${efectivo_esperado.toFixed(2)}`,              color: '' },
             { label: 'Contado físicamente', val: `Bs ${cierre.toFixed(2)}`,                       color: '' },
           ].map(({ label, val, color }) => (
