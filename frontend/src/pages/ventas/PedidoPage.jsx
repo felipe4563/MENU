@@ -18,7 +18,7 @@ import Modal from '../../components/ui/Modal';
 import ModalPagoQr from './components/ModalPagoQr';
 import ModalPeso from './components/ModalPeso';
 import ModalAnularProductos, { HistorialDevoluciones } from './components/ModalAnularProductos';
-import { puedeAnularPedido } from '../../utils/devoluciones';
+import { puedeAnularPedido, vigente } from '../../utils/devoluciones';
 
 export default function PedidoPage() {
   const { id } = useParams();
@@ -142,8 +142,11 @@ export default function PedidoPage() {
     actualizar.mutate({ item_id: item.id, cantidad: item.cantidad + 1 });
   }
 
+  // La cantidad enviada es la total (anulada + vigente): el backend no deja
+  // bajar de lo ya anulado. Con vigente 1, quitar la línea (si tenía
+  // anulaciones el backend la deja totalmente anulada en vez de borrarla).
   function decrementar(item) {
-    if (item.cantidad <= 1) {
+    if (vigente(item) <= 1) {
       quitar.mutate(item.id);
     } else {
       actualizar.mutate({ item_id: item.id, cantidad: item.cantidad - 1 });
@@ -345,7 +348,7 @@ export default function PedidoPage() {
                       className={`relative flex flex-col rounded-xl border transition-all text-left overflow-hidden ${
                         !puedeCrear || !esPendiente || !prod.disponible_hoy
                           ? 'opacity-50 cursor-not-allowed'
-                          : enOrden
+                          : enOrden && vigente(enOrden) > 0
                           ? 'border-blue-400 dark:border-blue-500 bg-blue-50 dark:bg-blue-900/20 hover:bg-blue-100 dark:hover:bg-blue-900/30'
                           : 'border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800 hover:border-blue-300 dark:hover:border-blue-600 hover:shadow-sm'
                       }`}
@@ -375,9 +378,9 @@ export default function PedidoPage() {
                         </p>
                       </div>
                       {/* Badge cantidad */}
-                      {enOrden && !prod.es_pesable && (
+                      {enOrden && vigente(enOrden) > 0 && !prod.es_pesable && (
                         <span className="absolute top-2 right-2 w-6 h-6 bg-blue-600 text-white text-xs font-bold rounded-full flex items-center justify-center shadow">
-                          {enOrden.cantidad}
+                          {vigente(enOrden)}
                         </span>
                       )}
                     </button>
@@ -413,11 +416,16 @@ export default function PedidoPage() {
                   <p className="text-sm">Sin productos todavía</p>
                 </div>
               ) : (
-                pedido.detalles.map(item => (
-                  <div key={item.id} className="px-4 py-3 space-y-1.5">
+                pedido.detalles.map(item => {
+                  // Línea con todo anulado: solo informativa (gris y tachada),
+                  // sin stepper, sin borrar y sin editar nota.
+                  const anuladoTotal = vigente(item) <= 0;
+                  const editable = esPendiente && puedeCrear && !anuladoTotal;
+                  return (
+                  <div key={item.id} className={`px-4 py-3 space-y-1.5${anuladoTotal ? ' opacity-50' : ''}`}>
                     <div className="flex items-center gap-2">
                       <div className="flex-1 min-w-0">
-                        <p className="text-sm font-medium text-gray-800 dark:text-gray-100 truncate">
+                        <p className={`text-sm font-medium text-gray-800 dark:text-gray-100 truncate${anuladoTotal ? ' line-through' : ''}`}>
                           {item.combo ? `Combo: ${item.combo.nombre}` : item.producto?.nombre}
                         </p>
                         {item.combo?.productos?.length > 0 && (
@@ -434,7 +442,7 @@ export default function PedidoPage() {
                         )}
                       </div>
                       {item.peso != null ? (
-                        esPendiente && puedeCrear ? (
+                        editable ? (
                           <button
                             onClick={() => setModalPeso({ modo: 'editar', producto: item.producto, itemId: item.id, pesoInicial: parseFloat(item.peso) })}
                             className="text-xs font-semibold text-blue-600 dark:text-blue-400 px-2 py-1 rounded-lg hover:bg-blue-50 dark:hover:bg-blue-900/20 transition-colors shrink-0"
@@ -444,7 +452,7 @@ export default function PedidoPage() {
                         ) : (
                           <span className="text-sm font-semibold text-gray-600 dark:text-gray-300 shrink-0">{parseFloat(item.peso).toFixed(3)} kg</span>
                         )
-                      ) : esPendiente && puedeCrear ? (
+                      ) : editable ? (
                         <div className="flex items-center gap-1 shrink-0">
                           <button
                             onClick={() => decrementar(item)}
@@ -453,7 +461,7 @@ export default function PedidoPage() {
                             <Minus className="w-3 h-3" />
                           </button>
                           <span className="w-6 text-center text-sm font-semibold text-gray-800 dark:text-gray-100">
-                            {item.cantidad}
+                            {vigente(item)}
                           </span>
                           <button
                             onClick={() => incrementar(item)}
@@ -471,7 +479,7 @@ export default function PedidoPage() {
                       <p className="text-sm font-bold text-gray-800 dark:text-gray-100 w-14 text-right shrink-0">
                         Bs {(parseFloat(item.precio) * (item.cantidad - (item.cantidad_anulada || 0))).toFixed(2)}
                       </p>
-                      {esPendiente && puedeCrear && (
+                      {editable && (
                         <button
                           onClick={() => quitar.mutate(item.id)}
                           className="shrink-0 p-1 rounded-lg text-gray-300 dark:text-gray-600 hover:text-red-500 hover:bg-red-50 dark:hover:bg-red-900/20 transition-colors"
@@ -482,7 +490,7 @@ export default function PedidoPage() {
                     </div>
 
                     {/* Nota por item */}
-                    {esPendiente && puedeCrear ? (
+                    {editable ? (
                       notaEditando === item.id ? (
                         <div className="flex items-center gap-1.5">
                           <input
@@ -528,7 +536,8 @@ export default function PedidoPage() {
                       <p className="text-xs text-amber-600 dark:text-amber-400 italic">Nota: {item.nota}</p>
                     ) : null}
                   </div>
-                ))
+                  );
+                })
               )}
             </div>
 
