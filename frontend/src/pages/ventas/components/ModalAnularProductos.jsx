@@ -111,7 +111,7 @@ export default function ModalAnularProductos({ pedido, onClose, onAnulado }) {
         }),
       };
       const conDinero = !!dev.forma && dev.forma !== 'sin_dinero';
-      setResultado({ dev, conDinero });
+      setResultado({ dev, conDinero, avisoCocina: !!res.impresion?.cocina });
     },
     onError: (err) => setError(err?.response?.data?.mensaje ?? 'No se pudo anular'),
   });
@@ -128,7 +128,9 @@ export default function ModalAnularProductos({ pedido, onClose, onAnulado }) {
               <p className="text-sm text-muted-foreground mt-1">{FORMAS_DEVOLUCION[resultado.dev.forma]}</p>
             </div>
           ) : (
-            <p className="text-sm text-foreground">Los productos fueron anulados del pedido y se avisó a cocina.</p>
+            <p className="text-sm text-foreground">
+              Los productos fueron anulados del pedido{resultado.avisoCocina ? ' y se avisó a cocina' : ''}.
+            </p>
           )}
           <div className="flex flex-col gap-2">
             {resultado.conDinero && (
