@@ -40,6 +40,8 @@ const DetallePedido = require('./DetallePedido');
 const DetalleArqueo = require('./DetalleArqueo');
 const Gasto = require('./Gasto');
 const LibroCaja = require('./LibroCaja');
+const Devolucion = require('./Devolucion');
+const DevolucionItem = require('./DevolucionItem');
 const Proveedor = require('./Proveedor');
 const Compra = require('./Compra');
 const DetalleCompra = require('./DetalleCompra');
@@ -226,6 +228,16 @@ MarcacionPersonal.belongsTo(Usuario, { foreignKey: 'usuario_id', as: 'usuario' }
 MarcacionPersonal.belongsTo(Sucursal, { foreignKey: 'sucursal_id', as: 'sucursal' });
 MarcacionPersonal.belongsTo(Usuario, { foreignKey: 'aprobado_por', as: 'aprobador' });
 
+// Devoluciones
+Pedido.hasMany(Devolucion, { foreignKey: 'pedido_id', as: 'devoluciones' });
+Devolucion.belongsTo(Pedido, { foreignKey: 'pedido_id', as: 'pedido' });
+Devolucion.belongsTo(Usuario, { foreignKey: 'usuario_id', as: 'usuario' });
+Devolucion.belongsTo(SesionCaja, { foreignKey: 'sesion_caja_id', as: 'sesion_caja' });
+SesionCaja.hasMany(Devolucion, { foreignKey: 'sesion_caja_id', as: 'devoluciones' });
+Devolucion.hasMany(DevolucionItem, { foreignKey: 'devolucion_id', as: 'items' });
+DevolucionItem.belongsTo(Devolucion, { foreignKey: 'devolucion_id' });
+DevolucionItem.belongsTo(DetallePedido, { foreignKey: 'detalle_pedido_id', as: 'detalle' });
+
 module.exports = {
   sequelize,
   Rol, Permiso, Usuario,
@@ -234,7 +246,7 @@ module.exports = {
   GrupoOpciones, Opcion, ProductoGrupoOpciones,
   Cliente, ClientePinVerificacion,
   SesionCaja, Pedido, DetallePedido,
-  DetalleArqueo, Gasto, LibroCaja,
+  DetalleArqueo, Gasto, LibroCaja, Devolucion, DevolucionItem,
   Proveedor, Compra, DetalleCompra,
   RegistroInventario,
   Configuracion,

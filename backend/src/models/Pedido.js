@@ -21,6 +21,7 @@ const Pedido = sequelize.define('Pedido', {
   direccion_entrega: { type: DataTypes.STRING(255), allowNull: true },
   telefono_cliente: { type: DataTypes.STRING(50), allowNull: true },
   total: { type: DataTypes.DECIMAL(10,2), defaultValue: 0 },
+  total_devuelto: { type: DataTypes.DECIMAL(10,2), allowNull: false, defaultValue: 0 },
   descuento: { type: DataTypes.DECIMAL(10,2), defaultValue: 0 },
   cupon_id: { type: DataTypes.INTEGER.UNSIGNED },
   descuento_cupon: { type: DataTypes.DECIMAL(10,2), defaultValue: 0 },
