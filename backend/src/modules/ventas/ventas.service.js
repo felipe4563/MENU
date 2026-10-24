@@ -167,7 +167,7 @@ const INCLUDE_PEDIDO_COMPLETO = [
   {
     model: DetallePedido, as: 'detalles',
     include: [
-      { model: Producto, as: 'producto', attributes: ['id', 'nombre', 'precio', 'imagen'], required: false },
+      { model: Producto, as: 'producto', attributes: ['id', 'nombre', 'precio', 'imagen', 'stock'], required: false },
       {
         model: Combo, as: 'combo', attributes: ['id', 'nombre', 'descripcion'], required: false,
         include: [{ model: Producto, as: 'productos', attributes: ['id', 'nombre'], through: { attributes: ['cantidad'] } }],

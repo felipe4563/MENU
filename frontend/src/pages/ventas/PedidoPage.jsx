@@ -17,6 +17,8 @@ import { usePermisos } from '../../hooks/usePermisos';
 import Modal from '../../components/ui/Modal';
 import ModalPagoQr from './components/ModalPagoQr';
 import ModalPeso from './components/ModalPeso';
+import ModalAnularProductos, { HistorialDevoluciones } from './components/ModalAnularProductos';
+import { puedeAnularPedido } from '../../utils/devoluciones';
 
 export default function PedidoPage() {
   const { id } = useParams();
@@ -27,10 +29,12 @@ export default function PedidoPage() {
   const puedeCobrar  = tienePermiso('ventas', 'cobrar');
   const puedeCancelar = tienePermiso('ventas', 'cancelar');
   const puedeCrear   = tienePermiso('ventas', 'crear');
+  const puedeAnular  = tienePermiso('ventas', 'anular');
 
   const [categoriaActiva, setCategoriaActiva] = useState(null);
   const [modalCobrar, setModalCobrar] = useState(false);
   const [modalCancelar, setModalCancelar] = useState(false);
+  const [modalAnular, setModalAnular] = useState(false);
   const [tabMobile, setTabMobile] = useState('productos'); // 'productos' | 'orden'
   const [notaEditando, setNotaEditando] = useState(null); // item.id o null
   const [textoNota, setTextoNota] = useState('');
@@ -459,10 +463,13 @@ export default function PedidoPage() {
                           </button>
                         </div>
                       ) : (
-                        <span className="text-sm font-semibold text-gray-600 dark:text-gray-300 shrink-0">×{item.cantidad}</span>
+                        <span className="text-sm font-semibold text-gray-600 dark:text-gray-300 shrink-0">
+                          ×{item.cantidad - (item.cantidad_anulada || 0)}
+                          {item.cantidad_anulada > 0 && <span className="font-normal text-gray-400"> ({item.cantidad_anulada} anulados)</span>}
+                        </span>
                       )}
                       <p className="text-sm font-bold text-gray-800 dark:text-gray-100 w-14 text-right shrink-0">
-                        Bs {(parseFloat(item.precio) * item.cantidad).toFixed(2)}
+                        Bs {(parseFloat(item.precio) * (item.cantidad - (item.cantidad_anulada || 0))).toFixed(2)}
                       </p>
                       {esPendiente && puedeCrear && (
                         <button
@@ -536,6 +543,27 @@ export default function PedidoPage() {
                 </span>
               </div>
 
+              {parseFloat(pedido.total_devuelto) > 0 && (
+                <div className="px-4 py-1.5 flex items-center justify-between text-sm text-red-600 dark:text-red-400">
+                  <span>Total devuelto</span>
+                  <span className="font-semibold">Bs {parseFloat(pedido.total_devuelto).toFixed(2)}</span>
+                </div>
+              )}
+              {(pedido.devoluciones?.length ?? 0) > 0 && (
+                <div className="px-3 pb-2"><HistorialDevoluciones pedido={pedido} /></div>
+              )}
+
+              {puedeAnular && puedeAnularPedido(pedido) && (
+                <div className="px-3 pb-2">
+                  <button
+                    onClick={() => setModalAnular(true)}
+                    className="w-full py-2 border border-red-200 dark:border-red-900 text-red-600 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-900/20 rounded-xl text-sm font-medium transition-colors"
+                  >
+                    Anular productos
+                  </button>
+                </div>
+              )}
+
               {/* Banner listo para servir */}
               {esListo && (
                 <div className="mx-3 mb-2 flex items-center gap-2 justify-center py-2 rounded-xl bg-green-50 dark:bg-green-900/20 text-green-700 dark:text-green-400 text-sm font-semibold">
@@ -593,6 +621,14 @@ export default function PedidoPage() {
             qc.invalidateQueries({ queryKey: ['ventas'] });
             navigate('/ventas');
           }}
+        />
+      )}
+
+      {modalAnular && (
+        <ModalAnularProductos
+          pedido={pedido}
+          onClose={() => setModalAnular(false)}
+          onAnulado={() => setModalAnular(false)}
         />
       )}
 

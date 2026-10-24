@@ -7,6 +7,9 @@ import { reimprimirConFallback } from '../../utils/impresionLocal';
 import { logoSrc } from '../../api/configuracion';
 import Paginacion from '../../components/ui/Paginacion';
 import Modal from '../../components/ui/Modal';
+import { usePermisos } from '../../hooks/usePermisos';
+import ModalAnularProductos, { HistorialDevoluciones } from './components/ModalAnularProductos';
+import { puedeAnularPedido } from '../../utils/devoluciones';
 
 function _hora(iso) {
   return new Date(iso).toLocaleTimeString('es-BO', { hour: '2-digit', minute: '2-digit' });
@@ -24,6 +27,9 @@ function _nombreItem(detalle) {
 
 function ModalDetalleVenta({ ventaId, onClose }) {
   const { data: venta, isLoading } = useQuery({ queryKey: ['venta-detalle', ventaId], queryFn: () => getVenta(ventaId) });
+
+  const { tienePermiso } = usePermisos();
+  const [anulando, setAnulando] = useState(false);
 
   const reimprimir = useMutation({
     mutationFn: () => reimprimirVenta(ventaId),
@@ -55,17 +61,36 @@ function ModalDetalleVenta({ ventaId, onClose }) {
                   )}
                 </div>
                 <div className="min-w-0 flex-1">
-                  <p className="text-foreground truncate">{d.cantidad}x {_nombreItem(d)}</p>
+                  <p className="text-foreground truncate">
+                    {d.cantidad - (d.cantidad_anulada || 0)}x {_nombreItem(d)}
+                    {d.cantidad_anulada > 0 && <span className="text-muted-foreground"> ({d.cantidad_anulada} anulados)</span>}
+                  </p>
                   {d.opciones?.length > 0 && (
                     <p className="text-xs text-muted-foreground truncate">{d.opciones.map((o) => o.nombre).join(', ')}</p>
                   )}
                 </div>
-                <p className="shrink-0 font-medium text-foreground">Bs {(parseFloat(d.precio) * d.cantidad).toFixed(2)}</p>
+                <p className="shrink-0 font-medium text-foreground">Bs {(parseFloat(d.precio) * (d.cantidad - (d.cantidad_anulada || 0))).toFixed(2)}</p>
               </div>
             ))}
           </div>
 
+          {parseFloat(venta.total_devuelto) > 0 && (
+            <p className="text-sm text-right text-red-600 dark:text-red-400">
+              Total devuelto: Bs {parseFloat(venta.total_devuelto).toFixed(2)}
+            </p>
+          )}
+          <HistorialDevoluciones pedido={venta} />
+
           {reimprimir.isError && <p className="text-sm text-destructive">No se pudo reimprimir.</p>}
+
+          {tienePermiso('ventas', 'anular') && puedeAnularPedido(venta) && (
+            <button
+              onClick={() => setAnulando(true)}
+              className="w-full px-4 py-2 rounded-xl text-sm border border-red-200 dark:border-red-900 text-red-600 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-900/20 transition-colors"
+            >
+              Anular productos
+            </button>
+          )}
 
           <button
             onClick={() => reimprimir.mutate()}
@@ -75,6 +100,9 @@ function ModalDetalleVenta({ ventaId, onClose }) {
             {reimprimir.isPending ? 'Imprimiendo...' : '🖨 Reimprimir ticket'}
           </button>
         </div>
+      )}
+      {anulando && venta && (
+        <ModalAnularProductos pedido={venta} onClose={() => setAnulando(false)} onAnulado={() => setAnulando(false)} />
       )}
     </Modal>
   );
