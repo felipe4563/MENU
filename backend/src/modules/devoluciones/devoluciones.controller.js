@@ -17,4 +17,16 @@ async function anular(req, res, next) {
   } catch (err) { next(err); }
 }
 
-module.exports = { anular };
+async function pendientes(req, res, next) {
+  try {
+    res.json({ ok: true, datos: await svc.listarPendientes(_alcance(req)) });
+  } catch (err) { next(err); }
+}
+
+async function transferida(req, res, next) {
+  try {
+    res.json({ ok: true, datos: await svc.marcarTransferida(req.params.id, _alcance(req)) });
+  } catch (err) { next(err); }
+}
+
+module.exports = { anular, pendientes, transferida };

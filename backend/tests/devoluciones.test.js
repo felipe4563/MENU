@@ -510,3 +510,92 @@ describe('POST /ventas/:id/anular - aviso a cocina', () => {
     expect(res.body.datos.impresion.cocina).toBeNull();
   });
 });
+
+describe('Transferencias pendientes /devoluciones', () => {
+  let sucursalId, otraSucursalId, usuarioId, otroUsuarioId, sinPermisoId, rolTmpId, token, tokenOtraSuc, tokenSinPermiso;
+  let pedidoId, pedidoOtraId, devPendId, devOtraId, devHechaId, devEfectivoId;
+
+  const get = (tk = token) => request(app).get('/api/v1/devoluciones/pendientes').set('Authorization', `Bearer ${tk}`);
+  const patch = (id, tk = token) => request(app).patch(`/api/v1/devoluciones/${id}/transferida`).set('Authorization', `Bearer ${tk}`);
+
+  beforeAll(async () => {
+    sucursalId = (await Sucursal.create({ nombre: 'Sucursal Transf Test' })).id;
+    otraSucursalId = (await Sucursal.create({ nombre: 'Otra Sucursal Transf Test' })).id;
+    const hash = await bcrypt.hash('clave123', 10);
+    const rol = await Rol.findOne({ where: { nombre: 'Cajero' } });
+    const u = await Usuario.create({ rol_id: rol.id, nombre: 'Transf Test', email: 'transf-test@restaurante.com', contrasena: hash });
+    usuarioId = u.id; await u.addSucursal(sucursalId);
+    const o = await Usuario.create({ rol_id: rol.id, nombre: 'Transf Otra Test', email: 'transf-otra-test@restaurante.com', contrasena: hash });
+    otroUsuarioId = o.id; await o.addSucursal(otraSucursalId);
+    const rolTmp = await Rol.create({ nombre: 'Sin Anular Transf Test', descripcion: 'sin ventas.anular' });
+    rolTmpId = rolTmp.id;
+    const permisos = await Permiso.findAll({ where: { modulo: 'ventas' } });
+    await rolTmp.setPermisos(permisos.filter((p) => p.accion !== 'anular'));
+    const s = await Usuario.create({ rol_id: rolTmp.id, nombre: 'Transf Sin Permiso', email: 'transf-sinperm-test@restaurante.com', contrasena: hash });
+    sinPermisoId = s.id; await s.addSucursal(sucursalId);
+    const login = async (email) => (await request(app).post('/api/v1/auth/login').send({ email, contrasena: 'clave123' })).body.datos.token;
+    token = await login('transf-test@restaurante.com');
+    tokenOtraSuc = await login('transf-otra-test@restaurante.com');
+    tokenSinPermiso = await login('transf-sinperm-test@restaurante.com');
+
+    pedidoId = (await Pedido.create({ sucursal_id: sucursalId, usuario_id: usuarioId, estado: 'completado', total: 50 })).id;
+    pedidoOtraId = (await Pedido.create({ sucursal_id: otraSucursalId, usuario_id: otroUsuarioId, estado: 'completado', total: 50 })).id;
+    const mk = async (pid, uid, forma, estado, monto = 20) => (await Devolucion.create({
+      pedido_id: pid, usuario_id: uid, motivo: 'demora', monto, forma, estado_transferencia: estado,
+    })).id;
+    devPendId = await mk(pedidoId, usuarioId, 'transferencia', 'pendiente');
+    devOtraId = await mk(pedidoOtraId, otroUsuarioId, 'transferencia', 'pendiente');
+    devHechaId = await mk(pedidoId, usuarioId, 'transferencia', 'hecha');
+    devEfectivoId = await mk(pedidoId, usuarioId, 'efectivo', null);
+  });
+
+  afterAll(async () => {
+    await Devolucion.destroy({ where: { pedido_id: [pedidoId, pedidoOtraId] } });
+    await Pedido.destroy({ where: { id: [pedidoId, pedidoOtraId] } });
+    await Usuario.destroy({ where: { id: [usuarioId, otroUsuarioId, sinPermisoId] } });
+    await Rol.destroy({ where: { id: rolTmpId } });
+    await Sucursal.destroy({ where: { id: [sucursalId, otraSucursalId] } });
+  });
+
+  it('GET /pendientes lista solo transferencias pendientes de su sucursal', async () => {
+    const res = await get();
+    expect(res.status).toBe(200);
+    expect(res.body.ok).toBe(true);
+    const ids = res.body.datos.map((d) => d.id);
+    expect(ids).toContain(devPendId);
+    expect(ids).not.toContain(devOtraId);
+    expect(ids).not.toContain(devHechaId);
+    expect(ids).not.toContain(devEfectivoId);
+    const d = res.body.datos.find((x) => x.id === devPendId);
+    expect(d.pedido_id).toBe(pedidoId);
+    expect(Number(d.monto)).toBe(20);
+    expect(d.creado_en).toBeDefined();
+    expect(d.usuario.nombre).toBe('Transf Test');
+  });
+
+  it('GET /pendientes sin permiso -> 403', async () => {
+    expect((await get(tokenSinPermiso)).status).toBe(403);
+  });
+
+  it('PATCH marca hecha y deja de listarse', async () => {
+    const res = await patch(devPendId);
+    expect(res.status).toBe(200);
+    expect(res.body.datos.estado_transferencia).toBe('hecha');
+    expect((await Devolucion.findByPk(devPendId)).estado_transferencia).toBe('hecha');
+    const lista = await get();
+    expect(lista.body.datos.map((d) => d.id)).not.toContain(devPendId);
+  });
+
+  it('PATCH sobre ya hecha o no-transferencia -> 409', async () => {
+    expect((await patch(devHechaId)).status).toBe(409);
+    expect((await patch(devEfectivoId)).status).toBe(409);
+  });
+
+  it('PATCH de otra sucursal -> 404; inexistente -> 404; sin permiso -> 403', async () => {
+    expect((await patch(devOtraId)).status).toBe(404);
+    expect((await Devolucion.findByPk(devOtraId)).estado_transferencia).toBe('pendiente');
+    expect((await patch(99999999)).status).toBe(404);
+    expect((await patch(devOtraId, tokenSinPermiso)).status).toBe(403);
+    expect((await patch(devOtraId, tokenOtraSuc)).status).toBe(200);
+  });
+});

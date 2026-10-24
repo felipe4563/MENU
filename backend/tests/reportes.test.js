@@ -702,7 +702,7 @@ describe('Reportes — Arqueos de caja', () => {
   });
 
   it('GET /reportes/arqueos con desde/hasta filtra por cerrado_en sin romper la consulta', async () => {
-    const hoy = new Date().toISOString().slice(0, 10);
+    const hoy = new Date(Date.now() - 4 * 3600 * 1000).toISOString().slice(0, 10);
 
     // Filtrando desde "hoy" excluye la sesión cerrada hace 10 días pero incluye
     // las cerradas en este mismo test run.
@@ -731,5 +731,64 @@ describe('Reportes — Arqueos de caja', () => {
     expect(res.status).toBe(200);
     expect(res.body.datos.cantidad_fuera_tolerancia).toBeGreaterThanOrEqual(1);
     expect(res.body.datos.cajero_top_diferencias.id).toBe(usuarioArqueos.id);
+  });
+});
+
+describe('ventasResumen - devoluciones y ventas netas (servicio directo)', () => {
+  const reportesService = require('../src/modules/reportes/reportes.service');
+  const { Sucursal, Usuario, Rol, Pedido, Devolucion } = require('../src/models');
+  let sucId, otraSucId, uid, pedidoId, pedidoOtraId;
+  const hoy = new Date(Date.now() - 4 * 3600 * 1000).toISOString().slice(0, 10);
+  const alcance = { acceso_todas: true };
+
+  beforeAll(async () => {
+    sucId = (await Sucursal.create({ nombre: 'Sucursal Resumen Dev Test' })).id;
+    otraSucId = (await Sucursal.create({ nombre: 'Otra Sucursal Resumen Dev Test' })).id;
+    const rol = await Rol.findOne({ where: { nombre: 'Cajero' } });
+    uid = (await Usuario.create({ rol_id: rol.id, nombre: 'Resumen Dev Test', email: 'resumen-dev-test@restaurante.com', contrasena: 'x' })).id;
+    pedidoId = (await Pedido.create({ sucursal_id: sucId, usuario_id: uid, estado: 'completado', total: 100, metodo_pago: 'efectivo' })).id;
+    pedidoOtraId = (await Pedido.create({ sucursal_id: otraSucId, usuario_id: uid, estado: 'completado', total: 999, metodo_pago: 'qr' })).id;
+    const mk = (pid, motivo, forma, monto) => Devolucion.create({
+      pedido_id: pid, usuario_id: uid, motivo, monto, forma, estado_transferencia: forma === 'transferencia' ? 'pendiente' : null,
+    });
+    await mk(pedidoId, 'demora', 'efectivo', 10);
+    await mk(pedidoId, 'demora', 'transferencia', 5.5);
+    await mk(pedidoId, 'otro', 'efectivo', 4);
+    await mk(pedidoId, 'error_pedido', 'sin_dinero', 0);
+    await mk(pedidoOtraId, 'demora', 'efectivo', 300);
+  });
+
+  afterAll(async () => {
+    await Devolucion.destroy({ where: { pedido_id: [pedidoId, pedidoOtraId] } });
+    await Pedido.destroy({ where: { id: [pedidoId, pedidoOtraId] } });
+    await Usuario.destroy({ where: { id: uid } });
+    await Sucursal.destroy({ where: { id: [sucId, otraSucId] } });
+  });
+
+  it('suma devoluciones (sin sin_dinero), ventas netas, por motivo y por forma', async () => {
+    const r = await reportesService.ventasResumen({ desde: hoy, hasta: hoy, sucursal_id: sucId }, alcance);
+    expect(r.total_ventas).toBe(100);
+    expect(r.total_devoluciones).toBe(19.5);
+    expect(r.ventas_netas).toBe(80.5);
+    expect(r.devoluciones_por_motivo).toEqual(expect.arrayContaining([
+      { motivo: 'demora', cantidad: 2, monto: 15.5 },
+      { motivo: 'otro', cantidad: 1, monto: 4 },
+    ]));
+    expect(r.devoluciones_por_motivo.find((m) => m.motivo === 'error_pedido')).toBeUndefined();
+    expect(r.devoluciones_por_forma).toEqual(expect.arrayContaining([
+      { forma: 'efectivo', monto: 14 }, { forma: 'transferencia', monto: 5.5 },
+    ]));
+    expect(r.devoluciones_por_forma.find((f) => f.forma === 'sin_dinero')).toBeUndefined();
+  });
+
+  it('respeta alcance de sucursal y filtro metodo_pago; periodo fuera -> 0', async () => {
+    const sinAcceso = await reportesService.ventasResumen({ desde: hoy, hasta: hoy, sucursal_id: otraSucId }, { acceso_todas: false, sucursal_id: sucId });
+    expect(sinAcceso.total_devoluciones).toBe(19.5);
+    const qr = await reportesService.ventasResumen({ desde: hoy, hasta: hoy, sucursal_id: sucId, metodo_pago: 'qr' }, alcance);
+    expect(qr.total_devoluciones).toBe(0);
+    expect(qr.devoluciones_por_motivo).toEqual([]);
+    const viejo = await reportesService.ventasResumen({ desde: '2000-01-01', hasta: '2000-01-02', sucursal_id: sucId }, alcance);
+    expect(viejo.total_devoluciones).toBe(0);
+    expect(viejo.ventas_netas).toBe(0);
   });
 });

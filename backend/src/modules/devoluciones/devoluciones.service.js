@@ -1,5 +1,5 @@
 const {
-  Pedido, DetallePedido, Devolucion, DevolucionItem, SesionCaja, LibroCaja, Producto, Cliente, sequelize,
+  Pedido, DetallePedido, Devolucion, DevolucionItem, SesionCaja, LibroCaja, Producto, Cliente, Usuario, sequelize,
 } = require('../../models');
 const { ajustarStockSucursal } = require('../inventario/stock.service');
 const { emitir } = require('../../socket');
@@ -165,4 +165,35 @@ async function _anularCobrado(pedido, usuario_id, { items, motivo, nota, forma }
   return { pedido, devolucion: dev };
 }
 
-module.exports = { anular };
+// Devoluciones por transferencia bancaria que aún no se han hecho, del
+// alcance de sucursal del usuario.
+async function listarPendientes(alcance) {
+  const wherePedido = {};
+  if (!alcance.acceso_todas) wherePedido.sucursal_id = alcance.sucursal_id;
+  return Devolucion.findAll({
+    where: { forma: 'transferencia', estado_transferencia: 'pendiente' },
+    include: [
+      { model: Pedido, as: 'pedido', attributes: ['id', 'sucursal_id'], where: wherePedido, required: true },
+      { model: Usuario, as: 'usuario', attributes: ['id', 'nombre'] },
+    ],
+    order: [['creado_en', 'ASC']],
+  });
+}
+
+async function marcarTransferida(id, alcance) {
+  return sequelize.transaction(async (transaction) => {
+    const dev = await Devolucion.findByPk(id, { transaction, lock: transaction.LOCK.UPDATE });
+    if (!dev) throw _error('Devolución no encontrada', 404);
+    const pedido = await Pedido.findByPk(dev.pedido_id, { transaction });
+    if (!pedido || (!alcance.acceso_todas && pedido.sucursal_id !== alcance.sucursal_id)) {
+      throw _error('Devolución no encontrada', 404);
+    }
+    if (dev.forma !== 'transferencia' || dev.estado_transferencia !== 'pendiente') {
+      throw _error('La devolución no es una transferencia pendiente', 409);
+    }
+    await dev.update({ estado_transferencia: 'hecha' }, { transaction });
+    return dev;
+  });
+}
+
+module.exports = { anular, listarPendientes, marcarTransferida };

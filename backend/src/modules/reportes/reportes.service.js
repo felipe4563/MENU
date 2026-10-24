@@ -2,7 +2,7 @@ const { Op, fn, literal } = require('sequelize');
 const {
   Pedido, DetallePedido, Mesa, Cliente, Producto, Combo, Usuario,
   RegistroInventario, Compra, Proveedor, LibroCaja, SesionCaja, Sucursal,
-  Opcion, GrupoOpciones, DetallePedidoComboOpcion,
+  Opcion, GrupoOpciones, DetallePedidoComboOpcion, Devolucion,
 } = require('../../models');
 
 // Offset fijo de Bolivia: un datetime sin offset se parsea en la hora local
@@ -70,8 +70,42 @@ async function ventas(filtros = {}, alcance) {
   return { filas: rows, pagina, limite, total: count, total_paginas: limite ? Math.ceil(count / limite) : 1 };
 }
 
+// Devoluciones con dinero del mismo período/alcance/filtros que las ventas.
+// El período filtra por devoluciones.creado_en; sucursal y método de pago
+// salen del pedido; el cajero filtra por quien registró la devolución.
+async function _devolucionesResumen(filtros, alcance) {
+  const { desde, hasta, usuario_id, metodo_pago } = filtros;
+  const where = { forma: { [Op.ne]: 'sin_dinero' }, ...filtroFecha(desde, hasta) };
+  if (usuario_id) where.usuario_id = usuario_id;
+  const wherePedido = {};
+  if (!alcance.acceso_todas) wherePedido.sucursal_id = alcance.sucursal_id;
+  else if (filtros.sucursal_id) wherePedido.sucursal_id = filtros.sucursal_id;
+  if (metodo_pago) wherePedido.metodo_pago = metodo_pago;
+
+  const incluir = [{ model: Pedido, as: 'pedido', attributes: [], where: wherePedido, required: true }];
+  const [porMotivo, porForma] = await Promise.all([
+    Devolucion.findAll({
+      where, include: incluir, raw: true,
+      attributes: ['motivo', [fn('COUNT', literal('`Devolucion`.`id`')), 'cantidad'], [fn('SUM', literal('`Devolucion`.`monto`')), 'monto']],
+      group: ['motivo'], order: [[literal('monto'), 'DESC']],
+    }),
+    Devolucion.findAll({
+      where, include: incluir, raw: true,
+      attributes: ['forma', [fn('SUM', literal('`Devolucion`.`monto`')), 'monto']],
+      group: ['forma'], order: [[literal('monto'), 'DESC']],
+    }),
+  ]);
+  const devoluciones_por_motivo = porMotivo.map((f) => ({
+    motivo: f.motivo, cantidad: parseInt(f.cantidad, 10) || 0, monto: parseFloat(f.monto || 0),
+  }));
+  const devoluciones_por_forma = porForma.map((f) => ({ forma: f.forma, monto: parseFloat(f.monto || 0) }));
+  const total = Math.round(devoluciones_por_forma.reduce((a, f) => a + f.monto, 0) * 100) / 100;
+  return { total_devoluciones: total, devoluciones_por_motivo, devoluciones_por_forma };
+}
+
 async function ventasResumen(filtros = {}, alcance) {
   const where = _whereVentas(filtros, alcance);
+  const devs = await _devolucionesResumen(filtros, alcance);
 
   // Si `metodo_pago` está filtrado a un solo valor, el otro lado es 0 sin
   // consultar la BD — sumar con `{ ...where, metodo_pago: 'qr' }` cuando el
@@ -121,8 +155,11 @@ async function ventasResumen(filtros = {}, alcance) {
       .filter((s) => s.id != null);
   }
 
+  const total_ventas = parseFloat(totalVentas || 0);
   return {
-    total_ventas: parseFloat(totalVentas || 0),
+    total_ventas,
+    ...devs,
+    ventas_netas: Math.round((total_ventas - devs.total_devoluciones) * 100) / 100,
     ventas_efectivo: parseFloat(ventasEfectivo || 0),
     ventas_qr: parseFloat(ventasQR || 0),
     ventas_app_externa: parseFloat(ventasAppExterna || 0),
