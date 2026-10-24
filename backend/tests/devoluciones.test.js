@@ -130,4 +130,34 @@ describe('POST /ventas/:id/anular - pedidos sin cobrar', () => {
     expect(res.status).toBe(get.status);
     expect(res.status).toBe(404);
   });
+
+  it('linea por peso: anulacion parcial -> 400; completa -> 201', async () => {
+    const { pedidoId, detalleId } = await nuevoPedido(2);
+    await DetallePedido.update({ peso: 1.5 }, { where: { id: detalleId } });
+    expect((await anular(pedidoId, { items: [{ detalle_pedido_id: detalleId, cantidad: 1 }], motivo: 'demora' })).status).toBe(400);
+    expect((await anular(pedidoId, { items: [{ detalle_pedido_id: detalleId, cantidad: 2 }], motivo: 'demora' })).status).toBe(201);
+  });
+
+  it('detalle_pedido_id repetido en la solicitud -> 400', async () => {
+    const { pedidoId, detalleId } = await nuevoPedido(3);
+    const res = await anular(pedidoId, { items: [{ detalle_pedido_id: detalleId, cantidad: 1 }, { detalle_pedido_id: detalleId, cantidad: 1 }], motivo: 'demora' });
+    expect(res.status).toBe(400);
+    expect((await DetallePedido.findByPk(detalleId)).cantidad_anulada).toBe(0);
+  });
+
+  it('pedido listo se anula como sin cobrar', async () => {
+    const { pedidoId, detalleId } = await nuevoPedido(2);
+    await Pedido.update({ estado: 'listo' }, { where: { id: pedidoId } });
+    const res = await anular(pedidoId, { items: [{ detalle_pedido_id: detalleId, cantidad: 1 }], motivo: 'demora' });
+    expect(res.status).toBe(201);
+    expect(res.body.datos.devolucion.forma).toBe('sin_dinero');
+  });
+
+  it('detalle de otro pedido -> 400', async () => {
+    const a = await nuevoPedido(1);
+    const b = await nuevoPedido(1);
+    const res = await anular(a.pedidoId, { items: [{ detalle_pedido_id: b.detalleId, cantidad: 1 }], motivo: 'demora' });
+    expect(res.status).toBe(400);
+    expect((await DetallePedido.findByPk(b.detalleId)).cantidad_anulada).toBe(0);
+  });
 });

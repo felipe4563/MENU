@@ -1,7 +1,7 @@
 const { Pedido, DetallePedido, Devolucion, DevolucionItem, sequelize } = require('../../models');
 const { emitir } = require('../../socket');
 const ventasService = require('../ventas/ventas.service');
-const { cantidadVigente } = require('./calculo');
+const { cantidadVigente, round2 } = require('./calculo');
 
 const _error = (mensaje, status) => Object.assign(new Error(mensaje), { status });
 
@@ -13,13 +13,13 @@ async function anular(pedido_id, usuario_id, { items, motivo, nota, forma }, alc
     if (!pedido) throw _error('Pedido no encontrado', 404);
     ventasService.verificarAlcance(pedido, alcance);
 
-    if (pedido.estado === 'cancelado') throw _error('El pedido está cancelado', 409);
-    if (pedido.estado === 'pendiente_pago') throw _error('El pedido está pendiente de pago', 409);
-
     if (pedido.estado === 'completado') {
       return _anularCobrado(pedido, usuario_id, { items, motivo, nota, forma }, transaction);
     }
-    return _anularSinCobrar(pedido, usuario_id, { items, motivo, nota }, transaction);
+    if (pedido.estado === 'pendiente' || pedido.estado === 'listo') {
+      return _anularSinCobrar(pedido, usuario_id, { items, motivo, nota }, transaction);
+    }
+    throw _error(`No se pueden anular productos de un pedido ${pedido.estado === 'pendiente_pago' ? 'pendiente de pago' : pedido.estado}`, 409);
   });
 
   emitir('restaurante:actualizar', { tipo: 'pedido_items' });
@@ -59,10 +59,10 @@ async function _anularSinCobrar(pedido, usuario_id, { items, motivo, nota }, tra
   for (const { detalle, cantidad } of lineas) {
     await DevolucionItem.create({
       devolucion_id: devolucion.id, detalle_pedido_id: detalle.id, cantidad,
-      monto: Math.round(Number(detalle.precio) * cantidad * 100) / 100,
+      monto: round2(Number(detalle.precio) * cantidad),
       vuelve_stock: false,
     }, { transaction });
-    await detalle.update({ cantidad_anulada: Number(detalle.cantidad_anulada) + cantidad }, { transaction });
+    await detalle.increment('cantidad_anulada', { by: cantidad, transaction });
   }
 
   await ventasService.recalcularTotal(pedido.id, { transaction });

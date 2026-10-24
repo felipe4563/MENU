@@ -35,4 +35,4 @@ function calcularDevolucion({ pedido, lineas }) {
   return { lineas: resultado, monto, puntosARestar };
 }
 
-module.exports = { cantidadVigente, calcularDevolucion };
+module.exports = { cantidadVigente, calcularDevolucion, round2 };

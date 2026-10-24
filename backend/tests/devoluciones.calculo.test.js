@@ -36,4 +36,23 @@ describe('calcularDevolucion', () => {
     const r = calcularDevolucion({ pedido: { ...base, puntos_ganados: 10 }, lineas: [linea(1, 25)] });
     expect(r.puntosARestar).toBe(0);
   });
+
+  const l = (id, cantidad, precio) => ({ detalle: { id, precio, cantidad: 9, cantidad_anulada: 0 }, cantidad });
+  it('el recorte se reparte entre lineas (segunda recortada, tercera en 0)', () => {
+    const r = calcularDevolucion({ pedido: { ...base, total_devuelto: 70 }, lineas: [l(1, 2, 10), l(2, 2, 10), l(3, 1, 10)] });
+    expect(r.lineas.map((x) => x.monto)).toEqual([20, 10, 0]);
+    expect(r.monto).toBe(30);
+  });
+  it('ratio 1/3 sobre 3 lineas: la suma de lineas es el monto', () => {
+    const r = calcularDevolucion({ pedido: { ...base, total: 30, monto_recibido: 10 }, lineas: [l(1, 1, 10), l(2, 1, 10), l(3, 1, 10)] });
+    expect(r.lineas.map((x) => x.monto)).toEqual([3.33, 3.33, 3.33]);
+    expect(r.monto).toBe(9.99);
+    expect(r.monto).toBeLessThanOrEqual(10);
+  });
+  it('total = 0 -> todo 0', () => {
+    const r = calcularDevolucion({ pedido: { ...base, total: 0 }, lineas: [l(1, 1, 10), l(2, 2, 5)] });
+    expect(r.lineas.map((x) => x.monto)).toEqual([0, 0]);
+    expect(r.monto).toBe(0);
+    expect(r.puntosARestar).toBe(0);
+  });
 });
