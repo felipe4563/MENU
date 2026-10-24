@@ -44,3 +44,9 @@ export const crearVentaCompleta = (datos) =>
 
 export const anularProductos = (pedido_id, datos) =>
   api.post(`/ventas/${pedido_id}/anular`, datos).then((r) => r.data.datos);
+
+export const getDevolucionesPendientes = () =>
+  api.get('/devoluciones/pendientes').then((r) => r.data.datos);
+
+export const marcarTransferida = (id) =>
+  api.patch(`/devoluciones/${id}/transferida`).then((r) => r.data.datos);

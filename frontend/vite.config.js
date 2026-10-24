@@ -80,6 +80,8 @@ export default defineConfig(({ mode }) => {
         workbox: {
           // Pre-cache every asset produced by the build
           globPatterns: ['**/*.{js,css,html,ico,png,svg,woff,woff2}'],
+          // El bundle principal ronda los 2 MiB (límite por defecto de workbox)
+          maximumFileSizeToCacheInBytes: 4 * 1024 * 1024,
           // SPA: always serve index.html for navigation requests
           navigateFallback: '/index.html',
           // Never intercept API or upload requests with the navigate fallback

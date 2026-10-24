@@ -1,12 +1,16 @@
 import { useState, useMemo } from 'react';
-import { useQuery } from '@tanstack/react-query';
-import { Download, ShoppingCart, TrendingUp, DollarSign, BarChart2, Smartphone } from 'lucide-react';
+import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
+import { Download, ShoppingCart, TrendingUp, DollarSign, BarChart2, Smartphone, Undo2, Wallet } from 'lucide-react';
 import { getReporteVentas, getReporteVentasResumen } from '../../../api/reportes';
 import { useAuth } from '../../../hooks/useAuth';
 import { useAuthStore } from '../../../store/authStore';
 import { exportarPDF } from '../utils/exportarPDF';
 import { FiltroFechas, StatCard, BadgeTipo, Skeleton, bs, fecha, fechaHora, hoy, inicioMes } from '../shared';
 import Paginacion from '../../../components/ui/Paginacion';
+import Modal from '../../../components/ui/Modal';
+import { usePermisos } from '../../../hooks/usePermisos';
+import { getDevolucionesPendientes, marcarTransferida } from '../../../api/ventas';
+import { MOTIVOS_DEVOLUCION, FORMAS_DEVOLUCION } from '../../../utils/ticketDevolucion';
 
 const tipoLabel = (tipo) => tipo === 'llevar' ? 'Para llevar' : 'En mesa';
 
@@ -39,8 +43,104 @@ function VentaCard({ venta, mostrarSucursal }) {
   );
 }
 
+function TransferenciasPendientes() {
+  const qc = useQueryClient();
+  const [confirmar, setConfirmar] = useState(null);
+  const [error, setError] = useState('');
+  const { data: pendientes = [], isLoading } = useQuery({
+    queryKey: ['devoluciones-pendientes'],
+    queryFn: getDevolucionesPendientes,
+  });
+  const marcar = useMutation({
+    mutationFn: (id) => marcarTransferida(id),
+    onSuccess: () => {
+      setConfirmar(null);
+      setError('');
+      qc.invalidateQueries({ queryKey: ['devoluciones-pendientes'] });
+    },
+    onError: (err) => setError(err?.response?.data?.mensaje ?? 'No se pudo marcar como transferida'),
+  });
+  const cerrar = () => { setConfirmar(null); setError(''); };
+
+  return (
+    <div className="space-y-2">
+      <h3 className="text-sm font-semibold text-foreground">Transferencias pendientes</h3>
+      {isLoading ? <Skeleton /> : pendientes.length === 0 ? (
+        <div className="text-center py-6 text-muted-foreground text-sm rounded-2xl border border-border">
+          No hay transferencias de devolución pendientes
+        </div>
+      ) : (
+        <div className="space-y-2">
+          {pendientes.map((d) => (
+            <div key={d.id} className="bg-card border border-border rounded-xl p-3.5 flex flex-wrap items-center justify-between gap-3">
+              <div className="min-w-0">
+                <p className="font-medium text-foreground">Pedido #{d.pedido_id}</p>
+                <p className="text-xs text-muted-foreground">{fechaHora(d.creado_en)} · {d.usuario?.nombre || '-'}</p>
+              </div>
+              <p className="font-bold text-amber-600 dark:text-amber-400 whitespace-nowrap">{bs(d.monto)}</p>
+              <button onClick={() => setConfirmar(d)}
+                className="px-3 py-2 rounded-xl text-sm font-medium bg-primary text-primary-foreground hover:bg-primary/90 transition-colors w-full sm:w-auto">
+                Marcar como transferida
+              </button>
+            </div>
+          ))}
+        </div>
+      )}
+      {confirmar && (
+        <Modal titulo="Marcar como transferida" onClose={cerrar} ancho="max-w-sm">
+          <div className="space-y-4">
+            <p className="text-sm text-muted-foreground">
+              ¿Confirmas que ya transferiste <span className="font-semibold text-foreground">{bs(confirmar.monto)}</span> del
+              pedido <span className="font-semibold text-foreground">#{confirmar.pedido_id}</span>? Esta acción no se puede deshacer.
+            </p>
+            {error && <p className="text-sm text-destructive">{error}</p>}
+            <div className="flex justify-end gap-3">
+              <button onClick={cerrar} className="px-4 py-2 rounded-xl text-sm text-muted-foreground hover:bg-accent hover:text-accent-foreground transition-colors">
+                Cancelar
+              </button>
+              <button onClick={() => marcar.mutate(confirmar.id)} disabled={marcar.isPending}
+                className="px-5 py-2 rounded-xl text-sm bg-primary hover:bg-primary/90 text-primary-foreground font-semibold transition-colors disabled:opacity-60">
+                {marcar.isPending ? 'Guardando...' : 'Confirmar'}
+              </button>
+            </div>
+          </div>
+        </Modal>
+      )}
+    </div>
+  );
+}
+
+function TablaDesglose({ titulo, columnas, filas }) {
+  return (
+    <div className="space-y-2">
+      <h3 className="text-sm font-semibold text-foreground">{titulo}</h3>
+      <div className="overflow-x-auto rounded-2xl border border-border">
+        <table className="w-full text-xs sm:text-sm">
+          <thead>
+            <tr className="bg-muted border-b border-border">
+              {columnas.map(h => (
+                <th key={h} className="text-left px-3 py-2.5 sm:px-4 sm:py-3 text-xs font-semibold text-muted-foreground uppercase tracking-wide">{h}</th>
+              ))}
+            </tr>
+          </thead>
+          <tbody className="divide-y divide-border">
+            {filas.map((f, i) => (
+              <tr key={i} className="bg-card">
+                {f.map((c, j) => (
+                  <td key={j} className={`px-3 py-2.5 sm:px-4 sm:py-3 ${j === 0 ? 'font-medium text-foreground' : 'text-muted-foreground'}`}>{c}</td>
+                ))}
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  );
+}
+
 export default function TabVentas({ empresa, logo, direccion, telefono }) {
   const { usuario } = useAuth();
+  const { tienePermiso } = usePermisos();
   const accesoTodas = useAuthStore((s) => s.usuario?.sucursal_activa?.id == null);
   const [filtroSucursal, setFiltroSucursal] = useState('todas');
   const [desde, setDesde] = useState(inicioMes());
@@ -95,6 +195,8 @@ export default function TabVentas({ empresa, logo, direccion, telefono }) {
     efectivo: resumen?.ventas_efectivo ?? 0,
     qr: resumen?.ventas_qr ?? 0,
     appExterna: resumen?.ventas_app_externa ?? 0,
+    devoluciones: resumen?.total_devoluciones ?? 0,
+    netas: resumen?.ventas_netas ?? 0,
   };
 
   const resumenSucursales = useMemo(() => {
@@ -152,6 +254,8 @@ export default function TabVentas({ empresa, logo, direccion, telefono }) {
           { label: 'Efectivo',           valor: bs(stats.efectivo) },
           { label: 'QR / Transferencia', valor: bs(stats.qr) },
           { label: 'Pagado en app',      valor: bs(stats.appExterna) },
+          { label: 'Devoluciones',       valor: bs(stats.devoluciones) },
+          { label: 'Ventas netas',       valor: bs(stats.netas) },
         ],
         nombreArchivo: `reporte-ventas-${desde}-${hasta}${filtroCajero !== 'todos' ? `-${cajeroLabel}` : ''}${filtroMetodoPago !== 'todos' ? `-${filtroMetodoPago}` : ''}${filtroTipo !== 'todos' ? `-${filtroTipo}` : ''}.pdf`,
       });
@@ -228,6 +332,26 @@ export default function TabVentas({ empresa, logo, direccion, telefono }) {
         <StatCard label="QR / Transferencia" valor={bs(stats.qr)}           color="amber"   Icono={BarChart2}    idx={3} />
         <StatCard label="Pagado en app"      valor={bs(stats.appExterna)}   color="purple"  Icono={Smartphone}   idx={4} />
       </div>
+
+      <div className="grid grid-cols-2 gap-3 sm:gap-4">
+        <StatCard label="Devoluciones" valor={bs(stats.devoluciones)} color="rose"    Icono={Undo2}  idx={5} />
+        <StatCard label="Ventas netas" valor={bs(stats.netas)}        color="emerald" Icono={Wallet} idx={6} />
+      </div>
+
+      {(resumen?.devoluciones_por_motivo?.length > 0 || resumen?.devoluciones_por_forma?.length > 0) && (
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+          {resumen?.devoluciones_por_motivo?.length > 0 && (
+            <TablaDesglose titulo="Devoluciones por motivo" columnas={['Motivo', 'Cantidad', 'Monto']}
+              filas={resumen.devoluciones_por_motivo.map(m => [MOTIVOS_DEVOLUCION[m.motivo] ?? m.motivo, m.cantidad, bs(m.monto)])} />
+          )}
+          {resumen?.devoluciones_por_forma?.length > 0 && (
+            <TablaDesglose titulo="Devoluciones por forma" columnas={['Forma', 'Monto']}
+              filas={resumen.devoluciones_por_forma.map(f => [FORMAS_DEVOLUCION[f.forma] ?? f.forma, bs(f.monto)])} />
+          )}
+        </div>
+      )}
+
+      {tienePermiso('ventas', 'anular') && <TransferenciasPendientes />}
 
       {accesoTodas && resumenSucursales.length > 0 && (
         <div className="overflow-x-auto rounded-2xl border border-border">
