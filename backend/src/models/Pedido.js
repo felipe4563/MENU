@@ -15,6 +15,8 @@ const Pedido = sequelize.define('Pedido', {
   numero_llevar: { type: DataTypes.INTEGER.UNSIGNED, allowNull: true },
   estado: { type: DataTypes.ENUM('pendiente','listo','pendiente_pago','completado','cancelado'), defaultValue: 'pendiente' },
   estado_cocina: { type: DataTypes.ENUM('pendiente','listo'), allowNull: true, defaultValue: null },
+  // Desde cuándo espera en cocina la ronda en curso (ver migración 058).
+  cocina_desde: { type: DataTypes.DATE, allowNull: true },
   tipo_documento: { type: DataTypes.STRING(50), defaultValue: 'Ticket' },
   nombre_cliente: { type: DataTypes.STRING(255), defaultValue: 'Público General' },
   documento_cliente: { type: DataTypes.STRING(50) },

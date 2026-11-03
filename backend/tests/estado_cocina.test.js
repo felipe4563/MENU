@@ -211,6 +211,57 @@ describe('estado_cocina — independiente del cobro', () => {
     await Area.destroy({ where: { id: area.id } });
   });
 
+  it('tiempo de cocina: el reloj arranca con la primera comida, se guarda la ronda al marcar listo y una ronda nueva reinicia', async () => {
+    await Configuracion.upsert({ clave: 'flujo_cocina', valor: 'digital' });
+    const { Mesa, Area, CocinaTiempo } = require('../src/models');
+    const reportesService = require('../src/modules/reportes/reportes.service');
+    const area = await Area.create({ nombre: 'Area Reloj Cocina Test', sucursal_id: sucursalId });
+    const mesa = await Mesa.create({ nombre: 'Mesa Reloj Cocina Test', area_id: area.id, sucursal_id: sucursalId, estado: 'disponible' });
+    const auth = { Authorization: `Bearer ${token}` };
+
+    const abierto = await request(app).post('/api/v1/ventas').set(auth).send({ tipo: 'mesa', mesa_id: mesa.id, sesion_caja_id: sesionId });
+    const pedidoId = abierto.body.datos.id;
+    // Mesa recién abierta, sin comida: el reloj no corre todavía.
+    expect((await Pedido.findByPk(pedidoId)).cocina_desde).toBeNull();
+
+    await request(app).post(`/api/v1/ventas/${pedidoId}/items`).set(auth).send({ producto_id: productoId, cantidad: 1 });
+    const primera = (await Pedido.findByPk(pedidoId)).cocina_desde;
+    expect(primera).not.toBeNull();
+
+    // Una segunda comida en la misma ronda no reinicia el reloj.
+    await request(app).post(`/api/v1/ventas/${pedidoId}/items`).set(auth).send({ producto_id: productoId, cantidad: 1 });
+    expect((await Pedido.findByPk(pedidoId)).cocina_desde.getTime()).toBe(primera.getTime());
+
+    const enCocina = await reportesService.tiemposCocina({}, { acceso_todas: false, sucursal_id: sucursalId });
+    expect(enCocina.esperando.map((e) => e.id)).toContain(pedidoId);
+    expect(enCocina.esperando.find((e) => e.id === pedidoId).mesa).toBe('Mesa Reloj Cocina Test');
+
+    await request(app).patch(`/api/v1/ventas/${pedidoId}/listo`).set(auth);
+    const rondas = await CocinaTiempo.findAll({ where: { pedido_id: pedidoId } });
+    expect(rondas).toHaveLength(1);
+    expect(rondas[0].sucursal_id).toBe(sucursalId);
+    expect((await Pedido.findByPk(pedidoId)).cocina_desde).toBeNull();
+
+    const resumen = await reportesService.tiemposCocina({}, { acceso_todas: false, sucursal_id: sucursalId });
+    expect(resumen.cantidad).toBeGreaterThanOrEqual(1);
+    expect(resumen.promedio_seg).not.toBeNull();
+    expect(resumen.esperando.map((e) => e.id)).not.toContain(pedidoId);
+
+    // Algo nuevo sobre un pedido listo: vuelve a cocina con reloj nuevo.
+    await request(app).post(`/api/v1/ventas/${pedidoId}/items`).set(auth).send({ producto_id: productoId, cantidad: 1 });
+    const reabierto = await Pedido.findByPk(pedidoId);
+    expect(reabierto.estado_cocina).toBe('pendiente');
+    expect(reabierto.cocina_desde).not.toBeNull();
+
+    // Otra sucursal no ve este pedido esperando.
+    const otra = await reportesService.tiemposCocina({}, { acceso_todas: false, sucursal_id: 1 });
+    expect(otra.esperando.map((e) => e.id)).not.toContain(pedidoId);
+
+    await Pedido.destroy({ where: { id: pedidoId } });
+    await Mesa.destroy({ where: { id: mesa.id } });
+    await Area.destroy({ where: { id: area.id } });
+  });
+
   it("agregarItem con producto invalido sobre un pedido listo NO lo reabre (I2)", async () => {
     await Configuracion.upsert({ clave: 'flujo_cocina', valor: 'digital' });
     const Mesa = require('../src/models').Mesa;

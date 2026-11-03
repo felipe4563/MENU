@@ -60,6 +60,7 @@ const RuletaGiro = require('./RuletaGiro');
 const Insumo = require('./Insumo');
 const InsumoStockSucursal = require('./InsumoStockSucursal');
 const InsumoMovimiento = require('./InsumoMovimiento');
+const CocinaTiempo = require('./CocinaTiempo');
 const RecetaInsumo = require('./RecetaInsumo');
 const DetallePedidoOpcion = require('./DetallePedidoOpcion');
 const DetallePedidoComboOpcion = require('./DetallePedidoComboOpcion');
@@ -195,6 +196,7 @@ Insumo.hasMany(InsumoMovimiento, { foreignKey: 'insumo_id', as: 'movimientos' })
 InsumoMovimiento.belongsTo(Insumo, { foreignKey: 'insumo_id', as: 'insumo' });
 InsumoMovimiento.belongsTo(Sucursal, { foreignKey: 'sucursal_id', as: 'sucursal' });
 InsumoMovimiento.belongsTo(Usuario, { foreignKey: 'usuario_id', as: 'usuario' });
+CocinaTiempo.belongsTo(Pedido, { foreignKey: 'pedido_id', as: 'pedido' });
 
 // Receta: qué insumo(s) consume un producto al venderse (base o por opción)
 Producto.hasMany(RecetaInsumo, { foreignKey: 'producto_id', as: 'receta' });
@@ -257,7 +259,7 @@ module.exports = {
   Combo, ComboProducto, Promocion,
   Cupon,
   RuletaPremio, RuletaGiro,
-  Insumo, InsumoStockSucursal, InsumoMovimiento, RecetaInsumo, DetallePedidoOpcion, DetallePedidoComboOpcion,
+  Insumo, InsumoStockSucursal, InsumoMovimiento, CocinaTiempo, RecetaInsumo, DetallePedidoOpcion, DetallePedidoComboOpcion,
   IntegracionApiKey,
   HorarioPersonal, MarcacionPersonal,
 };

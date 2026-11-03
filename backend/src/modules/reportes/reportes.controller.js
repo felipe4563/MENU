@@ -68,8 +68,12 @@ async function getPorAcabarse(req, res, next) {
   try { res.json({ ok: true, datos: await svc.porAcabarse(req.query, _alcance(req)) }); } catch (e) { next(e); }
 }
 
+async function getTiemposCocina(req, res, next) {
+  try { res.json({ ok: true, datos: await svc.tiemposCocina(req.query, _alcance(req)) }); } catch (e) { next(e); }
+}
+
 module.exports = {
-  getPorAcabarse,
+  getPorAcabarse, getTiemposCocina,
   getVentas, getVentasResumen, getVentasProductos, getVentasVariantes, getVentasMapaCalor,
   getInventario, getInventarioResumen,
   getCompras, getComprasResumen,

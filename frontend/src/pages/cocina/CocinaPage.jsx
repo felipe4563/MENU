@@ -34,7 +34,8 @@ function useAhora(ms = 30_000) {
 const minutos = (f) => Math.max(0, Math.floor((Date.now() - new Date(f)) / 60000));
 
 function Ticket({ p, onAccion, ocupado }) {
-  const m = minutos(p.creado_en);
+  // Desde que llegó la comida de esta ronda (una mesa se crea al abrirla).
+  const m = minutos(p.cocina_desde ?? p.creado_en);
   const listo = p.estado_cocina === 'listo';
   const tono = listo ? 'bg-hierba' : m >= 20 ? 'bg-locoto' : m >= 10 ? 'bg-aji' : 'bg-tinta';
   const Icono = p.tipo === 'mesa' ? Armchair : p.tipo === 'delivery' ? Bike : ShoppingBag;

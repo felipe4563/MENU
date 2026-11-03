@@ -2,8 +2,8 @@ import { useMemo } from 'react';
 import { Link } from 'react-router-dom';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { ShoppingBag, ChefHat, Wallet, Printer, ArrowUpRight, ArrowDownRight, PackageX } from 'lucide-react';
-import { getReporteVentasResumen, getReporteVentasProductos, getReporteFinanzasSerie, getReporteFinanzasResumen, getReporteVentas, getReporteMapaCalor, getPorAcabarse } from '../../api/reportes';
-import { PorHora, FormasPago, Tendencia, Canales, ResultadoMes, MapaCalor } from './graficos';
+import { getReporteVentasResumen, getReporteVentasProductos, getReporteFinanzasSerie, getReporteFinanzasResumen, getReporteVentas, getReporteMapaCalor, getPorAcabarse, getTiemposCocina } from '../../api/reportes';
+import { PorHora, FormasPago, Tendencia, Canales, ResultadoMes, MapaCalor, TiempoCocina } from './graficos';
 import { getVentas } from '../../api/ventas';
 import { getEstadoCajas } from '../../api/caja';
 import { getEstadoAgentes } from '../../api/impresion';
@@ -49,6 +49,7 @@ export default function HoyPage() {
   const pedidosAyer = useQuery({ queryKey: ['hoy', 'pedidos', ayer], queryFn: () => getReporteVentas({ desde: ayer, hasta: ayer, limite: 0 }), enabled: verReportes, staleTime: 10 * 60_000 });
   const calor = useQuery({ queryKey: ['hoy', 'calor', hoy], queryFn: () => getReporteMapaCalor({ desde: haceDias(27), hasta: hoy }), enabled: verReportes, staleTime: 10 * 60_000 });
   const acabarse = useQuery({ queryKey: ['hoy', 'acabarse'], queryFn: () => getPorAcabarse(), enabled: verReportes, refetchInterval: 5 * 60_000 });
+  const cocina = useQuery({ queryKey: ['hoy', 'cocina'], queryFn: () => getTiemposCocina(), enabled: verReportes, refetchInterval: 60_000 });
   const mes = useQuery({ queryKey: ['hoy', 'mes', hoy], queryFn: () => getReporteFinanzasResumen({ desde: `${hoy.slice(0, 8)}01`, hasta: hoy }), enabled: verReportes });
   const abiertos = useQuery({ queryKey: ['ventas', 'activos'], queryFn: () => getVentas({ estado: 'pendiente,listo' }), enabled: tiene('ventas', 'ver') });
   const cajas = useQuery({ queryKey: ['caja-estado', sucursalId], queryFn: () => getEstadoCajas(sucursalId), enabled: !!sucursalId && tiene('caja', 'ver') });
@@ -195,6 +196,17 @@ export default function HoyPage() {
             <Canales pedidos={pedidosHoy.data?.filas} />
           </section>
 
+
+          {/* Sin rondas ni esperas: el local no usa la pantalla de Cocina. */}
+          {cocina.data && (cocina.data.cantidad > 0 || cocina.data.semana?.cantidad > 0 || cocina.data.esperando?.length > 0) && (
+            <section className="lg:col-span-12 min-w-0 ficha p-5 sm:p-6">
+              <div className="flex items-baseline gap-3 mb-4">
+                <h2 className="font-display font-semibold text-lg">Tiempo de cocina</h2>
+                {tiene('cocina', 'ver') && <Link to="/cocina" className="text-sm font-semibold underline underline-offset-2 ml-auto">Abrir Cocina</Link>}
+              </div>
+              <TiempoCocina datos={cocina.data} />
+            </section>
+          )}
 
           <section className="ficha p-5 sm:p-6 lg:col-span-12 grid sm:grid-cols-3 gap-5">
             <div>

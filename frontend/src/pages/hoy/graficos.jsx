@@ -1,6 +1,7 @@
 import { useMemo, useState } from 'react';
 import { ResponsiveContainer, AreaChart, Area, BarChart, Bar, Cell, XAxis, YAxis, Tooltip, CartesianGrid, ReferenceLine, PieChart, Pie } from 'recharts';
 import { cx, dinero } from '../../lib/util';
+import { etiquetaDestino } from '../vender/datosCatalogo';
 
 const EJE = { fontSize: 11, fill: 'rgb(var(--tenue))' };
 const corto = (v) => (v >= 1000 ? `${(v / 1000).toFixed(v >= 10000 ? 0 : 1)}k` : `${Math.round(v)}`);
@@ -199,6 +200,62 @@ export function MapaCalor({ celdas = [], moneda, semanas = 4 }) {
           <span className="w-3.5 h-3.5 rounded-[3px] bg-hundido" />
           {ESCALONES.map((a) => <span key={a} className="w-3.5 h-3.5 rounded-[3px]" style={{ background: `rgb(var(--aji) / ${a})` }} />)}
           Más</span>
+      </div>
+    </div>
+  );
+}
+
+// Tiempo de cocina: promedio de hoy contra los 7 días anteriores y lo que
+// espera ahora, lo más antiguo primero; en rojo lo que pasa del umbral.
+function duracion(seg) {
+  if (seg == null) return '—';
+  const m = Math.round(seg / 60);
+  if (m < 1) return 'menos de 1 min';
+  if (m < 60) return `${m} min`;
+  return `${Math.floor(m / 60)} h ${String(m % 60).padStart(2, '0')} min`;
+}
+
+export function TiempoCocina({ datos }) {
+  if (!datos) return null;
+  const { cantidad, promedio_seg, max_seg, semana, esperando = [], atrasados, min_atraso } = datos;
+  const diff = promedio_seg != null && semana?.promedio_seg != null ? Math.round((promedio_seg - semana.promedio_seg) / 60) : null;
+  return (
+    <div className="grid md:grid-cols-[minmax(0,1fr)_minmax(0,1.2fr)] gap-6 md:gap-10">
+      <div className="flex flex-wrap gap-x-8 gap-y-4 content-start">
+        <div>
+          <p className="num text-[32px] font-extrabold leading-none">{duracion(promedio_seg)}</p>
+          <p className="text-[13px] text-tenue mt-1">tarda un pedido en promedio hoy</p>
+          {diff != null && diff !== 0 && (
+            <p className={cx('text-sm font-semibold mt-1.5', diff < 0 ? 'text-hierba' : 'text-locoto')}>
+              {Math.abs(diff)} min {diff < 0 ? 'más rápido' : 'más lento'} que los 7 días anteriores
+            </p>
+          )}
+          {diff === 0 && <p className="text-sm text-tenue mt-1.5">Igual que los 7 días anteriores</p>}
+        </div>
+        <div><p className="num text-xl font-bold">{cantidad}</p><p className="text-[13px] text-tenue">pedidos listos hoy</p></div>
+        <div><p className="num text-xl font-bold">{duracion(max_seg)}</p><p className="text-[13px] text-tenue">el más lento hoy</p></div>
+      </div>
+      <div className="min-w-0">
+        <p className="text-sm text-tenue mb-2">
+          {esperando.length === 0 ? 'Nada esperando en cocina ahora.'
+            : <>Esperando ahora: <b className="text-tinta num">{esperando.length}</b>{atrasados > 0 && <span className="text-locoto font-semibold"> · {atrasados} con más de {min_atraso} min</span>}</>}
+        </p>
+        {esperando.length > 0 && (
+          <ul className="divide-y divide-dashed divide-linea">
+            {esperando.slice(0, 5).map((e) => {
+              const tarde = e.segundos >= min_atraso * 60;
+              return (
+                <li key={e.id} className="flex items-baseline gap-3 py-2 text-sm">
+                  <span className={cx('w-2 h-2 rounded-full shrink-0 self-center', tarde ? 'bg-locoto' : 'bg-tenue/50')} />
+                  <span className="font-medium truncate">{etiquetaDestino({ ...e, mesa: e.mesa ? { nombre: e.mesa } : null })}</span>
+                  <span className="text-tenue truncate">{e.nombre_cliente}</span>
+                  <span className={cx('num ml-auto shrink-0', tarde ? 'text-locoto font-semibold' : 'text-tenue')}>{duracion(e.segundos)}</span>
+                </li>
+              );
+            })}
+          </ul>
+        )}
+        {esperando.length > 5 && <p className="text-[13px] text-tenue mt-1">Y {esperando.length - 5} más en la pantalla de Cocina.</p>}
       </div>
     </div>
   );

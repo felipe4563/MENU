@@ -1,7 +1,7 @@
 const { Op } = require('sequelize');
 const {
   Pedido, DetallePedido, Mesa, Producto, Cliente, SesionCaja, Caja, LibroCaja, Configuracion, PagoQr, Opcion, Combo, ComboProducto, Promocion, Cupon,
-  RecetaInsumo, DetallePedidoOpcion, DetallePedidoComboOpcion, Devolucion, DevolucionItem, Usuario, sequelize,
+  RecetaInsumo, DetallePedidoOpcion, DetallePedidoComboOpcion, Devolucion, DevolucionItem, Usuario, CocinaTiempo, sequelize,
 } = require('../../models');
 const { emitir } = require('../../socket');
 const { ajustarStockSucursal } = require('../inventario/stock.service');
@@ -359,6 +359,14 @@ async function _siguienteNumeroLlevar() {
 // ya se cobró o no (ver spec: estado_cocina es un eje separado de estado).
 // Ausencia de configuración se trata como 'digital' (mismo default que ya
 // usa TabFlujo.jsx en el frontend).
+// Tiempo de cocina: el reloj de la ronda arranca con la primera comida que
+// llega (un pedido de mesa se crea vacío al abrir la mesa). Si se agrega algo
+// a un pedido que ya estaba listo, vuelve a cocina como una ronda nueva.
+async function _relojCocinaAlAgregar(pedido) {
+  if (pedido.estado_cocina === 'listo') await pedido.update({ estado_cocina: 'pendiente', cocina_desde: new Date() });
+  else if (pedido.estado_cocina === 'pendiente' && !pedido.cocina_desde) await pedido.update({ cocina_desde: new Date() });
+}
+
 async function _estadoCocinaInicial() {
   const cfg = await Configuracion.findOne({ where: { clave: 'flujo_cocina' } });
   return (!cfg || cfg.valor === 'digital') ? 'pendiente' : null;
@@ -1173,7 +1181,7 @@ async function crearCompleta({ tipo, mesa_id, nombre_cliente, documento_cliente,
       mesa_id: tipo === 'mesa' ? mesa_id : null,
       mesa_sesion_id: tipo === 'mesa' ? mesa_sesion_id : null,
       tipo, origen, origen_app, numero_llevar, usuario_id, cliente_id: cliente_id || null, sesion_caja_id, sucursal_id, notas,
-      estado: estadoInicial, estado_cocina, total, descuento, propina, metodo_pago: 'efectivo',
+      estado: estadoInicial, estado_cocina, cocina_desde: estado_cocina === 'pendiente' ? new Date() : null, total, descuento, propina, metodo_pago: 'efectivo',
       nombre_cliente: nombre_cliente || (tipo === 'mesa' ? 'Público General' : 'Cliente'),
       documento_cliente,
       telefono_cliente,
@@ -1267,9 +1275,7 @@ async function agregarItem(pedido_id, { producto_id, combo_id, cantidad = 1, not
       if (filas.length) await DetallePedidoComboOpcion.bulkCreate(filas);
     }
     await _recalcularTotal(pedido_id);
-    if (pedido.estado_cocina === 'listo') {
-      await pedido.update({ estado_cocina: 'pendiente' });
-    }
+    await _relojCocinaAlAgregar(pedido);
     emitir('restaurante:actualizar', { tipo: 'pedido_items' });
     return item;
   }
@@ -1296,9 +1302,7 @@ async function agregarItem(pedido_id, { producto_id, combo_id, cantidad = 1, not
   }
 
   await _recalcularTotal(pedido_id);
-  if (pedido.estado_cocina === 'listo') {
-    await pedido.update({ estado_cocina: 'pendiente' });
-  }
+  await _relojCocinaAlAgregar(pedido);
   emitir('restaurante:actualizar', { tipo: 'pedido_items' });
   return item;
 }
@@ -1444,7 +1448,16 @@ async function marcarListo(pedido_id, alcance) {
   if (!pedido) throw Object.assign(new Error('Pedido no encontrado'), { status: 404 });
   _verificarAlcance(pedido, alcance);
   if (pedido.estado_cocina !== 'pendiente') throw Object.assign(new Error('Solo pedidos pendientes de cocina pueden marcarse como listos'), { status: 409 });
-  await pedido.update({ estado_cocina: 'listo' });
+  const listo_en = new Date();
+  await sequelize.transaction(async (t) => {
+    if (pedido.cocina_desde) {
+      await CocinaTiempo.create({
+        pedido_id: pedido.id, sucursal_id: pedido.sucursal_id, desde: pedido.cocina_desde, listo_en,
+        segundos: Math.max(0, Math.round((listo_en - new Date(pedido.cocina_desde)) / 1000)),
+      }, { transaction: t });
+    }
+    await pedido.update({ estado_cocina: 'listo', cocina_desde: null }, { transaction: t });
+  });
   const listo = await obtener(pedido_id);
   emitir('restaurante:actualizar', { tipo: 'pedido_listo' });
   return listo;

@@ -3,7 +3,7 @@ const {
   Pedido, DetallePedido, Mesa, Cliente, Producto, Combo, Usuario,
   RegistroInventario, Compra, Proveedor, LibroCaja, SesionCaja, Sucursal,
   Opcion, GrupoOpciones, DetallePedidoComboOpcion, Devolucion,
-  Insumo, InsumoStockSucursal, InsumoMovimiento, ProductoStockSucursal,
+  Insumo, InsumoStockSucursal, InsumoMovimiento, ProductoStockSucursal, CocinaTiempo,
 } = require('../../models');
 
 // Offset fijo de Bolivia: un datetime sin offset se parsea en la hora local
@@ -746,8 +746,48 @@ async function porAcabarse(filtros = {}, alcance) {
   return [...insumos, ...productos].sort((a, b) => (a.dias ?? (a.stock <= 0 ? -1 : Infinity)) - (b.dias ?? (b.stock <= 0 ? -1 : Infinity)) || a.nombre.localeCompare(b.nombre));
 }
 
+// Tiempo de cocina: promedio de las rondas terminadas en el período (por
+// defecto hoy) contra los 7 días anteriores, y lo que espera ahora mismo.
+// Mismo umbral de atraso que la pantalla de Cocina (ticket en rojo).
+const MIN_ATRASO = 20;
+
+async function tiemposCocina(filtros = {}, alcance) {
+  const sucursal_id = !alcance.acceso_todas ? alcance.sucursal_id : (filtros.sucursal_id || null);
+  const enSucursal = sucursal_id ? { sucursal_id } : {};
+  const hoy = _fechaLocalYMD(new Date());
+  const desde = new Date(`${filtros.desde || hoy}T00:00:00-04:00`);
+  const hasta = new Date(`${filtros.hasta || hoy}T23:59:59-04:00`);
+  const semanaDesde = new Date(desde.getTime() - 7 * 86400000);
+
+  const resumir = async (rango) => {
+    const [f] = await CocinaTiempo.findAll({
+      where: { ...enSucursal, listo_en: rango }, raw: true,
+      attributes: [[fn('COUNT', literal('id')), 'cantidad'], [fn('AVG', literal('segundos')), 'promedio'], [fn('MAX', literal('segundos')), 'maximo']],
+    });
+    return { cantidad: parseInt(f?.cantidad, 10) || 0, promedio_seg: f?.promedio == null ? null : Math.round(f.promedio), max_seg: f?.maximo == null ? null : parseInt(f.maximo, 10) };
+  };
+
+  const [periodo, semana, enCocina] = await Promise.all([
+    resumir({ [Op.gte]: desde, [Op.lte]: hasta }),
+    resumir({ [Op.gte]: semanaDesde, [Op.lt]: desde }),
+    Pedido.findAll({
+      where: { ...enSucursal, estado_cocina: 'pendiente', cocina_desde: { [Op.ne]: null }, estado: { [Op.notIn]: ['pendiente_pago', 'cancelado'] } },
+      include: [{ model: Mesa, as: 'mesa', attributes: ['id', 'nombre'] }],
+      attributes: ['id', 'tipo', 'numero_llevar', 'nombre_cliente', 'cocina_desde'],
+      order: [['cocina_desde', 'ASC']],
+    }),
+  ]);
+
+  const ahora = Date.now();
+  const esperando = enCocina.map((p) => ({
+    id: p.id, tipo: p.tipo, mesa: p.mesa?.nombre ?? null, numero_llevar: p.numero_llevar, nombre_cliente: p.nombre_cliente,
+    desde: p.cocina_desde, segundos: Math.max(0, Math.round((ahora - new Date(p.cocina_desde)) / 1000)),
+  }));
+  return { ...periodo, semana, min_atraso: MIN_ATRASO, esperando, atrasados: esperando.filter((e) => e.segundos >= MIN_ATRASO * 60).length };
+}
+
 module.exports = {
-  porAcabarse,
+  porAcabarse, tiemposCocina,
   ventas, ventasResumen, ventasProductos, ventasVariantes, ventasMapaCalor,
   inventario, inventarioResumen,
   compras, comprasResumen,

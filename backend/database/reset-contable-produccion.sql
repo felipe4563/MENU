@@ -59,6 +59,7 @@ TRUNCATE TABLE detalle_pedido_combo_opciones;
 DELETE FROM detalle_pedidos;
 ALTER TABLE detalle_pedidos AUTO_INCREMENT = 1;
 TRUNCATE TABLE pagos_qr;
+TRUNCATE TABLE cocina_tiempos;
 DELETE FROM pedidos;
 ALTER TABLE pedidos AUTO_INCREMENT = 1;
 
