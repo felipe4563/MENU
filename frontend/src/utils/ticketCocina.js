@@ -1,3 +1,4 @@
+import { imprimirHtml } from './imprimirHtml';
 // Ver misma función en ticketVenta.js: achica el font-size del nombre de
 // producto si no entra en una sola línea a su tamaño normal, con el ancho
 // real de columna de este ticket (col-prod: 44% de 248px).
@@ -328,6 +329,5 @@ ${anulacion ? '' : `
 </body>
 </html>`;
 
-  const win = window.open('', '_blank', 'width=420,height=650');
-  if (win) { win.document.write(html); win.document.close(); win.focus(); setTimeout(() => win.print(), 400); }
+  imprimirHtml(html);
 }

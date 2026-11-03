@@ -4,6 +4,7 @@ export const getReporteVentas        = (params = {}) => api.get('/reportes/venta
 export const getReporteVentasResumen = (params = {}) => api.get('/reportes/ventas/resumen',     { params }).then(r => r.data.datos);
 export const getReporteVentasProductos = (params = {}) => api.get('/reportes/ventas/productos', { params }).then(r => r.data.datos);
 export const getReporteVentasVariantes = (params = {}) => api.get('/reportes/ventas/variantes', { params }).then(r => r.data.datos);
+export const getReporteMapaCalor = (params = {}) => api.get('/reportes/ventas/mapa-calor', { params }).then(r => r.data.datos);
 export const getReporteInventario     = (params = {}) => api.get('/reportes/inventario',        { params }).then(r => r.data.datos);
 export const getReporteInventarioResumen = (params = {}) => api.get('/reportes/inventario/resumen', { params }).then(r => r.data.datos);
 export const getReporteCompras        = (params = {}) => api.get('/reportes/compras',           { params }).then(r => r.data.datos);

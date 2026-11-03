@@ -1,3 +1,4 @@
+import { imprimirHtml } from './imprimirHtml';
 // Ancho real de la columna de producto en el ticket de venta: col-prod es
 // 46% de los 248px del body. Si el nombre no entra a fsMax en una sola
 // línea, se achica hasta fsMin — el CSS de .prod-nombre (nowrap/ellipsis)
@@ -324,6 +325,5 @@ ${['', ''].map((_, i) => `
 </body>
 </html>`;
 
-  const win = window.open('', '_blank', 'width=420,height=680');
-  if (win) { win.document.write(html); win.document.close(); win.focus(); setTimeout(() => win.print(), 400); }
+  imprimirHtml(html);
 }

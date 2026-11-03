@@ -19,3 +19,13 @@ export const subirLogo = (file) => {
   form.append('imagen', file);
   return api.post('/uploads/imagen', form).then((r) => r.data.datos.url);
 };
+
+// Cobro con QR: endpoint propio (permiso pagos_qr.configurar + contraseña).
+export const getCobroQr = () =>
+  api.get('/configuracion/cobro-qr').then((r) => r.data.datos);
+
+export const guardarCobroQr = (datos) =>
+  api.put('/configuracion/cobro-qr', datos).then((r) => r.data.datos);
+
+export const probarBaneco = () =>
+  api.post('/configuracion/cobro-qr/probar').then((r) => r.data.datos);

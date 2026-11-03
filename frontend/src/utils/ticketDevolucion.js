@@ -1,3 +1,4 @@
+import { imprimirHtml } from './imprimirHtml';
 const _esc = (s) => String(s ?? '').replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
 
 export const MOTIVOS_DEVOLUCION = {
@@ -79,6 +80,5 @@ export function imprimirComprobanteDevolucion(pedido, devolucion, config = {}) {
 </body>
 </html>`;
 
-  const win = window.open('', '_blank', 'width=420,height=700');
-  if (win) { win.document.write(html); win.document.close(); win.focus(); setTimeout(() => win.print(), 400); }
+  imprimirHtml(html);
 }

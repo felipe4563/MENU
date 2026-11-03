@@ -1,349 +1,152 @@
-import { useEffect } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { AlertCircle, CheckCircle2, ChefHat, Clock, RefreshCw, ShoppingBag } from 'lucide-react';
+import { ChefHat, Bell, BellOff, Maximize2, Check, HandPlatter, ShoppingBag, Bike, Armchair } from 'lucide-react';
 import { getCocinaOrders, marcarListo, marcarEntregado } from '../../api/ventas';
 import { usePermisos } from '../../hooks/usePermisos';
-import socket from '../../socket';
+import { useSocket } from '../../hooks/useSocket';
+import { Cargando, SinPermiso } from '../../components/ui/piezas';
+import { avisar } from '../../components/ui/Aviso';
+import { cx, errorDe, hora } from '../../lib/util';
+import { etiquetaDestino } from '../vender/datosCatalogo';
 
-// Agrupa las opciones elegidas de los productos DENTRO de un combo por
-// producto_id — ver misma función en ticketCocina.js/ticketVenta.js.
-function _opcionesPorProducto(comboOpciones) {
-  const mapa = {};
-  (comboOpciones || []).forEach((co) => {
-    if (!co.opcion?.nombre) return;
-    (mapa[co.producto_id] ??= []).push(co.opcion.nombre);
-  });
-  return mapa;
+function pitido() {
+  try {
+    const ctx = new (window.AudioContext || window.webkitAudioContext)();
+    [0, 0.18].forEach((t) => {
+      const o = ctx.createOscillator();
+      const g = ctx.createGain();
+      o.frequency.value = 880;
+      g.gain.setValueAtTime(0.0001, ctx.currentTime + t);
+      g.gain.exponentialRampToValueAtTime(0.25, ctx.currentTime + t + 0.02);
+      g.gain.exponentialRampToValueAtTime(0.0001, ctx.currentTime + t + 0.15);
+      o.connect(g).connect(ctx.destination);
+      o.start(ctx.currentTime + t);
+      o.stop(ctx.currentTime + t + 0.16);
+    });
+  } catch { /* sin audio */ }
 }
 
-function tiempoTranscurrido(fecha) {
-  const mins = Math.floor((Date.now() - new Date(fecha)) / 60000);
-  if (mins < 1) return 'Ahora mismo';
-  if (mins === 1) return '1 min';
-  return `${mins} min`;
+function useAhora(ms = 30_000) {
+  const [, set] = useState(0);
+  useEffect(() => { const t = setInterval(() => set((x) => x + 1), ms); return () => clearInterval(t); }, [ms]);
 }
 
-export default function CocinaPage() {
-  const { tienePermiso } = usePermisos();
-  const puedeVer = tienePermiso('cocina', 'ver');
-  const qc = useQueryClient();
+const minutos = (f) => Math.max(0, Math.floor((Date.now() - new Date(f)) / 60000));
 
-  const { data: pedidos = [], isLoading, dataUpdatedAt, refetch, isFetching } = useQuery({
-    queryKey: ['cocina'],
-    queryFn: getCocinaOrders,
-    enabled: puedeVer,
-  });
-
-  useEffect(() => {
-    function onActualizar() {
-      qc.invalidateQueries({ queryKey: ['cocina'] });
-    }
-    socket.on('restaurante:actualizar', onActualizar);
-    return () => socket.off('restaurante:actualizar', onActualizar);
-  }, [qc]);
-
-  const marcar = useMutation({
-    mutationFn: (id) => marcarListo(id),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ['cocina'] }),
-  });
-
-  const entregar = useMutation({
-    mutationFn: (id) => marcarEntregado(id),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ['cocina'] }),
-  });
-
-  if (!puedeVer) {
-    return (
-      <div className="flex flex-col items-center justify-center h-64 gap-3 text-gray-400 dark:text-gray-600">
-        <AlertCircle className="w-10 h-10" />
-        <p className="font-medium">No tienes permiso para ver esta pantalla</p>
-      </div>
-    );
-  }
-
-  const pendientesMesa   = pedidos.filter(p => p.estado_cocina === 'pendiente' && p.tipo === 'mesa');
-  const listosMesa       = pedidos.filter(p => p.estado_cocina === 'listo'     && p.tipo === 'mesa');
-  const pendientesLlevar = pedidos.filter(p => p.estado_cocina === 'pendiente' && p.tipo !== 'mesa');
-  const listosLlevar     = pedidos.filter(p => p.estado_cocina === 'listo'     && p.tipo !== 'mesa');
-
+function Ticket({ p, onAccion, ocupado }) {
+  const m = minutos(p.creado_en);
+  const listo = p.estado_cocina === 'listo';
+  const tono = listo ? 'bg-hierba' : m >= 20 ? 'bg-locoto' : m >= 10 ? 'bg-aji' : 'bg-tinta';
+  const Icono = p.tipo === 'mesa' ? Armchair : p.tipo === 'delivery' ? Bike : ShoppingBag;
   return (
-    <div className="space-y-6">
-      {/* Header */}
-      <div className="flex flex-wrap items-center justify-between gap-3">
-        <div className="flex items-center gap-3">
-          <div className="w-10 h-10 bg-orange-100 dark:bg-orange-900/30 rounded-xl flex items-center justify-center">
-            <ChefHat className="w-5 h-5 text-orange-600 dark:text-orange-400" />
-          </div>
-          <div>
-            <h1 className="text-xl font-bold text-gray-800 dark:text-gray-100">Cocina</h1>
-            <p className="text-xs text-gray-400 dark:text-gray-500">
-              Actualizado: {dataUpdatedAt ? new Date(dataUpdatedAt).toLocaleTimeString('es-BO') : '—'}
-            </p>
-          </div>
+    <article className="w-[270px] shrink-0 flex flex-col animate-imprime">
+      {/* gancho del riel */}
+      <div className="mx-auto w-3 h-5 bg-white/25 rounded-b" />
+      <div className="comanda rounded-t-md text-tinta flex flex-col shadow-flota">
+        <header className={cx('px-4 py-3 text-white flex items-center gap-2', tono, tono === 'bg-aji' && 'text-sobre-aji')}>
+          <Icono className="w-5 h-5" />
+          <span className="font-display font-extrabold text-xl flex-1 truncate">{etiquetaDestino(p)}</span>
+          <span className="num font-bold text-lg">{m}′</span>
+        </header>
+        <div className="px-4 pt-2 text-xs text-tenue flex justify-between">
+          <span>#{p.id} · {hora(p.creado_en)}</span>
+          <span className="truncate ml-2">{p.nombre_cliente}</span>
         </div>
-        <button
-          onClick={() => refetch()}
-          disabled={isFetching}
-          className="flex items-center gap-2 px-3 py-2 rounded-xl text-sm text-gray-500 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-800 transition-colors"
-        >
-          <RefreshCw className={`w-4 h-4 ${isFetching ? 'animate-spin' : ''}`} />
-          Actualizar
-        </button>
+        <ul className="px-4 py-2 space-y-2.5">
+          {p.detalles.map((d) => {
+            const op = d.combo_opciones?.length
+              ? d.combo_opciones.map((o) => `${o.producto?.nombre}: ${o.opcion?.nombre}`)
+              : (d.opciones ?? []).map((o) => o.nombre);
+            return (
+              <li key={d.id} className="flex gap-2.5">
+                <span className="num font-extrabold text-xl leading-6 w-7 shrink-0">{d.peso ? '1' : d.cantidad}</span>
+                <div className="min-w-0">
+                  <p className="font-semibold text-[17px] leading-6">{d.combo ? d.combo.nombre : d.producto?.nombre}{d.peso ? ` · ${Number(d.peso)} kg` : ''}</p>
+                  {d.combo?.productos?.length > 0 && <p className="text-xs text-tenue">{d.combo.productos.map((x) => x.nombre).join(', ')}</p>}
+                  {op.length > 0 && <p className="text-[13px] font-medium">{op.join(' · ')}</p>}
+                  {d.nota && !op.length && <p className="text-[13px] italic">“{d.nota}”</p>}
+                </div>
+              </li>
+            );
+          })}
+        </ul>
+        {p.notas && <p className="mx-4 mb-2 text-sm rounded-lg bg-aji/20 px-2.5 py-1.5">⚠ {p.notas}</p>}
+        <div className="perforado mx-4" />
+        <div className="p-3">
+          <button disabled={ocupado} onClick={onAccion} className={cx('btn btn-lg w-full', listo ? 'bg-tinta text-fondo' : 'bg-hierba text-white')}>
+            {listo ? <><HandPlatter className="w-5 h-5" /> Entregado</> : <><Check className="w-5 h-5" /> Listo</>}
+          </button>
+        </div>
       </div>
-
-      {isLoading ? (
-        <div className="flex items-center justify-center h-48 gap-3 text-gray-400">
-          <RefreshCw className="w-5 h-5 animate-spin" />
-          <span>Cargando pedidos...</span>
-        </div>
-      ) : pedidos.length === 0 ? (
-        <div className="flex flex-col items-center justify-center h-64 gap-3 text-gray-300 dark:text-gray-600">
-          <ChefHat className="w-14 h-14" />
-          <p className="font-medium text-gray-500 dark:text-gray-400">Sin pedidos activos</p>
-          <p className="text-sm">Los nuevos pedidos aparecerán aquí automáticamente</p>
-        </div>
-      ) : (
-        <div className="space-y-8">
-          {/* ── SECCIÓN MESAS ── */}
-          <div>
-            <div className="flex items-center gap-2 mb-4">
-              <ChefHat className="w-4 h-4 text-gray-400 dark:text-gray-500" />
-              <h2 className="text-sm font-bold text-gray-500 dark:text-gray-400 uppercase tracking-wider">Mesas</h2>
-            </div>
-            <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-              <section className="space-y-3">
-                <div className="flex items-center gap-2">
-                  <div className="w-2.5 h-2.5 rounded-full bg-amber-500 animate-pulse" />
-                  <h3 className="text-sm font-bold text-gray-700 dark:text-gray-300 uppercase tracking-wide">Nuevos</h3>
-                  <span className="ml-auto bg-amber-100 dark:bg-amber-900/30 text-amber-700 dark:text-amber-400 text-xs font-bold px-2 py-0.5 rounded-full">
-                    {pendientesMesa.length}
-                  </span>
-                </div>
-                {pendientesMesa.length === 0 ? (
-                  <div className="rounded-2xl border border-dashed border-gray-200 dark:border-gray-700 p-6 text-center text-gray-400 dark:text-gray-600 text-sm">
-                    Sin pedidos nuevos
-                  </div>
-                ) : (
-                  pendientesMesa.map(p => (
-                    <PedidoCard key={p.id} pedido={p} onListo={() => marcar.mutate(p.id)} cargando={marcar.isPending && marcar.variables === p.id} />
-                  ))
-                )}
-              </section>
-              <section className="space-y-3">
-                <div className="flex items-center gap-2">
-                  <div className="w-2.5 h-2.5 rounded-full bg-green-500" />
-                  <h3 className="text-sm font-bold text-gray-700 dark:text-gray-300 uppercase tracking-wide">Listo para servir</h3>
-                  <span className="ml-auto bg-green-100 dark:bg-green-900/30 text-green-700 dark:text-green-400 text-xs font-bold px-2 py-0.5 rounded-full">
-                    {listosMesa.length}
-                  </span>
-                </div>
-                {listosMesa.length === 0 ? (
-                  <div className="rounded-2xl border border-dashed border-gray-200 dark:border-gray-700 p-6 text-center text-gray-400 dark:text-gray-600 text-sm">
-                    Ninguno listo aún
-                  </div>
-                ) : (
-                  listosMesa.map(p => (
-                    <PedidoCard key={p.id} pedido={p} onEntregado={() => entregar.mutate(p.id)} cargandoEntrega={entregar.isPending && entregar.variables === p.id} />
-                  ))
-                )}
-              </section>
-            </div>
-          </div>
-
-          {/* ── SECCIÓN PARA LLEVAR ── */}
-          <div>
-            <div className="flex items-center gap-2 mb-4">
-              <ShoppingBag className="w-4 h-4 text-orange-500" />
-              <h2 className="text-sm font-bold text-orange-500 uppercase tracking-wider">Para llevar</h2>
-            </div>
-            <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-              <section className="space-y-3">
-                <div className="flex items-center gap-2">
-                  <div className="w-2.5 h-2.5 rounded-full bg-amber-500 animate-pulse" />
-                  <h3 className="text-sm font-bold text-gray-700 dark:text-gray-300 uppercase tracking-wide">Nuevos</h3>
-                  <span className="ml-auto bg-amber-100 dark:bg-amber-900/30 text-amber-700 dark:text-amber-400 text-xs font-bold px-2 py-0.5 rounded-full">
-                    {pendientesLlevar.length}
-                  </span>
-                </div>
-                {pendientesLlevar.length === 0 ? (
-                  <div className="rounded-2xl border border-dashed border-gray-200 dark:border-gray-700 p-6 text-center text-gray-400 dark:text-gray-600 text-sm">
-                    Sin pedidos para llevar
-                  </div>
-                ) : (
-                  pendientesLlevar.map(p => (
-                    <PedidoCard key={p.id} pedido={p} onListo={() => marcar.mutate(p.id)} cargando={marcar.isPending && marcar.variables === p.id} esLlevar />
-                  ))
-                )}
-              </section>
-              <section className="space-y-3">
-                <div className="flex items-center gap-2">
-                  <div className="w-2.5 h-2.5 rounded-full bg-green-500" />
-                  <h3 className="text-sm font-bold text-gray-700 dark:text-gray-300 uppercase tracking-wide">Listo para entregar</h3>
-                  <span className="ml-auto bg-green-100 dark:bg-green-900/30 text-green-700 dark:text-green-400 text-xs font-bold px-2 py-0.5 rounded-full">
-                    {listosLlevar.length}
-                  </span>
-                </div>
-                {listosLlevar.length === 0 ? (
-                  <div className="rounded-2xl border border-dashed border-gray-200 dark:border-gray-700 p-6 text-center text-gray-400 dark:text-gray-600 text-sm">
-                    Ninguno listo aún
-                  </div>
-                ) : (
-                  listosLlevar.map(p => (
-                    <PedidoCard key={p.id} pedido={p} esLlevar onEntregado={() => entregar.mutate(p.id)} cargandoEntrega={entregar.isPending && entregar.variables === p.id} />
-                  ))
-                )}
-              </section>
-            </div>
-          </div>
-        </div>
-      )}
-    </div>
+    </article>
   );
 }
 
-function PedidoCard({ pedido, onListo, cargando, esLlevar, onEntregado, cargandoEntrega }) {
-  const esNuevo = pedido.estado_cocina === 'pendiente';
+function Riel({ titulo, pedidos, vacio, onAccion, ocupado }) {
+  return (
+    <section className="min-h-0">
+      <div className="flex items-baseline gap-2 px-5 mb-2">
+        <h2 className="font-display font-bold text-xl text-white">{titulo}</h2>
+        <span className="num text-white/50">{pedidos.length}</span>
+      </div>
+      <div className="relative">
+        <div className="absolute left-0 right-0 top-0 h-2 bg-gradient-to-b from-white/30 to-white/10 rounded-full mx-3" />
+        <div className="flex gap-4 overflow-x-auto scroll-fino px-5 pb-5 items-start min-h-[120px]">
+          {pedidos.length === 0 ? <p className="text-white/40 pt-8 text-sm">{vacio}</p> : pedidos.map((p) => (
+            <Ticket key={p.id} p={p} ocupado={ocupado} onAccion={() => onAccion(p)} />
+          ))}
+        </div>
+      </div>
+    </section>
+  );
+}
+
+export default function CocinaPage() {
+  const { tiene } = usePermisos();
+  const qc = useQueryClient();
+  const [sonido, setSonido] = useState(() => localStorage.getItem('cocina-sonido') !== 'no');
+  const vistos = useRef(null);
+  useAhora();
+
+  const q = useQuery({ queryKey: ['cocina'], queryFn: getCocinaOrders, enabled: tiene('cocina', 'ver'), refetchInterval: 60_000 });
+  useSocket('restaurante:actualizar', () => qc.invalidateQueries({ queryKey: ['cocina'] }));
+
+  // Pita cuando aparece un pedido que no estaba.
+  useEffect(() => {
+    if (!q.data) return;
+    const ids = new Set(q.data.map((p) => p.id));
+    if (vistos.current && sonido && q.data.some((p) => !vistos.current.has(p.id))) pitido();
+    vistos.current = ids;
+  }, [q.data, sonido]);
+
+  const accion = useMutation({
+    mutationFn: (p) => (p.estado_cocina === 'listo' ? marcarEntregado(p.id) : marcarListo(p.id)),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['cocina'] }),
+    onError: (e) => avisar.error(errorDe(e)),
+  });
+
+  if (!tiene('cocina', 'ver')) return <SinPermiso />;
+  const pedidos = q.data ?? [];
+  const preparando = pedidos.filter((p) => p.estado_cocina === 'pendiente');
+  const listos = pedidos.filter((p) => p.estado_cocina === 'listo');
 
   return (
-    <div className={`rounded-2xl border p-4 space-y-3 transition-all ${
-      esNuevo
-        ? 'bg-white dark:bg-gray-800 border-amber-200 dark:border-amber-800/50 shadow-sm'
-        : 'bg-green-50 dark:bg-green-900/10 border-green-200 dark:border-green-800/50'
-    }`}>
-      {/* Cabecera */}
-      <div className="flex items-start justify-between gap-3">
-        <div>
-          <div className="flex items-center gap-2 flex-wrap">
-            {esLlevar ? (
-              <>
-                <span className="font-bold text-orange-600 dark:text-orange-400 text-base">
-                  #{String(pedido.numero_llevar ?? pedido.id).padStart(3, '0')}
-                </span>
-                <span className="font-semibold text-gray-900 dark:text-white text-base">
-                  {pedido.nombre_cliente}
-                </span>
-              </>
-            ) : (
-              <span className="font-bold text-gray-900 dark:text-white text-base">
-                {pedido.mesa?.nombre}
-              </span>
-            )}
-            <span className="text-xs text-gray-400 dark:text-gray-500">#{pedido.id}</span>
-          </div>
-          <div className="flex items-center gap-1 mt-0.5 text-xs text-gray-400 dark:text-gray-500">
-            <Clock className="w-3 h-3" />
-            {tiempoTranscurrido(pedido.creado_en)}
-          </div>
-        </div>
-        {!esNuevo && (
-          <CheckCircle2 className="w-5 h-5 text-green-500 shrink-0 mt-0.5" />
-        )}
-      </div>
-
-      {pedido.origen === 'app_externa' && (
-        <div className="flex items-center gap-1.5 flex-wrap text-xs">
-          <span className="px-2 py-0.5 rounded-full bg-blue-100 dark:bg-blue-900/30 text-blue-700 dark:text-blue-400 font-medium">
-            {pedido.origen_app || 'App externa'}
-          </span>
-        </div>
-      )}
-      {pedido.tipo === 'delivery' && (pedido.direccion_entrega || pedido.telefono_cliente) && (
-        <div className="text-xs text-gray-500 dark:text-gray-400 space-y-0.5">
-          {pedido.direccion_entrega && <div>📍 {pedido.direccion_entrega}</div>}
-          {pedido.telefono_cliente && <div>📞 {pedido.telefono_cliente}</div>}
-        </div>
-      )}
-
-      {/* Items */}
-      <ul className="space-y-1.5">
-        {(pedido.detalles ?? []).map(d => {
-          const esCombo = !!d.combo;
-          const nombre = d.producto?.nombre ?? (esCombo ? `Combo: ${d.combo.nombre}` : '');
-          const opcionesPorProducto = esCombo ? _opcionesPorProducto(d.combo_opciones) : {};
-          return (
-          <li key={d.id} className="flex items-start gap-3">
-            {d.producto?.imagen ? (
-              <div className="relative w-16 h-16 sm:w-9 sm:h-9 rounded-lg overflow-hidden shrink-0">
-                <img src={d.producto.imagen} alt={nombre} className="w-full h-full object-cover" />
-                <span className="absolute bottom-0 right-0 min-w-[18px] h-[18px] sm:min-w-[16px] sm:h-4 px-1 rounded-tl-md bg-black/70 text-white text-xs sm:text-[10px] font-bold flex items-center justify-center">
-                  {d.peso != null ? `${parseFloat(d.peso).toFixed(3)}kg` : d.cantidad}
-                </span>
-              </div>
-            ) : (
-              <span className={`w-7 h-7 rounded-lg flex items-center justify-center text-xs font-bold shrink-0 ${
-                esNuevo
-                  ? 'bg-amber-100 dark:bg-amber-900/30 text-amber-700 dark:text-amber-400'
-                  : 'bg-green-100 dark:bg-green-900/30 text-green-700 dark:text-green-400'
-              }`}>
-                {d.peso != null ? `${parseFloat(d.peso).toFixed(3)} kg` : d.cantidad}
-              </span>
-            )}
-            <div className="flex-1 min-w-0">
-              <div className="flex items-start gap-2">
-                <span className="text-sm text-gray-700 dark:text-gray-300 font-medium">
-                  {nombre}
-                </span>
-                {d.nota && (
-                  <span className="text-xs text-gray-400 italic ml-auto truncate max-w-[120px]">{d.nota}</span>
-                )}
-              </div>
-              {esCombo && d.combo.productos?.length > 0 && (
-                <p className="text-xs text-gray-500 dark:text-gray-400 italic mt-0.5">
-                  {d.combo.productos.map(p => {
-                    const opciones = opcionesPorProducto[p.id];
-                    return `${p.ComboProducto?.cantidad ?? 1}x ${p.nombre}${opciones?.length ? ` (${opciones.join(', ')})` : ''}`;
-                  }).join(', ')}
-                </p>
-              )}
-              {!esCombo && d.opciones?.length > 0 && (
-                <p className="text-xs text-gray-500 dark:text-gray-400 italic mt-0.5">
-                  {d.opciones.map(o => o.nombre).join(', ')}
-                </p>
-              )}
-            </div>
-          </li>
-          );
-        })}
-      </ul>
-
-      {/* Notas del pedido */}
-      {pedido.notas && (
-        <p className="text-xs text-gray-500 dark:text-gray-400 bg-gray-50 dark:bg-gray-700/50 rounded-lg px-3 py-2 italic">
-          Nota: {pedido.notas}
-        </p>
-      )}
-
-      {/* Botón marcar listo */}
-      {esNuevo && onListo && (
-        <button
-          onClick={onListo}
-          disabled={cargando}
-          className="w-full py-2.5 rounded-xl bg-green-600 hover:bg-green-700 disabled:opacity-60 text-white text-sm font-semibold transition-colors flex items-center justify-center gap-2"
-        >
-          {cargando ? (
-            <><RefreshCw className="w-4 h-4 animate-spin" /> Marcando...</>
-          ) : (
-            <><CheckCircle2 className="w-4 h-4" /> Marcar como listo</>
-          )}
+    <div className="min-h-full bg-pizarra text-sobre-pizarra flex flex-col">
+      <header className="flex items-center gap-3 px-5 py-4">
+        <ChefHat className="w-7 h-7 text-aji" />
+        <h1 className="text-2xl font-extrabold text-white flex-1">Cocina</h1>
+        <button className="btn-icono text-white/70 hover:bg-white/10" title={sonido ? 'Silenciar' : 'Activar sonido'} onClick={() => { const v = !sonido; setSonido(v); localStorage.setItem('cocina-sonido', v ? 'si' : 'no'); if (v) pitido(); }}>
+          {sonido ? <Bell className="w-5 h-5" /> : <BellOff className="w-5 h-5" />}
         </button>
-      )}
-
-      {/* Botón marcar entregado — para los casos donde nada más limpia
-          esto solo (venta instantánea de mostrador, Autoservicio con QR).
-          Se ofrece en cualquier pedido "listo": para una mesa que de
-          todas formas se limpia sola al cobrar, tocarlo antes no hace daño. */}
-      {!esNuevo && onEntregado && (
-        <button
-          onClick={onEntregado}
-          disabled={cargandoEntrega}
-          className="w-full py-2.5 rounded-xl bg-blue-600 hover:bg-blue-700 disabled:opacity-60 text-white text-sm font-semibold transition-colors flex items-center justify-center gap-2"
-        >
-          {cargandoEntrega ? (
-            <><RefreshCw className="w-4 h-4 animate-spin" /> Marcando...</>
-          ) : (
-            <><ChefHat className="w-4 h-4" /> Marcar entregado</>
-          )}
+        <button className="btn-icono text-white/70 hover:bg-white/10" title="Pantalla completa" onClick={() => (document.fullscreenElement ? document.exitFullscreen() : document.documentElement.requestFullscreen?.())}>
+          <Maximize2 className="w-5 h-5" />
         </button>
+      </header>
+      {q.isLoading ? <Cargando className="text-white/60" /> : (
+        <div className="flex-1 flex flex-col gap-6 pb-6">
+          <Riel titulo="Preparando" pedidos={preparando} vacio="Nada en preparación. Los pedidos nuevos aparecen solos." onAccion={accion.mutate} ocupado={accion.isPending} />
+          <Riel titulo="Listos para entregar" pedidos={listos} vacio="Cuando marques un pedido como listo, pasa aquí." onAccion={accion.mutate} ocupado={accion.isPending} />
+        </div>
       )}
     </div>
   );

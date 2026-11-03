@@ -3,33 +3,24 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
-
-    <!-- PWA / theme -->
-    <meta name="theme-color" content="#d97706" />
+    <meta name="theme-color" content="#17262B" />
     <meta name="mobile-web-app-capable" content="yes" />
     <meta name="apple-mobile-web-app-capable" content="yes" />
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
-    <meta name="apple-mobile-web-app-title" content="Sistema Restaurante" />
-    <meta name="application-name" content="Sistema Restaurante" />
-    <meta name="description" content="Sistema de gestión integral para restaurantes" />
-
-    <!-- Icons -->
+    <meta name="apple-mobile-web-app-title" content="Menú" />
+    <meta name="description" content="Punto de venta, cocina y caja para restaurantes" />
     <link rel="icon" type="image/svg+xml" href="/icons/icon.svg" />
     <link rel="icon" type="image/png" sizes="32x32" href="/favicon.png" />
-    <!-- Safari/iOS ignora SVG en apple-touch-icon: necesita PNG -->
     <link rel="apple-touch-icon" sizes="180x180" href="/icons/icon-180.png" />
-
-    <title>Sistema Restaurante</title>
-
-    <!-- Anti-flash: aplica el modo oscuro antes de que React cargue -->
+    <title>Menú</title>
     <script>
+      // Evita el destello claro antes de que cargue React.
       try {
-        const stored = JSON.parse(localStorage.getItem('theme') || '{}');
-        const modo = stored?.state?.modo;
-        if (modo === 'dark' || (!modo && window.matchMedia('(prefers-color-scheme: dark)').matches)) {
-          document.documentElement.classList.add('dark');
-        }
-      } catch (_) {}
+        var t = JSON.parse(localStorage.getItem('tema') || '{}').state || {};
+        var oscuro = t.modo === 'oscuro' || ((!t.modo || t.modo === 'sistema') && matchMedia('(prefers-color-scheme: dark)').matches);
+        if (oscuro) document.documentElement.classList.add('dark');
+        if (t.acento) document.documentElement.style.setProperty('--aji', t.acento);
+      } catch (e) {}
     </script>
   </head>
   <body>

@@ -1,84 +1,113 @@
+import { lazy, Suspense } from 'react';
 import { createBrowserRouter, Navigate } from 'react-router-dom';
-import RutaProtegida from './RutaProtegida';
-import Layout from '../components/layout/Layout';
+import Protegida from './Protegida';
+import Shell from '../components/shell/Shell';
+import Seccion from '../components/shell/Seccion';
 import LoginPage from '../pages/auth/LoginPage';
-import Dashboard from '../pages/Dashboard';
-import VentasPage from '../pages/ventas/VentasPage';
-import MisVentasPage from '../pages/ventas/MisVentasPage';
-import PedidoPage from '../pages/ventas/PedidoPage';
-import ConfiguracionPage from '../pages/configuracion/ConfiguracionPage';
-import ProductosPage from '../pages/productos/ProductosPage';
-import CajaPage from '../pages/caja/CajaPage';
-import RolesPage from '../pages/roles/RolesPage';
-import SucursalesPage from '../pages/sucursales/SucursalesPage';
-import CajasPage from '../pages/cajas/CajasPage';
-import UsuariosPage from '../pages/usuarios/UsuariosPage';
-import LibroCajaPage from '../pages/libro-caja/LibroCajaPage';
-import InventarioPage from '../pages/inventario/InventarioPage';
-import ComprasPage from '../pages/compras/ComprasPage';
-import ClientesPage from '../pages/clientes/ClientesPage';
-import ReportesPage from '../pages/reportes/ReportesPage';
-import CocinaPage from '../pages/cocina/CocinaPage';
-import PantallaCocinaImpresion from '../pages/cocina/PantallaCocinaImpresion';
-import PerfilPage from '../pages/perfil/PerfilPage';
-import CombosPage from '../pages/combos/CombosPage';
-import PromocionesPage from '../pages/promociones/PromocionesPage';
-import CuponesPage from '../pages/cupones/CuponesPage';
-import RuletaPage from '../pages/ruleta/RuletaPage';
-import InsumosPage from '../pages/insumos/InsumosPage';
-import AutoservicioPage from '../pages/autoservicio/AutoservicioPage';
-import PedidosExternosPage from '../pages/pedidos-externos/PedidosExternosPage';
-import MiAsistenciaPage from '../pages/personal/MiAsistenciaPage';
-import ControlPersonalPage from '../pages/personal/ControlPersonalPage';
+import { Cargando } from '../components/ui/piezas';
 
-export const router = createBrowserRouter(
-  [
-    { path: '/login', element: <LoginPage /> },
-    { path: '/m/:codigo', element: <AutoservicioPage /> },
-    {
-      element: <RutaProtegida />,
-      children: [
-        {
-          element: <Layout />,
-          children: [
-            { path: '/',                  element: <Dashboard /> },
-            { path: '/ventas',            element: <VentasPage /> },
-            { path: '/ventas/mis-ventas', element: <MisVentasPage /> },
-            { path: '/ventas/pedido/:id', element: <PedidoPage /> },
-            { path: '/pedidos-externos',  element: <PedidosExternosPage /> },
-            { path: '/productos',         element: <ProductosPage /> },
-            { path: '/combos',            element: <CombosPage /> },
-            { path: '/promociones',       element: <PromocionesPage /> },
-            { path: '/cupones',           element: <CuponesPage /> },
-            { path: '/ruleta',            element: <RuletaPage /> },
-            { path: '/configuracion',        element: <Navigate to="/configuracion/negocio" replace /> },
-            { path: '/configuracion/:tab',   element: <ConfiguracionPage /> },
-            { path: '/caja',             element: <CajaPage /> },
-            { path: '/roles',            element: <RolesPage /> },
-            { path: '/sucursales',       element: <SucursalesPage /> },
-            { path: '/cajas',            element: <CajasPage /> },
-            { path: '/usuarios',         element: <UsuariosPage /> },
-            { path: '/libro-caja',       element: <LibroCajaPage /> },
-            { path: '/inventario',       element: <InventarioPage /> },
-            { path: '/compras',          element: <ComprasPage /> },
-            { path: '/insumos',          element: <InsumosPage /> },
-            { path: '/clientes',         element: <ClientesPage /> },
-            { path: '/reportes',         element: <ReportesPage /> },
-            { path: '/cocina',           element: <CocinaPage /> },
-            { path: '/pantalla-cocina-impresion', element: <PantallaCocinaImpresion /> },
-            { path: '/perfil',           element: <PerfilPage /> },
-            { path: '/mi-asistencia',    element: <MiAsistenciaPage /> },
-            { path: '/personal',         element: <ControlPersonalPage /> },
-          ],
-        },
-      ],
-    },
-    { path: '*', element: <Navigate to="/" replace /> },
-  ],
+const l = (fn) => {
+  const C = lazy(fn);
+  return (
+    <Suspense fallback={<Cargando />}>
+      <C />
+    </Suspense>
+  );
+};
+
+const futuro = {
+  v7_relativeSplatPath: true,
+  v7_fetcherPersist: true,
+  v7_normalizeFormMethod: true,
+  v7_partialHydration: true,
+  v7_skipActionErrorRevalidation: true,
+};
+
+export const router = createBrowserRouter([
+  { path: '/login', element: <LoginPage /> },
+  // Menú público de autoservicio (los QR impresos de las mesas apuntan acá).
+  { path: '/m/:codigo', element: l(() => import('../pages/autoservicio/AutoservicioPage')) },
   {
-    future: {
-      v7_startTransition: true,
-      v7_relativeSplatPath: true,
-    },
-  }
-);
+    element: <Protegida><Shell /></Protegida>,
+    children: [
+      { path: '/', element: l(() => import('../pages/hoy/HoyPage')) },
+      { path: '/vender', element: l(() => import('../pages/vender/VenderPage')) },
+      { path: '/vender/pedido/:id', element: l(() => import('../pages/vender/PedidoPage')) },
+      { path: '/vender/mis-ventas', element: l(() => import('../pages/vender/MisVentasPage')) },
+      { path: '/cocina', element: l(() => import('../pages/cocina/CocinaPage')) },
+      { path: '/cocina/bluetooth', element: l(() => import('../pages/cocina/CocinaBluetoothPage')) },
+      { path: '/caja', element: l(() => import('../pages/caja/CajaPage')) },
+      { path: '/caja/cierre/:id', element: l(() => import('../pages/caja/ReporteCierrePage')) },
+      { path: '/externos', element: l(() => import('../pages/externos/ExternosPage')) },
+      {
+        path: '/menu', element: <Seccion base="/menu" />,
+        children: [
+          { path: 'productos', element: l(() => import('../pages/menu/ProductosPage')) },
+          { path: 'categorias', element: l(() => import('../pages/menu/CategoriasPage')) },
+          { path: 'opciones', element: l(() => import('../pages/menu/OpcionesPage')) },
+          { path: 'combos', element: l(() => import('../pages/menu/CombosPage')) },
+        ],
+      },
+      {
+        path: '/clientes', element: <Seccion base="/clientes" />,
+        children: [
+          { path: 'lista', element: l(() => import('../pages/clientes/ClientesPage')) },
+          { path: 'promociones', element: l(() => import('../pages/clientes/PromocionesPage')) },
+          { path: 'cupones', element: l(() => import('../pages/clientes/CuponesPage')) },
+          { path: 'ruleta', element: l(() => import('../pages/clientes/RuletaPage')) },
+        ],
+      },
+      {
+        path: '/inventario', element: <Seccion base="/inventario" />,
+        children: [
+          { path: 'stock', element: l(() => import('../pages/inventario/StockPage')) },
+          { path: 'insumos', element: l(() => import('../pages/inventario/InsumosPage')) },
+          { path: 'compras', element: l(() => import('../pages/inventario/ComprasPage')) },
+          { path: 'proveedores', element: l(() => import('../pages/inventario/ProveedoresPage')) },
+        ],
+      },
+      {
+        path: '/finanzas', element: <Seccion base="/finanzas" />,
+        children: [
+          { path: 'reportes', element: l(() => import('../pages/finanzas/ReportesPage')) },
+          { path: 'libro', element: l(() => import('../pages/finanzas/LibroCajaPage')) },
+          { path: 'turnos', element: l(() => import('../pages/finanzas/TurnosPage')) },
+        ],
+      },
+      {
+        path: '/equipo', element: <Seccion base="/equipo" />,
+        children: [
+          { path: 'usuarios', element: l(() => import('../pages/equipo/UsuariosPage')) },
+          { path: 'roles', element: l(() => import('../pages/equipo/RolesPage')) },
+          { path: 'asistencia', element: l(() => import('../pages/equipo/AsistenciaPage')) },
+        ],
+      },
+      {
+        path: '/ajustes', element: <Seccion base="/ajustes" />,
+        children: [
+          { path: 'negocio', element: l(() => import('../pages/ajustes/NegocioPage')) },
+          { path: 'salon', element: l(() => import('../pages/ajustes/SalonPage')) },
+          { path: 'sucursales', element: l(() => import('../pages/ajustes/SucursalesPage')) },
+          { path: 'cajas', element: l(() => import('../pages/ajustes/CajasPage')) },
+          { path: 'cocina', element: l(() => import('../pages/ajustes/CocinaFlujoPage')) },
+          { path: 'fidelidad', element: l(() => import('../pages/ajustes/FidelidadPage')) },
+          { path: 'cobro-qr', element: l(() => import('../pages/ajustes/CobroQrPage')) },
+          { path: 'integraciones', element: l(() => import('../pages/ajustes/IntegracionesPage')) },
+        ],
+      },
+      { path: '/perfil', element: l(() => import('../pages/perfil/PerfilPage')) },
+      { path: '/mi-asistencia', element: l(() => import('../pages/perfil/MiAsistenciaPage')) },
+
+      // Rutas del sistema anterior (accesos directos instalados, marcadores).
+      { path: '/ventas', element: <Navigate to="/vender" replace /> },
+      { path: '/ventas/mis-ventas', element: <Navigate to="/vender/mis-ventas" replace /> },
+      { path: '/pedidos-externos', element: <Navigate to="/externos" replace /> },
+      { path: '/pantalla-cocina-impresion', element: <Navigate to="/cocina/bluetooth" replace /> },
+      { path: '/productos', element: <Navigate to="/menu/productos" replace /> },
+      { path: '/reportes', element: <Navigate to="/finanzas/reportes" replace /> },
+      { path: '/libro-caja', element: <Navigate to="/finanzas/libro" replace /> },
+      { path: '/configuracion/*', element: <Navigate to="/ajustes" replace /> },
+    ],
+  },
+  { path: '*', element: <Navigate to="/" replace /> },
+], { future: futuro });

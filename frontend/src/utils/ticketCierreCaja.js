@@ -1,3 +1,4 @@
+import { imprimirHtml } from './imprimirHtml';
 // Ver misma función en ticketVenta.js: achica el font-size del nombre si no
 // entra en una sola línea a su tamaño normal, con el ancho real de columna
 // de cada tabla de este ticket (productos: col-prod 56%; gastos: col-gasto-desc 70%).
@@ -44,7 +45,6 @@ export function imprimirTicketCierreCaja(reporte, config = {}) {
     </tr>`).join('');
 
   const difColor = Math.abs(diferencia) < 0.01 ? '#16a34a' : diferencia > 0 ? '#2563eb' : '#dc2626';
-  const difLabel = Math.abs(diferencia) < 0.01 ? 'CUADRADO' : diferencia > 0 ? `+${simbolo} ${diferencia.toFixed(2)}` : `${simbolo} ${diferencia.toFixed(2)}`;
 
   const html = `<!DOCTYPE html>
 <html lang="es">
@@ -269,6 +269,5 @@ export function imprimirTicketCierreCaja(reporte, config = {}) {
 </body>
 </html>`;
 
-  const win = window.open('', '_blank', 'width=420,height=700');
-  if (win) { win.document.write(html); win.document.close(); win.focus(); setTimeout(() => win.print(), 400); }
+  imprimirHtml(html);
 }

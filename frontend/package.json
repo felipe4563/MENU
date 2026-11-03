@@ -1,7 +1,7 @@
 {
   "name": "frontend",
   "private": true,
-  "version": "0.0.0",
+  "version": "2.0.0",
   "type": "module",
   "scripts": {
     "dev": "vite",
@@ -10,12 +10,10 @@
     "preview": "vite preview"
   },
   "dependencies": {
-    "@radix-ui/react-dialog": "^1.1.23",
-    "@radix-ui/react-slot": "^1.3.3",
-    "@radix-ui/react-tooltip": "^1.2.16",
+    "@fontsource-variable/bricolage-grotesque": "^5.1.0",
+    "@fontsource-variable/instrument-sans": "^5.1.0",
     "@tanstack/react-query": "^5.101.0",
     "axios": "^1.18.0",
-    "class-variance-authority": "^0.7.1",
     "clsx": "^2.1.1",
     "jspdf": "^4.2.1",
     "jspdf-autotable": "^5.0.8",
@@ -26,14 +24,10 @@
     "react-router-dom": "^6.30.4",
     "recharts": "^3.9.0",
     "socket.io-client": "^4.8.3",
-    "tailwind-merge": "^3.6.0",
-    "tailwindcss-animate": "^1.0.7",
     "zustand": "^4.5.7"
   },
   "devDependencies": {
     "@eslint/js": "^10.0.1",
-    "@types/react": "^19.2.14",
-    "@types/react-dom": "^19.2.3",
     "@vitejs/plugin-react": "^4.7.0",
     "autoprefixer": "^10.5.0",
     "eslint": "^10.3.0",

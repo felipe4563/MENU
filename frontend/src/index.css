@@ -1,79 +1,110 @@
+@import '@fontsource-variable/bricolage-grotesque';
+@import '@fontsource-variable/instrument-sans';
+
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
 
 @layer base {
   :root {
-    --background: 0 0% 100%;
-    --foreground: 240 10% 12%;
-
-    --card: 0 0% 100%;
-    --card-foreground: 240 10% 12%;
-
-    --popover: 0 0% 100%;
-    --popover-foreground: 240 10% 12%;
-
-    --primary: 189 45% 28%;
-    --primary-foreground: 0 0% 100%;
-
-    --secondary: 240 5% 90%;
-    --secondary-foreground: 240 10% 12%;
-
-    --muted: 240 5% 96%;
-    --muted-foreground: 240 4% 46%;
-
-    --accent: 189 45% 92%;
-    --accent-foreground: 189 45% 20%;
-
-    --destructive: 0 72% 51%;
-    --destructive-foreground: 0 0% 100%;
-
-    --border: 240 6% 88%;
-    --input: 240 6% 88%;
-    --ring: 189 45% 28%;
-
-    --radius: 0.75rem;
+    --fondo: 242 243 238;     /* papel frío */
+    --papel: 255 255 255;
+    --hundido: 232 234 227;
+    --tinta: 23 38 43;        /* pizarra */
+    --tenue: 93 107 110;
+    --linea: 217 220 211;
+    --aji: 242 183 5;         /* ají amarillo, lo sobrescribe el color del negocio */
+    --sobre-aji: 23 38 43;
+    --locoto: 210 52 43;
+    --hierba: 47 158 107;
+    --cielo: 47 111 210;
+    /* Series de gráficos (categórico, orden fijo) */
+    --serie-1: 42 120 214;
+    --serie-2: 235 104 52;
+    --serie-3: 27 175 122;
+    --pizarra: 23 38 43;
+    --sobre-pizarra: 231 236 233;
+    color-scheme: light;
+  }
+  .dark {
+    --fondo: 13 22 25;
+    --papel: 22 37 42;
+    --hundido: 17 29 33;
+    --tinta: 233 238 234;
+    --tenue: 147 163 163;
+    --linea: 42 61 67;
+    --locoto: 238 86 74;
+    --hierba: 72 190 135;
+    --cielo: 102 156 240;
+    --serie-1: 57 135 229;
+    --serie-2: 217 89 38;
+    --serie-3: 25 158 112;
+    --pizarra: 9 16 18;
+    --sobre-pizarra: 231 236 233;
+    color-scheme: dark;
   }
 
-  .dark {
-    --background: 240 10% 8%;
-    --foreground: 0 0% 96%;
+  html, body, #root { height: 100%; }
+  body {
+    @apply bg-fondo text-tinta font-sans antialiased;
+    font-size: 15px;
+    -webkit-tap-highlight-color: transparent;
+  }
+  h1, h2, h3 { @apply font-display tracking-tight; }
+  :focus-visible { outline: 2px solid rgb(var(--aji)); outline-offset: 2px; }
+  ::selection { background: rgb(var(--aji) / .35); }
+  input[type='number']::-webkit-inner-spin-button { -webkit-appearance: none; }
 
-    --card: 240 8% 12%;
-    --card-foreground: 0 0% 96%;
-
-    --popover: 240 8% 12%;
-    --popover-foreground: 0 0% 96%;
-
-    --primary: 189 55% 45%;
-    --primary-foreground: 240 10% 8%;
-
-    --secondary: 240 6% 18%;
-    --secondary-foreground: 0 0% 96%;
-
-    --muted: 240 6% 16%;
-    --muted-foreground: 240 5% 65%;
-
-    --accent: 189 40% 20%;
-    --accent-foreground: 189 55% 85%;
-
-    --destructive: 0 62% 45%;
-    --destructive-foreground: 0 0% 96%;
-
-    --border: 240 6% 20%;
-    --input: 240 6% 20%;
-    --ring: 189 55% 45%;
+  @media (prefers-reduced-motion: reduce) {
+    *, *::before, *::after { animation-duration: .01ms !important; transition-duration: .01ms !important; }
   }
 }
 
-@layer utilities {
-  /* Oculta la barra de scroll visualmente sin desactivar el scroll en sí
-     (el contenido sigue siendo desplazable con rueda/touch/teclado). */
-  .scrollbar-hide {
-    scrollbar-width: none; /* Firefox */
-    -ms-overflow-style: none; /* Edge/IE legacy */
+@layer components {
+  .num { font-variant-numeric: tabular-nums; @apply font-display; }
+
+  .btn {
+    @apply inline-flex items-center justify-center gap-2 h-10 px-4 rounded-xl text-sm font-semibold
+      transition-[background,transform,box-shadow] active:scale-[.97] disabled:opacity-50 disabled:pointer-events-none select-none;
   }
-  .scrollbar-hide::-webkit-scrollbar {
-    display: none; /* Chrome, Safari, Edge Chromium */
+  .btn-aji { @apply btn bg-aji text-sobre-aji hover:brightness-95 shadow-[inset_0_-2px_0_rgb(0_0_0/.12)]; }
+  .btn-tinta { @apply btn bg-tinta text-fondo hover:opacity-90; }
+  .btn-suave { @apply btn bg-hundido text-tinta hover:bg-linea; }
+  .btn-borde { @apply btn border border-linea bg-papel hover:bg-hundido; }
+  .btn-peligro { @apply btn bg-locoto text-white hover:brightness-110; }
+  .btn-fantasma { @apply btn hover:bg-hundido; }
+  .btn-icono { @apply btn h-10 w-10 px-0; }
+  .btn-lg { @apply h-14 px-6 text-base rounded-2xl; }
+
+  .campo {
+    @apply w-full h-11 rounded-xl border border-linea bg-papel px-3.5 text-[15px] text-tinta placeholder:text-tenue/70
+      outline-none transition focus:border-tinta/40 focus:ring-4 focus:ring-aji/25;
   }
+  textarea.campo { @apply h-auto py-2.5; }
+  .etiqueta { @apply block text-[13px] font-medium text-tenue mb-1.5; }
+
+  .ficha { @apply bg-papel rounded-ficha border border-linea; }
+
+  /* La comanda: papel térmico con borde dentado abajo. */
+  .comanda {
+    @apply bg-papel relative;
+    --diente: 9px;
+    -webkit-mask: conic-gradient(from -45deg at bottom, #0000, #000 1deg 89deg, #0000 90deg) 50% / calc(var(--diente) * 2) 100%;
+            mask: conic-gradient(from -45deg at bottom, #0000, #000 1deg 89deg, #0000 90deg) 50% / calc(var(--diente) * 2) 100%;
+    padding-bottom: calc(var(--diente) + 10px);
+  }
+  .comanda-arriba {
+    -webkit-mask: conic-gradient(from 135deg at top, #0000, #000 1deg 89deg, #0000 90deg) 50% / calc(var(--diente) * 2) 100%;
+            mask: conic-gradient(from 135deg at top, #0000, #000 1deg 89deg, #0000 90deg) 50% / calc(var(--diente) * 2) 100%;
+    padding-top: calc(var(--diente) + 10px);
+  }
+  .perforado { background-image: linear-gradient(90deg, rgb(var(--linea)) 50%, transparent 0); background-size: 8px 1px; background-repeat: repeat-x; height: 1px; }
+
+  .chip { @apply inline-flex items-center gap-1 h-6 px-2 rounded-full text-xs font-semibold; }
+
+  .scroll-fino { scrollbar-width: thin; scrollbar-color: rgb(var(--linea)) transparent; }
+  .sin-scroll { scrollbar-width: none; }
+  .sin-scroll::-webkit-scrollbar { display: none; }
+
+  .pb-seguro { padding-bottom: max(env(safe-area-inset-bottom), 0px); }
 }
