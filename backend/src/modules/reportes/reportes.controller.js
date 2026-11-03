@@ -76,8 +76,12 @@ async function getGananciaPlatos(req, res, next) {
   try { res.json({ ok: true, datos: await svc.gananciaPlatos(req.query, _alcance(req)) }); } catch (e) { next(e); }
 }
 
+async function getSinVentas(req, res, next) {
+  try { res.json({ ok: true, datos: await svc.sinVentas(req.query, _alcance(req)) }); } catch (e) { next(e); }
+}
+
 module.exports = {
-  getPorAcabarse, getTiemposCocina, getGananciaPlatos,
+  getPorAcabarse, getTiemposCocina, getGananciaPlatos, getSinVentas,
   getVentas, getVentasResumen, getVentasProductos, getVentasVariantes, getVentasMapaCalor,
   getInventario, getInventarioResumen,
   getCompras, getComprasResumen,

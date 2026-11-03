@@ -4,7 +4,7 @@ const {
   RegistroInventario, Compra, Proveedor, LibroCaja, SesionCaja, Sucursal,
   Opcion, GrupoOpciones, DetallePedidoComboOpcion, Devolucion,
   Insumo, InsumoStockSucursal, InsumoMovimiento, ProductoStockSucursal, CocinaTiempo,
-  DetalleCompra, RecetaInsumo,
+  DetalleCompra, RecetaInsumo, ComboProducto,
 } = require('../../models');
 
 // Offset fijo de Bolivia: un datetime sin offset se parsea en la hora local
@@ -899,8 +899,49 @@ async function gananciaPlatos(filtros = {}, alcance) {
   };
 }
 
+// Lo que no se vende: productos y combos del menú sin ventas en los últimos
+// `dias` días (14 por defecto). Un producto vendido dentro de un combo cuenta
+// como vendido. Los cargados dentro del período no se listan (son nuevos).
+// Cada uno trae su última venta (o null si nunca se vendió).
+async function sinVentas(filtros = {}, alcance) {
+  const dias = Math.min(Math.max(parseInt(filtros.dias, 10) || 14, 1), 90);
+  const desde = new Date(Date.now() - dias * 86400000);
+  const wherePedido = { estado: 'completado' };
+  if (!alcance.acceso_todas) wherePedido.sucursal_id = alcance.sucursal_id;
+  else if (filtros.sucursal_id) wherePedido.sucursal_id = filtros.sucursal_id;
+
+  const [productos, combos, ultimasVentas, componentes] = await Promise.all([
+    Producto.findAll({ where: { activo: 1, es_vendible: 1, creado_en: { [Op.lt]: desde } }, attributes: ['id', 'nombre', 'precio'], order: [['nombre', 'ASC']] }),
+    Combo.findAll({ where: { activo: 1, creado_en: { [Op.lt]: desde } }, attributes: ['id', 'nombre', 'precio'], order: [['nombre', 'ASC']] }),
+    DetallePedido.findAll({
+      include: [{ model: Pedido, attributes: [], where: wherePedido, required: true }],
+      where: { [Op.or]: [{ producto_id: { [Op.ne]: null } }, { combo_id: { [Op.ne]: null } }] },
+      attributes: ['producto_id', 'combo_id', [fn('MAX', literal('`Pedido`.`creado_en`')), 'ultima']],
+      group: ['producto_id', 'combo_id'], raw: true,
+    }),
+    ComboProducto.findAll({ attributes: ['combo_id', 'producto_id'], raw: true }),
+  ]);
+
+  const ultima = new Map();
+  const anotar = (clave, fecha) => {
+    if (!fecha) return;
+    const f = new Date(fecha);
+    if (!ultima.has(clave) || ultima.get(clave) < f) ultima.set(clave, f);
+  };
+  ultimasVentas.forEach((u) => anotar(u.producto_id ? `p${u.producto_id}` : `c${u.combo_id}`, u.ultima));
+  // Vender un combo también es vender cada producto que trae.
+  componentes.forEach((cp) => anotar(`p${cp.producto_id}`, ultima.get(`c${cp.combo_id}`)));
+
+  const items = [
+    ...productos.map((p) => ({ tipo: 'producto', id: p.id, nombre: p.nombre, precio: parseFloat(p.precio) })),
+    ...combos.map((c) => ({ tipo: 'combo', id: c.id, nombre: c.nombre, precio: parseFloat(c.precio) })),
+  ].map((x) => ({ ...x, ultima_venta: ultima.get(`${x.tipo[0]}${x.id}`) ?? null }));
+
+  return { dias, items: items.filter((x) => !x.ultima_venta || x.ultima_venta < desde) };
+}
+
 module.exports = {
-  porAcabarse, tiemposCocina, gananciaPlatos,
+  porAcabarse, tiemposCocina, gananciaPlatos, sinVentas,
   ventas, ventasResumen, ventasProductos, ventasVariantes, ventasMapaCalor,
   inventario, inventarioResumen,
   compras, comprasResumen,

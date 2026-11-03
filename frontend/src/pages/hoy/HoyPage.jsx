@@ -2,7 +2,7 @@ import { useMemo } from 'react';
 import { Link } from 'react-router-dom';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { ShoppingBag, ChefHat, Wallet, Printer, ArrowUpRight, ArrowDownRight, PackageX } from 'lucide-react';
-import { getReporteVentasResumen, getReporteVentasProductos, getReporteFinanzasSerie, getReporteFinanzasResumen, getReporteVentas, getReporteMapaCalor, getPorAcabarse, getTiemposCocina } from '../../api/reportes';
+import { getReporteVentasResumen, getReporteVentasProductos, getReporteFinanzasSerie, getReporteFinanzasResumen, getReporteVentas, getReporteMapaCalor, getPorAcabarse, getTiemposCocina, getSinVentas } from '../../api/reportes';
 import { PorHora, FormasPago, Tendencia, Canales, ResultadoMes, MapaCalor, TiempoCocina } from './graficos';
 import { getVentas } from '../../api/ventas';
 import { getEstadoCajas } from '../../api/caja';
@@ -27,6 +27,8 @@ function cantidadCorta(n, unidad) {
   return u ? `${v} ${u}` : `${v}`;
 }
 
+const diasDesde = (f) => Math.max(1, Math.floor((Date.now() - new Date(f)) / 86400000));
+
 function saludo() {
   const h = new Date().getHours();
   return h < 12 ? 'Buen día' : h < 19 ? 'Buenas tardes' : 'Buenas noches';
@@ -50,6 +52,7 @@ export default function HoyPage() {
   const calor = useQuery({ queryKey: ['hoy', 'calor', hoy], queryFn: () => getReporteMapaCalor({ desde: haceDias(27), hasta: hoy }), enabled: verReportes, staleTime: 10 * 60_000 });
   const acabarse = useQuery({ queryKey: ['hoy', 'acabarse'], queryFn: () => getPorAcabarse(), enabled: verReportes, refetchInterval: 5 * 60_000 });
   const cocina = useQuery({ queryKey: ['hoy', 'cocina'], queryFn: () => getTiemposCocina(), enabled: verReportes, refetchInterval: 60_000 });
+  const sinVenta = useQuery({ queryKey: ['hoy', 'sin-ventas'], queryFn: () => getSinVentas({ dias: 14 }), enabled: verReportes, staleTime: 10 * 60_000 });
   const mes = useQuery({ queryKey: ['hoy', 'mes', hoy], queryFn: () => getReporteFinanzasResumen({ desde: `${hoy.slice(0, 8)}01`, hasta: hoy }), enabled: verReportes });
   const abiertos = useQuery({ queryKey: ['ventas', 'activos'], queryFn: () => getVentas({ estado: 'pendiente,listo' }), enabled: tiene('ventas', 'ver') });
   const cajas = useQuery({ queryKey: ['caja-estado', sucursalId], queryFn: () => getEstadoCajas(sucursalId), enabled: !!sucursalId && tiene('caja', 'ver') });
@@ -75,6 +78,8 @@ export default function HoyPage() {
   const enCocina = (abiertos.data ?? []).filter((p) => p.estado_cocina === 'pendiente').length;
   const cajasAbiertas = (cajas.data ?? []).filter((c) => c.sesion_abierta);
   const agentesCaidos = (agentes.data ?? []).filter((a) => !a.conectado);
+  const hayCocina = !!cocina.data && (cocina.data.cantidad > 0 || cocina.data.semana?.cantidad > 0 || cocina.data.esperando?.length > 0);
+  const haySinVentas = (sinVenta.data?.items?.length ?? 0) > 0;
   const maxTop = useMemo(() => Math.max(1, ...(top.data ?? []).slice(0, 6).map((p) => p.cantidad)), [top.data]);
 
   return (
@@ -198,13 +203,35 @@ export default function HoyPage() {
 
 
           {/* Sin rondas ni esperas: el local no usa la pantalla de Cocina. */}
-          {cocina.data && (cocina.data.cantidad > 0 || cocina.data.semana?.cantidad > 0 || cocina.data.esperando?.length > 0) && (
-            <section className="lg:col-span-12 min-w-0 ficha p-5 sm:p-6">
+          {hayCocina && (
+            <section className={cx('min-w-0 ficha p-5 sm:p-6', haySinVentas ? 'lg:col-span-8' : 'lg:col-span-12')}>
               <div className="flex items-baseline gap-3 mb-4">
                 <h2 className="font-display font-semibold text-lg">Tiempo de cocina</h2>
                 {tiene('cocina', 'ver') && <Link to="/cocina" className="text-sm font-semibold underline underline-offset-2 ml-auto">Abrir Cocina</Link>}
               </div>
               <TiempoCocina datos={cocina.data} />
+            </section>
+          )}
+
+          {haySinVentas && (
+            <section className={cx('min-w-0 ficha p-5 sm:p-6', hayCocina ? 'lg:col-span-4' : 'lg:col-span-12')}>
+              <div className="flex items-baseline gap-3 mb-1">
+                <h2 className="font-display font-semibold text-lg">No se vendió en {sinVenta.data.dias} días</h2>
+                <span className="num text-tenue">{sinVenta.data.items.length}</span>
+              </div>
+              <p className="text-[13px] text-tenue mb-3">Para sacarlo del menú, cambiarlo o ponerlo en promoción.</p>
+              <ul className={cx('divide-y divide-dashed divide-linea', !hayCocina && 'sm:grid sm:grid-cols-2 lg:grid-cols-3 sm:gap-x-8 sm:divide-y-0')}>
+                {sinVenta.data.items.slice(0, 6).map((x) => (
+                  <li key={`${x.tipo}${x.id}`} className="flex items-baseline gap-3 py-2 text-sm min-w-0">
+                    <span className="truncate font-medium">{x.nombre}</span>
+                    <span className="text-tenue ml-auto shrink-0 text-[13px]">{x.ultima_venta ? `hace ${diasDesde(x.ultima_venta)} días` : 'nunca se vendió'}</span>
+                  </li>
+                ))}
+              </ul>
+              <p className="text-[13px] text-tenue mt-2">
+                {sinVenta.data.items.length > 6 && `Y ${sinVenta.data.items.length - 6} más. `}
+                {(tiene('productos', 'ver') || tiene('inventario', 'ver')) && <Link to="/menu/productos" className="font-semibold text-tinta underline underline-offset-2">Ir al menú</Link>}
+              </p>
             </section>
           )}
 

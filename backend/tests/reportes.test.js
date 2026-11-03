@@ -929,3 +929,54 @@ describe('reportesService.gananciaPlatos — costo por receta y última compra',
     expect(r.resumen).toMatchObject({ ventas: 100, costo: 38, ganancia: 62, costo_pct: 38 });
   });
 });
+
+describe('reportesService.sinVentas — lo que no se vende', () => {
+  const reportesService = require('../src/modules/reportes/reportes.service');
+  let sucursal, categoria, nunca, suelto, enCombo, nuevo, combo, pedido;
+  const hace = (dias) => new Date(Date.now() - dias * 86400000);
+
+  beforeAll(async () => {
+    sucursal = await Sucursal.create({ nombre: 'Sucursal SinVentas Test' });
+    categoria = await Categoria.create({ nombre: 'Categoria SinVentas Test' });
+    const crear = (nombre) => Producto.create({ categoria_id: categoria.id, nombre, precio: 10 });
+    [nunca, suelto, enCombo, nuevo] = await Promise.all(['Nunca SinVentas Test', 'Suelto SinVentas Test', 'EnCombo SinVentas Test', 'Nuevo SinVentas Test'].map(crear));
+    combo = await Combo.create({ nombre: 'Combo SinVentas Test', precio: 15, activo: 1 });
+    await ComboProducto.create({ combo_id: combo.id, producto_id: enCombo.id, cantidad: 1 });
+    // Todos cargados hace un mes, menos `nuevo`.
+    await Producto.update({ creado_en: hace(30) }, { where: { id: [nunca.id, suelto.id, enCombo.id] }, silent: true });
+    await Combo.update({ creado_en: hace(30) }, { where: { id: combo.id }, silent: true });
+
+    pedido = await Pedido.create({ sucursal_id: sucursal.id, usuario_id: 1, tipo: 'llevar', estado: 'completado', total: 25 });
+    await DetallePedido.bulkCreate([
+      { pedido_id: pedido.id, producto_id: suelto.id, cantidad: 1, precio: 10 },
+      { pedido_id: pedido.id, combo_id: combo.id, cantidad: 1, precio: 15 },
+    ]);
+  });
+
+  afterAll(async () => {
+    await DetallePedido.destroy({ where: { pedido_id: pedido.id } });
+    await pedido.destroy();
+    await ComboProducto.destroy({ where: { combo_id: combo.id } });
+    await combo.destroy();
+    await Producto.destroy({ where: { id: [nunca.id, suelto.id, enCombo.id, nuevo.id] } });
+    await categoria.destroy();
+    await sucursal.destroy();
+  });
+
+  it('lista lo que no se vendió en el período; el producto de un combo vendido y el recién cargado no', async () => {
+    const r = await reportesService.sinVentas({ dias: 14 }, { acceso_todas: false, sucursal_id: sucursal.id });
+    const ids = r.items.filter((i) => i.tipo === 'producto').map((i) => i.id);
+    expect(r.dias).toBe(14);
+    expect(ids).toContain(nunca.id);
+    expect(r.items.find((i) => i.id === nunca.id).ultima_venta).toBeNull();
+    expect(ids).not.toContain(suelto.id);
+    expect(ids).not.toContain(enCombo.id);
+    expect(ids).not.toContain(nuevo.id);
+    expect(r.items.find((i) => i.tipo === 'combo' && i.id === combo.id)).toBeUndefined();
+  });
+
+  it('en otra sucursal, lo vendido acá sí cuenta como sin ventas', async () => {
+    const r = await reportesService.sinVentas({ dias: 14 }, { acceso_todas: false, sucursal_id: 1 });
+    expect(r.items.map((i) => i.id)).toContain(suelto.id);
+  });
+});
