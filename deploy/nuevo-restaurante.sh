@@ -35,6 +35,8 @@ main() {
   puerto="$(puerto_libre)"
   local admin_pass
   admin_pass="$(openssl rand -base64 12 | tr -d '/+=' | cut -c1-12)"
+  local clave_agente
+  clave_agente="$(openssl rand -hex 24)"
 
   mkdir -p instancias
   umask 077
@@ -78,9 +80,9 @@ BANECO_AES_KEY=
 BANECO_CUENTA=
 BANECO_SUCURSAL=
 
-# Clave del agente de impresión (ver backend/.env.example). Para exigirla:
-#   AGENTE_IMPRESION_CLAVE=$(openssl rand -hex 24)  y la misma en el config.json del agente.
-AGENTE_IMPRESION_CLAVE=
+# Clave del agente de impresión (ver backend/.env.example): el instalador del
+# agente la pide en el paso 1. Sin ella el agente no se conecta.
+AGENTE_IMPRESION_CLAVE=${clave_agente}
 EOF
   umask 022
   echo "==> Creado ${archivo} (puerto ${puerto})"
@@ -104,6 +106,9 @@ EOF
 
  Ingreso:  ${email}
  Clave:    ${admin_pass}   (pide cambiarla al entrar)
+
+ Clave del agente de impresión (para el instalador en cada caja):
+   ${clave_agente}
 ========================================================
 EOF
 }

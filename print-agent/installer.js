@@ -179,6 +179,7 @@ $form.Controls.Add($panelLateral)
 function pedirServidor(defaults) {
   const outFile     = path.join(os.tmpdir(), `agente_srv_${Date.now()}.txt`);
   const defServidor = defaults.servidor || 'https://';
+  const defClave    = String(defaults.clave_agente || '').replace(/[^A-Za-z0-9_-]/g, '');
   const outFileSafe = outFile.replace(/\\/g, '\\\\');
 
   const ps = `
@@ -187,13 +188,13 @@ Add-Type -AssemblyName System.Drawing
 
 $form = New-Object System.Windows.Forms.Form
 $form.Text            = "Agente de Impresion Termica - Paso 1 de 3"
-$form.ClientSize      = New-Object System.Drawing.Size(670, 210)
+$form.ClientSize      = New-Object System.Drawing.Size(670, 290)
 $form.StartPosition   = "CenterScreen"
 $form.FormBorderStyle = "FixedDialog"
 $form.MaximizeBox     = $false
 $form.MinimizeBox     = $false
 $form.BackColor       = [System.Drawing.Color]::White
-${_sidebarPS(1, 210)}
+${_sidebarPS(1, 290)}
 $lblTitulo = New-Object System.Windows.Forms.Label
 $lblTitulo.Text      = "Configuracion del Agente de Impresion"
 $lblTitulo.Font      = New-Object System.Drawing.Font("Segoe UI", 12, [System.Drawing.FontStyle]::Bold)
@@ -220,10 +221,22 @@ $tbServidor.Font     = New-Object System.Drawing.Font("Segoe UI", 9)
 $tbServidor.Location = New-Object System.Drawing.Point(190, 106)
 $tbServidor.Size     = New-Object System.Drawing.Size(450, 26)
 
+$lblClave = New-Object System.Windows.Forms.Label
+$lblClave.Text     = "Clave del agente (la da quien instalo el sistema; vacio si no tiene):"
+$lblClave.Font     = New-Object System.Drawing.Font("Segoe UI", 9, [System.Drawing.FontStyle]::Bold)
+$lblClave.Location = New-Object System.Drawing.Point(190, 144)
+$lblClave.Size     = New-Object System.Drawing.Size(450, 20)
+
+$tbClave = New-Object System.Windows.Forms.TextBox
+$tbClave.Text     = "${defClave}"
+$tbClave.Font     = New-Object System.Drawing.Font("Consolas", 9)
+$tbClave.Location = New-Object System.Drawing.Point(190, 166)
+$tbClave.Size     = New-Object System.Drawing.Size(450, 26)
+
 $btnCancelar = New-Object System.Windows.Forms.Button
 $btnCancelar.Text         = "Cancelar"
 $btnCancelar.Font         = New-Object System.Drawing.Font("Segoe UI", 9)
-$btnCancelar.Location     = New-Object System.Drawing.Point(418, 146)
+$btnCancelar.Location     = New-Object System.Drawing.Point(418, 226)
 $btnCancelar.Size         = New-Object System.Drawing.Size(100, 34)
 $btnCancelar.FlatStyle    = [System.Windows.Forms.FlatStyle]::Flat
 $btnCancelar.DialogResult = [System.Windows.Forms.DialogResult]::Cancel
@@ -234,18 +247,18 @@ $btnSiguiente.Font         = New-Object System.Drawing.Font("Segoe UI", 9, [Syst
 $btnSiguiente.BackColor    = [System.Drawing.Color]::FromArgb(37, 99, 235)
 $btnSiguiente.ForeColor    = [System.Drawing.Color]::White
 $btnSiguiente.FlatStyle    = [System.Windows.Forms.FlatStyle]::Flat
-$btnSiguiente.Location     = New-Object System.Drawing.Point(528, 146)
+$btnSiguiente.Location     = New-Object System.Drawing.Point(528, 226)
 $btnSiguiente.Size         = New-Object System.Drawing.Size(112, 34)
 $btnSiguiente.DialogResult = [System.Windows.Forms.DialogResult]::OK
 
-$form.Controls.AddRange(@($lblTitulo, $lblSub, $lblServidor, $tbServidor, $btnCancelar, $btnSiguiente))
+$form.Controls.AddRange(@($lblTitulo, $lblSub, $lblServidor, $tbServidor, $lblClave, $tbClave, $btnCancelar, $btnSiguiente))
 $form.AcceptButton = $btnSiguiente
 $form.CancelButton = $btnCancelar
 
 $result = $form.ShowDialog()
 
 if ($result -eq [System.Windows.Forms.DialogResult]::OK) {
-  [System.IO.File]::WriteAllLines("${outFileSafe}", @("OK", $tbServidor.Text))
+  [System.IO.File]::WriteAllLines("${outFileSafe}", @("OK", $tbServidor.Text, $tbClave.Text))
 } else {
   [System.IO.File]::WriteAllText("${outFileSafe}", "CANCEL")
 }
@@ -266,7 +279,7 @@ if ($result -eq [System.Windows.Forms.DialogResult]::OK) {
     const raw = readFileSync(outFile, 'utf8').trim().split('\n');
     unlinkSync(outFile);
     if (raw[0].trim() !== 'OK') return 'CANCEL';
-    return { servidor: (raw[1] || '').trim() };
+    return { servidor: (raw[1] || '').trim(), clave_agente: (raw[2] || '').trim() };
   } catch { return 'CANCEL'; }
 }
 
@@ -877,16 +890,18 @@ async function main() {
 
     // Paso 1: pedir la URL del servidor y buscar sus sucursales (reintenta si falla)
     let servidor = defaults.servidor || '';
+    let clave_agente = defaults.clave_agente || '';
     let sucursales = null;
 
     while (!sucursales) {
-      const paso1 = pedirServidor({ servidor });
+      const paso1 = pedirServidor({ servidor, clave_agente });
       if (!paso1 || paso1 === 'CANCEL') {
         process.exit(0);
         return;
       }
 
       servidor = paso1.servidor.trim().replace(/\/+$/, '');
+      clave_agente = paso1.clave_agente;
       if (!servidor) {
         showMessage('Dato requerido', 'Ingresa la URL del servidor.', true);
         continue;
@@ -949,6 +964,10 @@ async function main() {
       servidor, sucursal_id: resultado.sucursal_id,
       impresora_caja: resultado.impresora_caja, impresora_cocina: resultado.impresora_cocina,
       caja_ids,
+      // La clave solo se guarda si se escribió; el codepage elegido a mano en
+      // config.json se conserva al reinstalar.
+      ...(clave_agente ? { clave_agente } : {}),
+      ...(defaults.codepage ? { codepage: defaults.codepage } : {}),
     });
   } catch (err) {
     showMessage('Error inesperado', `El instalador encontró un error:\n${err.message}`, true);
