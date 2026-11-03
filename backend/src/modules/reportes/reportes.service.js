@@ -4,6 +4,7 @@ const {
   RegistroInventario, Compra, Proveedor, LibroCaja, SesionCaja, Sucursal,
   Opcion, GrupoOpciones, DetallePedidoComboOpcion, Devolucion,
   Insumo, InsumoStockSucursal, InsumoMovimiento, ProductoStockSucursal, CocinaTiempo,
+  DetalleCompra, RecetaInsumo,
 } = require('../../models');
 
 // Offset fijo de Bolivia: un datetime sin offset se parsea en la hora local
@@ -786,8 +787,120 @@ async function tiemposCocina(filtros = {}, alcance) {
   return { ...periodo, semana, min_atraso: MIN_ATRASO, esperando, atrasados: esperando.filter((e) => e.segundos >= MIN_ATRASO * 60).length };
 }
 
+// Ganancia por plato: costo de ingredientes contra lo que se cobra.
+// - Costo de un insumo o de un producto comprado hecho: costo_unitario de su
+//   última compra recibida (de la propia sucursal si hay, si no de cualquiera).
+// - Costo de un plato con receta: su receta base (opcion_id NULL); las
+//   opciones con receta propia quedan fuera. Sin receta: su última compra.
+// - Combo: suma de sus productos; queda sin costo si a alguno le falta.
+// - Los que se venden por peso no se costean (la receta no es por kg).
+// Las ventas del período salen de ventasProductos (montos reales cobrados).
+async function gananciaPlatos(filtros = {}, alcance) {
+  const sucursal_id = !alcance.acceso_todas ? alcance.sucursal_id : (filtros.sucursal_id || null);
+
+  const [compras, recetas, combos, vendidos] = await Promise.all([
+    DetalleCompra.findAll({
+      include: [{ model: Compra, attributes: [], where: { estado: 'recibido' }, required: true }],
+      attributes: ['producto_id', 'insumo_id', 'costo_unitario', [literal('`Compra`.`sucursal_id`'), 'sucursal_id']],
+      order: [[literal('`Compra`.`creado_en`'), 'DESC'], ['id', 'DESC']],
+      raw: true,
+    }),
+    RecetaInsumo.findAll({ where: { opcion_id: null }, include: [{ model: Insumo, as: 'insumo', attributes: ['id', 'nombre', 'unidad_medida'] }] }),
+    Combo.findAll({ include: [{ model: Producto, as: 'productos', attributes: ['id'], through: { attributes: ['cantidad'] } }] }),
+    ventasProductos(filtros, alcance),
+  ]);
+
+  // Último costo por clave: el de la propia sucursal manda sobre el general.
+  const ultimo = { propio: new Map(), general: new Map() };
+  compras.forEach((c) => {
+    const clave = c.insumo_id ? `i${c.insumo_id}` : `p${c.producto_id}`;
+    const costo = parseFloat(c.costo_unitario);
+    if (!ultimo.general.has(clave)) ultimo.general.set(clave, costo);
+    if (sucursal_id && c.sucursal_id === sucursal_id && !ultimo.propio.has(clave)) ultimo.propio.set(clave, costo);
+  });
+  const costoDe = (clave) => ultimo.propio.get(clave) ?? ultimo.general.get(clave) ?? null;
+
+  const recetaPor = new Map();
+  recetas.forEach((r) => {
+    if (!recetaPor.has(r.producto_id)) recetaPor.set(r.producto_id, []);
+    recetaPor.get(r.producto_id).push(r);
+  });
+
+  const vendidosIds = vendidos.filter((v) => v.tipo === 'producto').map((v) => v.id);
+  const productos = await Producto.findAll({
+    where: { [Op.or]: [{ activo: 1, es_vendible: 1 }, { id: vendidosIds.length ? vendidosIds : [0] }] },
+    attributes: ['id', 'nombre', 'precio', 'es_pesable'],
+  });
+
+  const redondear = (n) => Math.round(n * 100) / 100;
+  const costear = (p) => {
+    if (p.es_pesable) return { costo: null, motivo: 'Se vende por peso' };
+    const receta = recetaPor.get(p.id);
+    if (receta?.length) {
+      const detalle = receta.map((r) => {
+        const costo_unitario = costoDe(`i${r.insumo_id}`);
+        const cantidad = parseFloat(r.cantidad);
+        return { insumo: r.insumo?.nombre ?? '(eliminado)', unidad: r.insumo?.unidad_medida, cantidad, costo_unitario, subtotal: costo_unitario == null ? null : redondear(cantidad * costo_unitario) };
+      });
+      const faltan = detalle.filter((d) => d.costo_unitario == null).map((d) => d.insumo);
+      if (faltan.length) return { costo: null, motivo: `Falta el precio de compra de: ${faltan.join(', ')}`, fuente: 'receta', detalle };
+      return { costo: redondear(detalle.reduce((s, d) => s + d.subtotal, 0)), fuente: 'receta', detalle };
+    }
+    const compra = costoDe(`p${p.id}`);
+    if (compra != null) return { costo: compra, fuente: 'compra' };
+    return { costo: null, motivo: 'Sin receta ni compras cargadas' };
+  };
+
+  const filas = [];
+  const costoProducto = new Map();
+  productos.forEach((p) => {
+    const c = costear(p);
+    costoProducto.set(p.id, c.costo);
+    filas.push({ tipo: 'producto', id: p.id, nombre: p.nombre, precio: parseFloat(p.precio), ...c });
+  });
+  combos.forEach((cb) => {
+    if (!cb.activo && !vendidos.some((v) => v.tipo === 'combo' && v.id === cb.id)) return;
+    const partes = (cb.productos ?? []).map((p) => ({ costo: costoProducto.get(p.id) ?? null, cantidad: p.ComboProducto?.cantidad ?? 1 }));
+    const completo = partes.length > 0 && partes.every((x) => x.costo != null);
+    filas.push({
+      tipo: 'combo', id: cb.id, nombre: cb.nombre, precio: parseFloat(cb.precio), fuente: 'combo',
+      costo: completo ? redondear(partes.reduce((s, x) => s + x.costo * x.cantidad, 0)) : null,
+      ...(completo ? {} : { motivo: 'A algún producto del combo le falta el costo' }),
+    });
+  });
+
+  const ventaDe = new Map(vendidos.map((v) => [`${v.tipo}${v.id}`, v]));
+  const resultado = filas.map((f) => {
+    const v = ventaDe.get(`${f.tipo}${f.id}`);
+    const cantidad = v?.cantidad ?? 0;
+    const monto = v?.monto ?? 0;
+    const conCosto = f.costo != null;
+    return {
+      ...f,
+      ganancia_unitaria: conCosto ? redondear(f.precio - f.costo) : null,
+      costo_pct: conCosto && f.precio > 0 ? Math.round((f.costo / f.precio) * 1000) / 10 : null,
+      vendidos: cantidad,
+      ventas: redondear(monto),
+      costo_total: conCosto ? redondear(f.costo * cantidad) : null,
+      ganancia_total: conCosto ? redondear(monto - f.costo * cantidad) : null,
+    };
+  });
+
+  const conCosto = resultado.filter((f) => f.costo != null && f.vendidos > 0);
+  const ventas = redondear(conCosto.reduce((s, f) => s + f.ventas, 0));
+  const costo = redondear(conCosto.reduce((s, f) => s + f.costo_total, 0));
+  return {
+    resumen: {
+      ventas, costo, ganancia: redondear(ventas - costo),
+      costo_pct: ventas > 0 ? Math.round((costo / ventas) * 1000) / 10 : null,
+      ventas_sin_costo: redondear(resultado.filter((f) => f.costo == null).reduce((s, f) => s + f.ventas, 0)),
+    },
+    platos: resultado.sort((a, b) => (b.ganancia_total ?? -Infinity) - (a.ganancia_total ?? -Infinity) || b.ventas - a.ventas || a.nombre.localeCompare(b.nombre)),
+  };
+}
+
 module.exports = {
-  porAcabarse, tiemposCocina,
+  porAcabarse, tiemposCocina, gananciaPlatos,
   ventas, ventasResumen, ventasProductos, ventasVariantes, ventasMapaCalor,
   inventario, inventarioResumen,
   compras, comprasResumen,

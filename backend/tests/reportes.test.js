@@ -861,3 +861,71 @@ describe('reportesService.porAcabarse — días que alcanza el stock según el c
     expect(lista.find((f) => f.tipo === 'insumo' && f.id === insumoCorto.id)).toBeUndefined();
   });
 });
+
+describe('reportesService.gananciaPlatos — costo por receta y última compra', () => {
+  const reportesService = require('../src/modules/reportes/reportes.service');
+  const { Insumo, RecetaInsumo, DetalleCompra } = require('../src/models');
+  let sucursal, proveedor, categoria, insumo, plato, bebida, sinCosto, combo, compras = [], pedido;
+
+  beforeAll(async () => {
+    sucursal = await Sucursal.create({ nombre: 'Sucursal Ganancia Test' });
+    proveedor = await Proveedor.create({ nombre: 'Proveedor Ganancia Test' });
+    categoria = await Categoria.create({ nombre: 'Categoria Ganancia Test' });
+    insumo = await Insumo.create({ nombre: 'Carne Ganancia Test', unidad_medida: 'kilogramo' });
+    plato = await Producto.create({ categoria_id: categoria.id, nombre: 'Plato Ganancia Test', precio: 40 });
+    bebida = await Producto.create({ categoria_id: categoria.id, nombre: 'Bebida Ganancia Test', precio: 10 });
+    sinCosto = await Producto.create({ categoria_id: categoria.id, nombre: 'Sin Costo Ganancia Test', precio: 15 });
+    await RecetaInsumo.create({ producto_id: plato.id, insumo_id: insumo.id, cantidad: 0.25 });
+
+    // Dos compras de carne: manda la más nueva (60/kg, no 40/kg). Una pendiente no cuenta.
+    const compra = async (fecha, estado, detalle) => {
+      const c = await Compra.create({ sucursal_id: sucursal.id, proveedor_id: proveedor.id, usuario_id: 1, estado, total: 0 });
+      await Compra.update({ creado_en: fecha }, { where: { id: c.id }, silent: true });
+      await DetalleCompra.create({ compra_id: c.id, cantidad: 1, subtotal: detalle.costo_unitario, ...detalle });
+      compras.push(c.id);
+    };
+    await compra(new Date(Date.now() - 3 * 86400000), 'recibido', { insumo_id: insumo.id, costo_unitario: 40 });
+    await compra(new Date(Date.now() - 86400000), 'recibido', { insumo_id: insumo.id, costo_unitario: 60 });
+    await compra(new Date(), 'pendiente', { insumo_id: insumo.id, costo_unitario: 99 });
+    await compra(new Date(), 'recibido', { producto_id: bebida.id, costo_unitario: 4 });
+
+    combo = await Combo.create({ nombre: 'Combo Ganancia Test', precio: 45, activo: 1 });
+    await ComboProducto.bulkCreate([{ combo_id: combo.id, producto_id: plato.id, cantidad: 1 }, { combo_id: combo.id, producto_id: bebida.id, cantidad: 1 }]);
+
+    pedido = await Pedido.create({ sucursal_id: sucursal.id, usuario_id: 1, tipo: 'llevar', estado: 'completado', total: 100 });
+    await DetallePedido.bulkCreate([
+      { pedido_id: pedido.id, producto_id: plato.id, cantidad: 2, precio: 40 },
+      { pedido_id: pedido.id, producto_id: bebida.id, cantidad: 2, precio: 10 },
+    ]);
+  });
+
+  afterAll(async () => {
+    await DetallePedido.destroy({ where: { pedido_id: pedido.id } });
+    await pedido.destroy();
+    await ComboProducto.destroy({ where: { combo_id: combo.id } });
+    await combo.destroy();
+    await DetalleCompra.destroy({ where: { compra_id: compras } });
+    await Compra.destroy({ where: { id: compras } });
+    await RecetaInsumo.destroy({ where: { producto_id: plato.id } });
+    await Producto.destroy({ where: { id: [plato.id, bebida.id, sinCosto.id] } });
+    await insumo.destroy();
+    await categoria.destroy();
+    await proveedor.destroy();
+    await sucursal.destroy();
+  });
+
+  it('costea con la receta y la última compra recibida, y calcula la ganancia del período', async () => {
+    const hoy = new Date(Date.now() - 4 * 3600000).toISOString().slice(0, 10);
+    const r = await reportesService.gananciaPlatos({ desde: hoy, hasta: hoy }, { acceso_todas: false, sucursal_id: sucursal.id });
+    const fila = (tipo, id) => r.platos.find((p) => p.tipo === tipo && p.id === id);
+
+    // 0.25 kg × 60 = 15 → gana 25 por plato; 2 vendidos a 40 = 80 → gana 50.
+    expect(fila('producto', plato.id)).toMatchObject({ costo: 15, fuente: 'receta', ganancia_unitaria: 25, costo_pct: 37.5, vendidos: 2, ventas: 80, ganancia_total: 50 });
+    expect(fila('producto', plato.id).detalle[0]).toMatchObject({ insumo: 'Carne Ganancia Test', cantidad: 0.25, costo_unitario: 60, subtotal: 15 });
+    expect(fila('producto', bebida.id)).toMatchObject({ costo: 4, fuente: 'compra', vendidos: 2, ganancia_total: 12 });
+    expect(fila('producto', sinCosto.id)).toMatchObject({ costo: null, motivo: 'Sin receta ni compras cargadas' });
+    expect(fila('combo', combo.id)).toMatchObject({ costo: 19, ganancia_unitaria: 26 });
+
+    expect(r.resumen).toMatchObject({ ventas: 100, costo: 38, ganancia: 62, costo_pct: 38 });
+  });
+});

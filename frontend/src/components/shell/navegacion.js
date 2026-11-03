@@ -2,7 +2,7 @@ import {
   Sun, ShoppingBag, ChefHat, Wallet, BookOpen, Truck, UtensilsCrossed, Users, Boxes,
   BarChart3, UsersRound, Settings2, Clock, Package, Gift, Layers, Tag, Ticket, Disc3,
   Wheat, ShoppingCart, Shield, UserCheck, Building2, Landmark, Grid3x3, Store, Star,
-  Cake, Plug, Workflow, Receipt, History, Printer, QrCode,
+  Cake, Plug, Workflow, Receipt, History, Printer, QrCode, Calculator,
 } from 'lucide-react';
 
 // Cada destino: `ver` dice qué permiso lo muestra. Los `hijos` se muestran
@@ -44,6 +44,7 @@ export const SECCIONES = [
     to: '/finanzas', etiqueta: 'Finanzas', Icono: BarChart3, ver: ['reportes.ver', 'libro_caja.ver'],
     hijos: [
       { to: '/finanzas/reportes', etiqueta: 'Reportes', Icono: BarChart3, ver: ['reportes.ver'] },
+      { to: '/finanzas/platos', etiqueta: 'Ganancia por plato', Icono: Calculator, ver: ['reportes.ver'] },
       { to: '/finanzas/libro', etiqueta: 'Libro de caja', Icono: BookOpen, ver: ['libro_caja.ver'] },
       { to: '/finanzas/turnos', etiqueta: 'Turnos de caja', Icono: History, ver: ['caja.ver'] },
     ],

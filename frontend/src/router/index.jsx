@@ -70,6 +70,7 @@ export const router = createBrowserRouter([
         path: '/finanzas', element: <Seccion base="/finanzas" />,
         children: [
           { path: 'reportes', element: l(() => import('../pages/finanzas/ReportesPage')) },
+          { path: 'platos', element: l(() => import('../pages/finanzas/GananciaPlatosPage')) },
           { path: 'libro', element: l(() => import('../pages/finanzas/LibroCajaPage')) },
           { path: 'turnos', element: l(() => import('../pages/finanzas/TurnosPage')) },
         ],
