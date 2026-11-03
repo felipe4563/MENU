@@ -814,3 +814,50 @@ describe('ventasResumen - devoluciones y ventas netas (servicio directo)', () =>
     expect(viejo.ventas_netas).toBe(0);
   });
 });
+
+describe('reportesService.porAcabarse — días que alcanza el stock según el consumo', () => {
+  const reportesService = require('../src/modules/reportes/reportes.service');
+  const { Insumo, InsumoStockSucursal, InsumoMovimiento, ProductoStockSucursal } = require('../src/models');
+  let sucursal, insumoCorto, insumoLargo, categoria, productoAgotado;
+
+  beforeAll(async () => {
+    sucursal = await Sucursal.create({ nombre: 'Sucursal PorAcabarse Test' });
+    insumoCorto = await Insumo.create({ nombre: 'Insumo Corto Test', unidad_medida: 'kilogramo' });
+    insumoLargo = await Insumo.create({ nombre: 'Insumo Largo Test', unidad_medida: 'kilogramo' });
+    // Corto: quedan 2 kg y se gastaron 14 en dos semanas (1/día) → 2 días.
+    // Largo: quedan 100 kg con el mismo ritmo → 100 días, no avisa.
+    await InsumoStockSucursal.bulkCreate([
+      { insumo_id: insumoCorto.id, sucursal_id: sucursal.id, stock: 2 },
+      { insumo_id: insumoLargo.id, sucursal_id: sucursal.id, stock: 100 },
+    ]);
+    await InsumoMovimiento.bulkCreate([insumoCorto, insumoLargo].map((i) => ({
+      insumo_id: i.id, sucursal_id: sucursal.id, tipo: 'consumo_venta', cantidad: 14, stock_anterior: 0, stock_nuevo: 0,
+    })));
+    categoria = await Categoria.create({ nombre: 'Categoria PorAcabarse Test' });
+    productoAgotado = await Producto.create({ categoria_id: categoria.id, nombre: 'Producto Agotado Test', precio: 5, stock: 0 });
+    await ProductoStockSucursal.create({ producto_id: productoAgotado.id, sucursal_id: sucursal.id, stock: 0 });
+  });
+
+  afterAll(async () => {
+    await InsumoMovimiento.destroy({ where: { sucursal_id: sucursal.id } });
+    await InsumoStockSucursal.destroy({ where: { sucursal_id: sucursal.id } });
+    await ProductoStockSucursal.destroy({ where: { sucursal_id: sucursal.id } });
+    await Insumo.destroy({ where: { id: [insumoCorto.id, insumoLargo.id] } });
+    await productoAgotado.destroy();
+    await categoria.destroy();
+    await sucursal.destroy();
+  });
+
+  it('avisa el insumo que alcanza para pocos días y el producto agotado, no el que sobra', async () => {
+    const lista = await reportesService.porAcabarse({}, { acceso_todas: false, sucursal_id: sucursal.id });
+    const corto = lista.find((f) => f.tipo === 'insumo' && f.id === insumoCorto.id);
+    expect(corto).toMatchObject({ stock: 2, por_dia: 1, dias: 2, unidad: 'kilogramo' });
+    expect(lista.find((f) => f.tipo === 'insumo' && f.id === insumoLargo.id)).toBeUndefined();
+    expect(lista.find((f) => f.tipo === 'producto' && f.id === productoAgotado.id)).toMatchObject({ stock: 0 });
+  });
+
+  it('otra sucursal no ve estos avisos', async () => {
+    const lista = await reportesService.porAcabarse({}, { acceso_todas: false, sucursal_id: 1 });
+    expect(lista.find((f) => f.tipo === 'insumo' && f.id === insumoCorto.id)).toBeUndefined();
+  });
+});

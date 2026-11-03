@@ -3,6 +3,7 @@ const {
   Pedido, DetallePedido, Mesa, Cliente, Producto, Combo, Usuario,
   RegistroInventario, Compra, Proveedor, LibroCaja, SesionCaja, Sucursal,
   Opcion, GrupoOpciones, DetallePedidoComboOpcion, Devolucion,
+  Insumo, InsumoStockSucursal, InsumoMovimiento, ProductoStockSucursal,
 } = require('../../models');
 
 // Offset fijo de Bolivia: un datetime sin offset se parsea en la hora local
@@ -689,7 +690,64 @@ async function ventasMapaCalor(filtros = {}, alcance) {
     .sort((a, b) => a.dia - b.dia || a.hora - b.hora);
 }
 
+// Lo que se está por acabar: no hay stock mínimo configurable, así que se
+// estima con el ritmo de consumo de las últimas DIAS_RITMO semanas cuántos
+// días alcanza lo que queda. Insumos: consumo por ventas (recetas).
+// Productos con stock propio: ventas y salidas.
+const DIAS_RITMO = 14;
+const DIAS_AVISO = 3;
+
+function _estimar(stock, consumido) {
+  const porDia = consumido / DIAS_RITMO;
+  const dias = porDia > 0 ? stock / porDia : null;
+  return { stock, por_dia: Math.round(porDia * 1000) / 1000, dias: dias == null ? null : Math.max(0, Math.round(dias * 10) / 10) };
+}
+
+async function porAcabarse(filtros = {}, alcance) {
+  const sucursal_id = !alcance.acceso_todas ? alcance.sucursal_id : (filtros.sucursal_id || null);
+  const enSucursal = sucursal_id ? { sucursal_id } : {};
+  const desde = new Date(Date.now() - DIAS_RITMO * 86400000);
+
+  const [stockInsumos, consumoInsumos, stockProductos, consumoProductos] = await Promise.all([
+    InsumoStockSucursal.findAll({
+      where: enSucursal, raw: true,
+      include: [{ model: Insumo, as: 'insumo', attributes: [], where: { activo: 1 }, required: true }],
+      attributes: ['insumo_id', [fn('SUM', literal('`InsumoStockSucursal`.`stock`')), 'stock'], [literal('MAX(`insumo`.`nombre`)'), 'nombre'], [literal('MAX(`insumo`.`unidad_medida`)'), 'unidad']],
+      group: ['insumo_id'],
+    }),
+    InsumoMovimiento.findAll({
+      where: { ...enSucursal, tipo: 'consumo_venta', creado_en: { [Op.gte]: desde } }, raw: true,
+      attributes: ['insumo_id', [fn('SUM', literal('cantidad')), 'consumido']], group: ['insumo_id'],
+    }),
+    ProductoStockSucursal.findAll({
+      where: enSucursal, raw: true,
+      include: [{ model: Producto, as: 'producto', attributes: [], where: { activo: 1, es_vendible: 1, stock: { [Op.ne]: null } }, required: true }],
+      attributes: ['producto_id', [fn('SUM', literal('`ProductoStockSucursal`.`stock`')), 'stock'], [literal('MAX(`producto`.`nombre`)'), 'nombre']],
+      group: ['producto_id'],
+    }),
+    RegistroInventario.findAll({
+      where: { ...enSucursal, tipo: ['venta', 'salida'], creado_en: { [Op.gte]: desde } }, raw: true,
+      attributes: ['producto_id', [fn('SUM', literal('cantidad')), 'consumido']], group: ['producto_id'],
+    }),
+  ]);
+
+  const consumoI = new Map(consumoInsumos.map((c) => [c.insumo_id, parseFloat(c.consumido) || 0]));
+  const consumoP = new Map(consumoProductos.map((c) => [c.producto_id, parseFloat(c.consumido) || 0]));
+  const avisar = (f) => (f.stock <= 0 && f.por_dia > 0) || (f.dias != null && f.dias <= DIAS_AVISO);
+
+  const insumos = stockInsumos
+    .map((s) => ({ tipo: 'insumo', id: s.insumo_id, nombre: s.nombre, unidad: s.unidad, ..._estimar(parseFloat(s.stock) || 0, consumoI.get(s.insumo_id) || 0) }))
+    .filter(avisar);
+  // Un producto en 0 no se puede vender: se avisa aunque no haya ventas recientes.
+  const productos = stockProductos
+    .map((s) => ({ tipo: 'producto', id: s.producto_id, nombre: s.nombre, unidad: 'unidad', ..._estimar(parseInt(s.stock, 10) || 0, consumoP.get(s.producto_id) || 0) }))
+    .filter((f) => f.stock <= 0 || avisar(f));
+
+  return [...insumos, ...productos].sort((a, b) => (a.dias ?? (a.stock <= 0 ? -1 : Infinity)) - (b.dias ?? (b.stock <= 0 ? -1 : Infinity)) || a.nombre.localeCompare(b.nombre));
+}
+
 module.exports = {
+  porAcabarse,
   ventas, ventasResumen, ventasProductos, ventasVariantes, ventasMapaCalor,
   inventario, inventarioResumen,
   compras, comprasResumen,

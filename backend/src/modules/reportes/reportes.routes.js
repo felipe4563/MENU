@@ -9,6 +9,7 @@ router.use(auth);
 router.get('/ventas/resumen',   verificarPermiso('reportes', 'ver'), ctrl.getVentasResumen);
 router.get('/ventas/productos', verificarPermiso('reportes', 'ver'), ctrl.getVentasProductos);
 router.get('/ventas/variantes', verificarPermiso('reportes', 'ver'), ctrl.getVentasVariantes);
+router.get('/por-acabarse', verificarPermiso('reportes', 'ver'), ctrl.getPorAcabarse);
 router.get('/ventas/mapa-calor', verificarPermiso('reportes', 'ver'), ctrl.getVentasMapaCalor);
 router.get('/ventas',         verificarPermiso('reportes', 'ver'), ctrl.getVentas);
 router.get('/inventario/resumen', verificarPermiso('reportes', 'ver'), ctrl.getInventarioResumen);

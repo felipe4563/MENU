@@ -64,7 +64,12 @@ async function getVentasMapaCalor(req, res, next) {
   try { res.json({ ok: true, datos: await svc.ventasMapaCalor(req.query, _alcance(req)) }); } catch (e) { next(e); }
 }
 
+async function getPorAcabarse(req, res, next) {
+  try { res.json({ ok: true, datos: await svc.porAcabarse(req.query, _alcance(req)) }); } catch (e) { next(e); }
+}
+
 module.exports = {
+  getPorAcabarse,
   getVentas, getVentasResumen, getVentasProductos, getVentasVariantes, getVentasMapaCalor,
   getInventario, getInventarioResumen,
   getCompras, getComprasResumen,

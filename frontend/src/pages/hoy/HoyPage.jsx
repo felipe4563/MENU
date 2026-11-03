@@ -1,8 +1,8 @@
 import { useMemo } from 'react';
 import { Link } from 'react-router-dom';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { ShoppingBag, ChefHat, Wallet, Printer, ArrowUpRight, ArrowDownRight } from 'lucide-react';
-import { getReporteVentasResumen, getReporteVentasProductos, getReporteFinanzasSerie, getReporteFinanzasResumen, getReporteVentas, getReporteMapaCalor } from '../../api/reportes';
+import { ShoppingBag, ChefHat, Wallet, Printer, ArrowUpRight, ArrowDownRight, PackageX } from 'lucide-react';
+import { getReporteVentasResumen, getReporteVentasProductos, getReporteFinanzasSerie, getReporteFinanzasResumen, getReporteVentas, getReporteMapaCalor, getPorAcabarse } from '../../api/reportes';
 import { PorHora, FormasPago, Tendencia, Canales, ResultadoMes, MapaCalor } from './graficos';
 import { getVentas } from '../../api/ventas';
 import { getEstadoCajas } from '../../api/caja';
@@ -17,6 +17,14 @@ import { cx, dinero, hoyISO } from '../../lib/util';
 function haceDias(n) {
   const d = new Date(Date.now() - n * 86400000);
   return new Date(d.getTime() - d.getTimezoneOffset() * 60000).toISOString().slice(0, 10);
+}
+
+const UNIDAD = { kilogramo: 'kg', gramo: 'g', litro: 'L', mililitro: 'ml', arroba: '@', libra: 'lb', unidad: '' };
+
+function cantidadCorta(n, unidad) {
+  const u = UNIDAD[unidad] ?? '';
+  const v = Number.isInteger(n) ? n : Number(n.toFixed(n < 10 ? 1 : 0));
+  return u ? `${v} ${u}` : `${v}`;
 }
 
 function saludo() {
@@ -40,6 +48,7 @@ export default function HoyPage() {
   const pedidosHoy = useQuery({ queryKey: ['hoy', 'pedidos', hoy], queryFn: () => getReporteVentas({ desde: hoy, hasta: hoy, limite: 0 }), enabled: verReportes, refetchInterval: 60_000 });
   const pedidosAyer = useQuery({ queryKey: ['hoy', 'pedidos', ayer], queryFn: () => getReporteVentas({ desde: ayer, hasta: ayer, limite: 0 }), enabled: verReportes, staleTime: 10 * 60_000 });
   const calor = useQuery({ queryKey: ['hoy', 'calor', hoy], queryFn: () => getReporteMapaCalor({ desde: haceDias(27), hasta: hoy }), enabled: verReportes, staleTime: 10 * 60_000 });
+  const acabarse = useQuery({ queryKey: ['hoy', 'acabarse'], queryFn: () => getPorAcabarse(), enabled: verReportes, refetchInterval: 5 * 60_000 });
   const mes = useQuery({ queryKey: ['hoy', 'mes', hoy], queryFn: () => getReporteFinanzasResumen({ desde: `${hoy.slice(0, 8)}01`, hasta: hoy }), enabled: verReportes });
   const abiertos = useQuery({ queryKey: ['ventas', 'activos'], queryFn: () => getVentas({ estado: 'pendiente,listo' }), enabled: tiene('ventas', 'ver') });
   const cajas = useQuery({ queryKey: ['caja-estado', sucursalId], queryFn: () => getEstadoCajas(sucursalId), enabled: !!sucursalId && tiene('caja', 'ver') });
@@ -91,6 +100,29 @@ export default function HoyPage() {
         </div>
       )}
 
+      {(acabarse.data ?? []).length > 0 && (
+        <div className="mb-5 rounded-2xl bg-papel border border-linea p-4 flex items-start gap-3">
+          <PackageX className="w-5 h-5 text-aji mt-0.5 shrink-0" />
+          <div className="text-sm flex-1 min-w-0">
+            <p className="font-semibold">{acabarse.data.length === 1 ? 'Se está acabando 1 cosa' : `Se están acabando ${acabarse.data.length} cosas`}</p>
+            <ul className="mt-1.5 grid sm:grid-cols-2 gap-x-6 gap-y-1">
+              {acabarse.data.slice(0, 6).map((f) => (
+                <li key={`${f.tipo}${f.id}`} className="flex items-baseline gap-2 min-w-0">
+                  <span className="truncate">{f.nombre}</span>
+                  <span className={cx('num shrink-0 ml-auto', f.stock <= 0 ? 'text-locoto font-semibold' : 'text-tenue')}>
+                    {f.stock <= 0 ? 'agotado' : `quedan ${cantidadCorta(f.stock, f.unidad)} · ${f.dias < 1 ? 'no llega a 1 día' : `para ${Math.round(f.dias)} ${Math.round(f.dias) === 1 ? 'día' : 'días'}`}`}
+                  </span>
+                </li>
+              ))}
+            </ul>
+            <p className="text-tenue mt-2">
+              Según lo que se gastó en las últimas 2 semanas.{acabarse.data.length > 6 && ` Y ${acabarse.data.length - 6} más.`}{' '}
+              {tiene('insumos', 'ver') && <Link to="/inventario/insumos" className="font-semibold text-tinta underline underline-offset-2">Ver inventario</Link>}
+            </p>
+          </div>
+        </div>
+      )}
+
       {!verReportes ? (
         <Vacio titulo="Todo listo para tu turno" texto="Usa los accesos de arriba para empezar." />
       ) : (
@@ -107,7 +139,7 @@ export default function HoyPage() {
                   </p>
                 )}
               </div>
-              <div className="flex gap-8">
+              <div className="flex flex-wrap gap-x-6 sm:gap-x-8 gap-y-3 [&_p:first-child]:whitespace-nowrap">
                 <div><p className="num text-2xl font-bold">{r?.cantidad ?? 0}</p><p className="text-[13px] text-tenue">pedidos</p></div>
                 <div><p className="num text-2xl font-bold">{dinero(ticket, moneda)}</p><p className="text-[13px] text-tenue">por pedido</p></div>
                 <div><p className="num text-2xl font-bold">{dinero(r?.ventas_qr ?? 0, moneda)}</p><p className="text-[13px] text-tenue">por QR</p></div>
