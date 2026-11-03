@@ -35,7 +35,6 @@ export default function HoyPage() {
   const sucursalId = usuario?.sucursal_activa?.id;
 
   const resumen = useQuery({ queryKey: ['hoy', 'resumen', hoy], queryFn: () => getReporteVentasResumen({ desde: hoy, hasta: hoy }), enabled: verReportes, refetchInterval: 60_000 });
-  const resumenAyer = useQuery({ queryKey: ['hoy', 'resumen', ayer], queryFn: () => getReporteVentasResumen({ desde: ayer, hasta: ayer }), enabled: verReportes, staleTime: 10 * 60_000 });
   const top = useQuery({ queryKey: ['hoy', 'top', hoy], queryFn: () => getReporteVentasProductos({ desde: hoy, hasta: hoy }), enabled: verReportes });
   const serie = useQuery({ queryKey: ['hoy', 'serie', hoy], queryFn: () => getReporteFinanzasSerie({ desde: haceDias(29), hasta: hoy }), enabled: verReportes });
   const pedidosHoy = useQuery({ queryKey: ['hoy', 'pedidos', hoy], queryFn: () => getReporteVentas({ desde: hoy, hasta: hoy, limite: 0 }), enabled: verReportes, refetchInterval: 60_000 });
@@ -49,10 +48,19 @@ export default function HoyPage() {
   useSocket('agente:estado', () => qc.invalidateQueries({ queryKey: ['agentes'] }));
 
   const r = resumen.data;
-  const ra = resumenAyer.data;
   const neto = r?.ventas_netas ?? r?.total_ventas ?? 0;
-  const netoAyer = ra?.ventas_netas ?? ra?.total_ventas ?? 0;
-  const variacion = netoAyer > 0 ? ((neto - netoAyer) / netoAyer) * 100 : null;
+  // Hoy contra ayer hasta la misma hora: comparar lo que va del día con todo
+  // ayer daba casi siempre "en baja" hasta la noche.
+  const { vendidoHoy, ayerHastaAhora } = useMemo(() => {
+    const ahora = new Date();
+    const minutos = (d) => d.getHours() * 60 + d.getMinutes();
+    const suma = (filas) => filas.reduce((s, p) => s + Number(p.total ?? 0), 0);
+    return {
+      vendidoHoy: suma(pedidosHoy.data?.filas ?? []),
+      ayerHastaAhora: suma((pedidosAyer.data?.filas ?? []).filter((p) => minutos(new Date(p.creado_en)) <= minutos(ahora))),
+    };
+  }, [pedidosHoy.data, pedidosAyer.data]);
+  const variacion = pedidosAyer.data && ayerHastaAhora > 0 ? ((vendidoHoy - ayerHastaAhora) / ayerHastaAhora) * 100 : null;
   const ticket = r?.cantidad ? neto / r.cantidad : 0;
   const enCocina = (abiertos.data ?? []).filter((p) => p.estado_cocina === 'pendiente').length;
   const cajasAbiertas = (cajas.data ?? []).filter((c) => c.sesion_abierta);
@@ -95,7 +103,7 @@ export default function HoyPage() {
                 {variacion != null && (
                   <p className={cx('text-sm mt-2 flex items-center gap-1 font-semibold', variacion >= 0 ? 'text-hierba' : 'text-locoto')}>
                     {variacion >= 0 ? <ArrowUpRight className="w-4 h-4" /> : <ArrowDownRight className="w-4 h-4" />}
-                    {Math.abs(variacion).toFixed(0)}% frente a todo ayer
+                    {Math.abs(variacion).toFixed(0)}% frente a ayer a esta hora
                   </p>
                 )}
               </div>
