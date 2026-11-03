@@ -1,7 +1,11 @@
 // backend/src/modules/inventario/stock.service.js
 const { Producto, ProductoStockSucursal, RegistroInventario } = require('../../models');
 
-async function ajustarStockSucursal({ producto_id, sucursal_id, tipo, cantidad, usuario_id, nota, transaction }) {
+async function ajustarStockSucursal({ producto_id, sucursal_id, tipo, cantidad: cantidadRecibida, usuario_id, nota, transaction }) {
+  // DetalleCompra.cantidad es DECIMAL y Sequelize lo devuelve como string
+  // ("48.000"): sin convertir, `stock + cantidad` concatena (12 + "48.000"
+  // → "1248.000") y el stock del producto queda inflado.
+  const cantidad = Number(cantidadRecibida);
   const [fila] = await ProductoStockSucursal.findOrCreate({
     where: { producto_id, sucursal_id },
     defaults: { stock: 0 },

@@ -60,8 +60,12 @@ async function getFinanzasSerie(req, res, next) {
   try { res.json({ ok: true, datos: await svc.finanzasSerie(req.query, _alcance(req)) }); } catch (e) { next(e); }
 }
 
+async function getVentasMapaCalor(req, res, next) {
+  try { res.json({ ok: true, datos: await svc.ventasMapaCalor(req.query, _alcance(req)) }); } catch (e) { next(e); }
+}
+
 module.exports = {
-  getVentas, getVentasResumen, getVentasProductos, getVentasVariantes,
+  getVentas, getVentasResumen, getVentasProductos, getVentasVariantes, getVentasMapaCalor,
   getInventario, getInventarioResumen,
   getCompras, getComprasResumen,
   getCaja, getCajaResumen,

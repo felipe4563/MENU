@@ -22,12 +22,13 @@ async function _mesaConSesionActiva(codigo_qr) {
 async function obtenerMenu(codigo_qr) {
   const { mesa } = await _mesaConSesionActiva(codigo_qr);
   const alcance = { sucursal_id: mesa.area.sucursal_id, acceso_todas: false };
-  const [productos, combos, promociones] = await Promise.all([
+  const [productos, combos, promociones, puede_pedir] = await Promise.all([
     listarProductos({ solo_vendibles: true, solo_disponibles: true, solo_disponibles_hoy: true }, alcance),
     listarCombosActivos(),
     listarPromocionesActivas(),
+    ventasService.qrConfirmaSolo(),
   ]);
-  return { mesa: { id: mesa.id, nombre: mesa.nombre }, productos, combos, promociones };
+  return { mesa: { id: mesa.id, nombre: mesa.nombre }, productos, combos, promociones, puede_pedir };
 }
 
 // Previsualización de cupón para el checkout público: no confía en los
@@ -68,6 +69,9 @@ const MAX_PAGOS_PENDIENTES = 3;
 
 async function crearPedido(codigo_qr, { items, cupon_codigo, numero_documento, puntos_canjear, clienteIdAutenticado }) {
   const { mesa, sesion } = await _mesaConSesionActiva(codigo_qr);
+  if (!(await ventasService.qrConfirmaSolo())) {
+    throw Object.assign(new Error('Este local no recibe pedidos desde la mesa. Pide al mozo.'), { status: 409 });
+  }
   // El cliente_id que gana puntos puede venir de un CI suelto (silencioso,
   // sin PIN) o de una sesión de cliente autenticada — la sesión manda si
   // está presente. Solo con sesión autenticada se permite canjear puntos:

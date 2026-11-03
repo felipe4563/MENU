@@ -65,6 +65,27 @@ describe('Autoservicio API', () => {
       await categoria.destroy();
     });
 
+    it('con el QR propio como proveedor, el menú queda solo para ver y el pedido → 409', async () => {
+      const previa = await Configuracion.findOne({ where: { clave: 'qr_proveedor' } });
+      await Configuracion.upsert({ clave: 'qr_proveedor', valor: 'propio' });
+      try {
+        const menuRes = await request(app).get(`/api/v1/autoservicio/mesa/${mesa.codigo_qr}`);
+        expect(menuRes.status).toBe(200);
+        expect(menuRes.body.datos.puede_pedir).toBe(false);
+
+        const res = await request(app)
+          .post(`/api/v1/autoservicio/mesa/${mesa.codigo_qr}/pedido`)
+          .send({ items: [{ producto_id: 1, cantidad: 1 }] });
+        expect(res.status).toBe(409);
+        expect(res.body.mensaje).toMatch(/mozo/);
+      } finally {
+        if (previa) await Configuracion.upsert({ clave: 'qr_proveedor', valor: previa.valor });
+        else await Configuracion.destroy({ where: { clave: 'qr_proveedor' } });
+      }
+      const otraVez = await request(app).get(`/api/v1/autoservicio/mesa/${mesa.codigo_qr}`);
+      expect(otraVez.body.datos.puede_pedir).toBe(true);
+    });
+
     it('crear pedido sin caja abierta en la sucursal → 409', async () => {
       const res = await request(app)
         .post(`/api/v1/autoservicio/mesa/${mesa.codigo_qr}/pedido`)

@@ -69,6 +69,20 @@ describe('Compras por sucursal', () => {
     const filaOtra = await ProductoStockSucursal.findOne({ where: { producto_id: producto.id, sucursal_id: sucursalOtra.id } });
     expect(filaOtra).toBeNull();
   });
+
+  it('recibir una compra SUMA al stock existente (no concatena la cantidad DECIMAL)', async () => {
+    const crear = await request(app)
+      .post('/api/v1/compras')
+      .set('Authorization', `Bearer ${adminToken}`)
+      .send({ proveedor_id: proveedor.id, items: [{ producto_id: producto.id, cantidad: 48, costo_unitario: 3 }] });
+    const sucursalId = crear.body.datos.sucursal_id;
+    const antes = (await ProductoStockSucursal.findOne({ where: { producto_id: producto.id, sucursal_id: sucursalId } }))?.stock ?? 0;
+
+    await request(app).put(`/api/v1/compras/${crear.body.datos.id}/recibir`).set('Authorization', `Bearer ${adminToken}`);
+
+    const fila = await ProductoStockSucursal.findOne({ where: { producto_id: producto.id, sucursal_id: sucursalId } });
+    expect(fila.stock).toBe(antes + 48);
+  });
 });
 
 const { Rol, Usuario } = require('../src/models');

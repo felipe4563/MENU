@@ -12,6 +12,7 @@ router.use(auth);
 
 router.get('/cocina', verificarPermiso('cocina', 'ver'), ctrl.listarCocina);
 router.get('/mis-ventas-hoy', verificarPermiso('ventas', 'ver'), ctrl.misVentasHoy);
+router.get('/pagos-qr/por-confirmar', verificarPermiso('ventas', 'cobrar'), ctrl.pagosQrPorConfirmar);
 // La lista de pedidos de apps externas tiene su propio permiso (pantalla "Pedidos externos").
 router.get('/', (req, res, next) => (
   req.query.origen === 'app_externa'
@@ -29,6 +30,7 @@ router.delete('/:id/items/:item_id', verificarPermiso('ventas', 'crear'), ctrl.e
 router.post('/:id/cobrar', verificarPermiso('ventas', 'cobrar'), requiereSucursalActiva, ctrl.cobrar);
 router.get('/:id/pago-qr/estado', verificarPermiso('ventas', 'cobrar'), ctrl.estadoPagoQr);
 router.post('/:id/pago-qr/cancelar', verificarPermiso('ventas', 'cobrar'), ctrl.cancelarPagoQr);
+router.post('/:id/pago-qr/confirmar', verificarPermiso('ventas', 'cobrar'), ctrl.confirmarPagoQr);
 router.post('/:id/cancelar', verificarPermiso('ventas', 'cancelar'), ctrl.cancelar);
 router.patch('/:id/listo', verificarPermiso('cocina', 'ver'), ctrl.marcarListo);
 router.patch('/:id/entregado', verificarPermiso('cocina', 'ver'), ctrl.marcarEntregado);

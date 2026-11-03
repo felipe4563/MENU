@@ -1,3 +1,4 @@
+const crypto = require('crypto');
 const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
 const { Cliente, ClientePinVerificacion } = require('../../models');
@@ -18,7 +19,7 @@ function emitirToken(cliente_id) {
 }
 
 function _generarCodigo() {
-  return String(Math.floor(100000 + Math.random() * 900000));
+  return String(crypto.randomInt(100000, 1000000));
 }
 
 async function _resolverCliente(numero_documento) {

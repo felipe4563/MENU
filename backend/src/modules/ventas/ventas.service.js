@@ -7,6 +7,7 @@ const { emitir } = require('../../socket');
 const { ajustarStockSucursal } = require('../inventario/stock.service');
 const { ajustarStockInsumoSucursal } = require('../insumos/insumos.service');
 const codepayClient = require('../../integrations/codepay/codepay.client');
+const banecoClient = require('../../integrations/baneco/baneco.client');
 const { calcularPrecioPesable, redondearAMedio } = require('../../utils/precio');
 const { estaActivoHoy } = require('../../utils/disponibilidad');
 const { resolver: _resolverCupon } = require('../cupones/cupones.service');
@@ -711,8 +712,40 @@ async function _emitirImpresion(pedido, metodo_pago, cambio, sucursal_id, numero
   return { caja: datosCaja, cocina: datosCocina };
 }
 
+async function _borrarPedidoSinCobrar(pedidoId) {
+  await sequelize.transaction(async (t) => {
+    const ids = (await DetallePedido.findAll({ where: { pedido_id: pedidoId }, attributes: ['id'], transaction: t })).map((d) => d.id);
+    if (ids.length) {
+      await DetallePedidoOpcion.destroy({ where: { detalle_pedido_id: ids }, transaction: t });
+      await DetallePedidoComboOpcion.destroy({ where: { detalle_pedido_id: ids }, transaction: t });
+      await DetallePedido.destroy({ where: { pedido_id: pedidoId }, transaction: t });
+    }
+    await PagoQr.destroy({ where: { pedido_id: pedidoId }, transaction: t });
+    await Pedido.destroy({ where: { id: pedidoId }, transaction: t });
+  });
+}
+
+// Proveedor de cobro QR elegido en Ajustes › Cobro con QR.
+async function _configQr() {
+  const filas = await Configuracion.findAll({ where: { clave: ['qr_proveedor', 'qr_propio_imagen'] } });
+  const c = Object.fromEntries(filas.map((f) => [f.clave, f.valor]));
+  const proveedor = ['codepay', 'baneco', 'propio'].includes(c.qr_proveedor) ? c.qr_proveedor : 'codepay';
+  return { proveedor, imagenPropia: c.qr_propio_imagen || '' };
+}
+
+const QR_TIPO = { codepay: 'codepay', baneco: 'baneco', propio: 'manual' };
+
+// El pedido desde el QR de la mesa solo funciona con proveedores que
+// confirman el pago solos (CodePay, Banco Económico): con el QR propio nadie
+// confirmaría a tiempo y el cliente se quedaría esperando en la mesa.
+async function qrConfirmaSolo() {
+  const { proveedor } = await _configQr();
+  return proveedor === 'codepay' || proveedor === 'baneco';
+}
+
 /**
- * Genera un QR de cobro con CodePay para un pedido ya persistido (con su
+ * Genera un QR de cobro (CodePay, Banco Económico o el QR propio del
+ * negocio, según Ajustes) para un pedido ya persistido (con su
  * total ya calculado) y deja el pedido en 'pendiente_pago' hasta que se
  * confirme (ver consultarEstadoPagoQr / procesarWebhookPagoQr).
  */
@@ -770,13 +803,24 @@ async function iniciarPagoQr(pedido, { descuento = 0, propina = 0, puntos_canjea
     const cfg = await Configuracion.findOne({ where: { clave: 'nombre_negocio' } });
     const description = ((cfg && cfg.valor) || 'Venta').replace(/[^a-zA-Z0-9]/g, '').slice(0, 20) || 'Venta';
 
-    const respuesta = await codepayClient.generarQr({
-      order_id, amount: monto_neto, description, expires_at: expires_at.toISOString(),
-    });
+    const { proveedor, imagenPropia } = await _configQr();
+    let respuesta;
+    if (proveedor === 'propio') {
+      // QR fijo del negocio: no hay API que confirme, lo confirma el cajero.
+      if (!imagenPropia) throw Object.assign(new Error('Sube la imagen de tu QR en Ajustes › Cobro con QR antes de cobrar con QR'), { status: 409 });
+      respuesta = { tx_id: null, qr_code: imagenPropia, commission_amount: 0, amount: monto_neto };
+    } else if (proveedor === 'baneco') {
+      const qr = await banecoClient.generarQr({ transactionId: order_id, amount: monto_neto, description: `${description} pedido ${pedido.id}` });
+      respuesta = { tx_id: qr.qrId, qr_code: `data:image/png;base64,${qr.qrImage}`, commission_amount: 0, amount: monto_neto };
+    } else {
+      respuesta = await codepayClient.generarQr({
+        order_id, amount: monto_neto, description, expires_at: expires_at.toISOString(),
+      });
+    }
 
     await sequelize.transaction(async (t) => {
       await PagoQr.create({
-        pedido_id: pedido.id, sucursal_id: pedido.sucursal_id, order_id,
+        pedido_id: pedido.id, sucursal_id: pedido.sucursal_id, proveedor, order_id,
         tx_id: respuesta.tx_id, estado: 'pendiente', estado_previo: estadoPrevio,
         monto_neto, comision: respuesta.commission_amount, monto_total: respuesta.amount,
         qr_code: respuesta.qr_code, expires_at,
@@ -786,7 +830,7 @@ async function iniciarPagoQr(pedido, { descuento = 0, propina = 0, puntos_canjea
     });
 
     return {
-      qr_code: respuesta.qr_code, tx_id: respuesta.tx_id, expires_at,
+      proveedor, qr_code: respuesta.qr_code, tx_id: respuesta.tx_id, expires_at,
       monto_neto, comision: respuesta.commission_amount, monto_total: respuesta.amount,
     };
   } catch (err) {
@@ -875,12 +919,13 @@ async function revertirPagosQrVencidos() {
   let revertidos = 0;
   for (const pagoQr of vencidos) {
     await _revertirPagoQr(pagoQr, 'expirado');
+    _anularEnBanco(pagoQr);
     revertidos++;
   }
   return { revertidos };
 }
 
-async function _confirmarPagoQr(pagoQrInicial) {
+async function _confirmarPagoQr(pagoQrInicial, { confirmado_por = null } = {}) {
   const pedidoId = await sequelize.transaction(async (t) => {
     const pagoQr = await PagoQr.findByPk(pagoQrInicial.id, { transaction: t, lock: t.LOCK.UPDATE });
     if (!pagoQr || pagoQr.estado !== 'pendiente') return null; // ya resuelto por otra llamada concurrente
@@ -894,6 +939,10 @@ async function _confirmarPagoQr(pagoQrInicial) {
       canjeYaReservado: true,
     }, t);
     await pagoQr.update({ estado: 'completado' }, { transaction: t });
+    await Pedido.update(
+      { qr_tipo: QR_TIPO[pagoQr.proveedor] ?? 'codepay', qr_confirmado_por: confirmado_por },
+      { where: { id: pedido.id }, transaction: t },
+    );
     // Un pago QR de autoservicio se confirma ANTES de que la comida se
     // prepare (es el pago del pedido recién hecho, no el cierre de una
     // cuenta abierta) — limpiar estado_cocina acá lo ocultaría de Cocina
@@ -940,7 +989,17 @@ async function consultarEstadoPagoQr(pedido_id, alcance) {
 
   if (new Date() > pagoQr.expires_at) {
     await _revertirPagoQr(pagoQr, 'expirado');
+    _anularEnBanco(pagoQr);
     return { estado: 'expirado', pedido: await obtener(pedido_id) };
+  }
+
+  // QR propio: nadie del lado del banco avisa, queda pendiente hasta que el
+  // cajero lo confirme (confirmarPagoQrManual).
+  if (pagoQr.proveedor === 'propio') return { estado: 'pendiente', proveedor: 'propio', pedido: await obtener(pedido_id) };
+
+  if (pagoQr.proveedor === 'baneco') {
+    const r = await _verificarPagoBaneco(pagoQr);
+    return { estado: r, pedido: await obtener(pedido_id) };
   }
 
   const estadoCodepay = await codepayClient.consultarEstado(pagoQr.tx_id);
@@ -965,7 +1024,69 @@ async function cancelarPagoQr(pedido_id, alcance) {
   if (!pagoQr) throw Object.assign(new Error('No hay un pago QR pendiente para este pedido'), { status: 404 });
 
   await _revertirPagoQr(pagoQr, 'cancelado');
+  _anularEnBanco(pagoQr);
   return obtener(pedido_id);
+}
+
+// Consulta al banco el estado de un QR de Banco Económico y aplica el
+// resultado. Lo usan el polling del cobro y la notificación del banco (que
+// no trae firma: nunca se confía en su cuerpo, siempre se re-consulta).
+async function _verificarPagoBaneco(pagoQr) {
+  const { codigo, pago } = await banecoClient.consultarEstado(pagoQr.tx_id);
+  if (codigo === 1) {
+    const pagado = Number(pago?.amount ?? pagoQr.monto_neto);
+    if (pagado + 0.005 < Number(pagoQr.monto_neto)) {
+      console.error(`Banco Económico: QR ${pagoQr.tx_id} pagado por ${pagado}, se esperaba ${pagoQr.monto_neto}`);
+      return 'pendiente';
+    }
+    await PagoQr.update({ datos_webhook: pago }, { where: { id: pagoQr.id } });
+    await _confirmarPagoQr(pagoQr);
+    return 'completado';
+  }
+  if (codigo === 9) {
+    await _revertirPagoQr(pagoQr, 'cancelado');
+    return 'cancelado';
+  }
+  return 'pendiente';
+}
+
+// Anula en el banco un QR que el sistema ya dio por cancelado/vencido, para
+// que no se pueda pagar después. Si el banco falla, solo se registra: el
+// pedido ya quedó revertido de este lado.
+function _anularEnBanco(pagoQr) {
+  if (pagoQr.proveedor !== 'baneco' || !pagoQr.tx_id) return;
+  banecoClient.anularQr(pagoQr.tx_id).catch((e) => console.error(`No se pudo anular el QR ${pagoQr.tx_id} en Banco Económico:`, e.message));
+}
+
+/** Notificación de pago de Banco Económico (POST /api/qrsimple/notifyPaymentQR). */
+async function procesarNotificacionBaneco(payment) {
+  if (!payment?.qrId) return;
+  const pagoQr = await PagoQr.findOne({ where: { proveedor: 'baneco', tx_id: String(payment.qrId) } });
+  if (!pagoQr || pagoQr.estado !== 'pendiente') return;
+  await _verificarPagoBaneco(pagoQr);
+}
+
+/** El cajero confirma que recibió el pago en el QR propio del negocio. */
+async function confirmarPagoQrManual(pedido_id, usuario_id, alcance) {
+  const pedido = await Pedido.findByPk(pedido_id);
+  if (!pedido) throw Object.assign(new Error('Pedido no encontrado'), { status: 404 });
+  _verificarAlcance(pedido, alcance);
+  const pagoQr = await PagoQr.findOne({ where: { pedido_id, estado: 'pendiente' }, order: [['id', 'DESC']] });
+  if (!pagoQr) throw Object.assign(new Error('No hay un pago QR pendiente para este pedido'), { status: 404 });
+  if (pagoQr.proveedor !== 'propio') throw Object.assign(new Error('Este cobro se confirma solo cuando el banco avisa el pago'), { status: 409 });
+  const completado = await _confirmarPagoQr(pagoQr, { confirmado_por: usuario_id });
+  return completado ?? obtener(pedido_id);
+}
+
+/** Cobros con QR propio que esperan que alguien confirme el pago (p. ej. del menú QR). */
+async function listarPagosQrPorConfirmar({ sucursal_id, acceso_todas } = {}) {
+  const where = { proveedor: 'propio', estado: 'pendiente', expires_at: { [Op.gt]: new Date() } };
+  if (!acceso_todas) where.sucursal_id = sucursal_id;
+  const pagos = await PagoQr.findAll({ where, order: [['creado_en', 'ASC']], attributes: ['id', 'pedido_id', 'monto_neto', 'creado_en', 'expires_at'] });
+  if (!pagos.length) return [];
+  const pedidos = await Pedido.findAll({ where: { id: pagos.map((p) => p.pedido_id) }, include: [{ model: Mesa, as: 'mesa', attributes: ['id', 'nombre'] }], attributes: ['id', 'tipo', 'origen', 'nombre_cliente', 'numero_llevar'] });
+  const porId = Object.fromEntries(pedidos.map((p) => [p.id, p]));
+  return pagos.map((p) => ({ ...p.toJSON(), pedido: porId[p.pedido_id] ?? null }));
 }
 
 /** Usado por el endpoint de webhook (Task 4). Idempotente. */
@@ -1092,7 +1213,15 @@ async function crearCompleta({ tipo, mesa_id, nombre_cliente, documento_cliente,
 
   if (metodo_pago === 'qr') {
     const pedidoPendiente = await Pedido.findByPk(pedidoId);
-    const pago_qr = await iniciarPagoQr(pedidoPendiente, { descuento, propina, puntos_canjear, cupon_codigo, items: itemsCupon });
+    let pago_qr;
+    try {
+      pago_qr = await iniciarPagoQr(pedidoPendiente, { descuento, propina, puntos_canjear, cupon_codigo, items: itemsCupon });
+    } catch (err) {
+      // Sin QR el pedido no existe para nadie (no se avisó a cocina ni se
+      // cobró): se borra, para que reintentar el cobro no lo duplique.
+      await _borrarPedidoSinCobrar(pedidoId);
+      throw err;
+    }
     emitir('restaurante:actualizar', { tipo: 'pedido_nuevo' }, sucursal_id);
     return { pedido: await obtener(pedidoId), pago_qr };
   }
@@ -1342,5 +1471,6 @@ module.exports = {
   listar, listarCocina, obtener, misVentasHoy, reimprimir, crear, crearCompleta, agregarItem, actualizarItem, eliminarItem,
   cobrar, cancelar, marcarListo, marcarEntregado,
   consultarEstadoPagoQr, cancelarPagoQr, procesarWebhookPagoQr, revertirPagosQrVencidos,
-  recalcularTotal: _recalcularTotal, emitirAnulacionCocina, verificarAlcance: _verificarAlcance,
+  procesarNotificacionBaneco, confirmarPagoQrManual, listarPagosQrPorConfirmar,
+  recalcularTotal: _recalcularTotal, emitirAnulacionCocina, verificarAlcance: _verificarAlcance, qrConfirmaSolo,
 };

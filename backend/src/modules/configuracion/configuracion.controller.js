@@ -1,4 +1,5 @@
 const svc = require('./configuracion.service');
+const banecoClient = require('../../integrations/baneco/baneco.client');
 
 async function obtenerTodo(req, res, next) {
   try { res.json({ ok: true, datos: await svc.obtenerTodo() }); }
@@ -19,4 +20,19 @@ async function actualizar(req, res, next) {
   } catch (err) { next(err); }
 }
 
-module.exports = { obtenerTodo, obtenerPublica, actualizar };
+async function probarBaneco(_req, res, next) {
+  try { res.json({ ok: true, datos: await banecoClient.probarConexion() }); }
+  catch (err) { next(err); }
+}
+
+async function obtenerCobroQr(req, res, next) {
+  try { res.json({ ok: true, datos: await svc.obtenerCobroQr({ puedeConfigurar: req.usuario.permisos.includes('pagos_qr.configurar') }) }); }
+  catch (err) { next(err); }
+}
+
+async function guardarCobroQr(req, res, next) {
+  try { res.json({ ok: true, datos: await svc.guardarCobroQr(req.usuario.id, req.body || {}) }); }
+  catch (err) { next(err); }
+}
+
+module.exports = { obtenerTodo, obtenerPublica, actualizar, probarBaneco, obtenerCobroQr, guardarCobroQr };

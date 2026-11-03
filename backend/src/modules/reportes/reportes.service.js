@@ -669,8 +669,28 @@ async function finanzasSerie(filtros = {}, alcance) {
     .sort((a, b) => a.fecha.localeCompare(b.fecha));
 }
 
+// Mapa de calor: ventas por día de la semana (0 = lunes … 6 = domingo) y hora
+// local de Bolivia. Agrupado en JS por el mismo motivo que finanzasSerie.
+async function ventasMapaCalor(filtros = {}, alcance) {
+  const pedidos = await Pedido.findAll({ where: _whereVentas(filtros, alcance), attributes: ['total', 'creado_en'], raw: true });
+  const celdas = new Map();
+  pedidos.forEach((p) => {
+    const local = new Date(new Date(p.creado_en).getTime() - 4 * 60 * 60 * 1000);
+    const dia = (local.getUTCDay() + 6) % 7;
+    const hora = local.getUTCHours();
+    const clave = `${dia}-${hora}`;
+    if (!celdas.has(clave)) celdas.set(clave, { dia, hora, total: 0, pedidos: 0 });
+    const c = celdas.get(clave);
+    c.total += parseFloat(p.total || 0);
+    c.pedidos += 1;
+  });
+  return Array.from(celdas.values())
+    .map((c) => ({ ...c, total: Math.round(c.total * 100) / 100 }))
+    .sort((a, b) => a.dia - b.dia || a.hora - b.hora);
+}
+
 module.exports = {
-  ventas, ventasResumen, ventasProductos, ventasVariantes,
+  ventas, ventasResumen, ventasProductos, ventasVariantes, ventasMapaCalor,
   inventario, inventarioResumen,
   compras, comprasResumen,
   caja, cajaResumen,

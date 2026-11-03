@@ -7,7 +7,8 @@
     "start": "node src/server.js",
     "dev": "nodemon src/server.js",
     "test": "jest --runInBand",
-    "seed": "node database/seeds/seed.js"
+    "seed": "node database/seeds/seed.js",
+    "test:preparar": "node database/preparar-test.js"
   },
   "jest": {
     "testEnvironment": "node",
@@ -23,13 +24,13 @@
     "bcryptjs": "^3.0.3",
     "cors": "^2.8.6",
     "dotenv": "^17.4.2",
-    "express": "^4.19.0",
+    "express": "^4.22.3",
     "express-validator": "^7.3.2",
     "jsonwebtoken": "^9.0.3",
     "multer": "^2.2.0",
     "mysql2": "^3.22.5",
     "node-cron": "^4.6.0",
-    "nodemailer": "^9.0.5",
+    "nodemailer": "^10.3.1",
     "sequelize": "^6.37.8",
     "socket.io": "^4.8.3"
   },

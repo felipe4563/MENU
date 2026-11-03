@@ -50,6 +50,28 @@ describe('Reportes filtrados por sucursal', () => {
     expect(res.body.datos.filas.find(p => p.id === pedidoOtraSucursalId)).toBeUndefined();
   });
 
+  it('el mapa de calor agrupa las ventas de la propia sucursal por día y hora de Bolivia', async () => {
+    const ahora = new Date(Date.now() - 4 * 60 * 60 * 1000);
+    const hoy = ahora.toISOString().slice(0, 10);
+    const dia = (ahora.getUTCDay() + 6) % 7;
+    const hora = ahora.getUTCHours();
+
+    const res = await request(app)
+      .get('/api/v1/reportes/ventas/mapa-calor')
+      .query({ desde: hoy, hasta: hoy })
+      .set('Authorization', `Bearer ${adminToken}`);
+
+    expect(res.status).toBe(200);
+    const celda = res.body.datos.find((c) => c.dia === dia && c.hora === hora);
+    expect(celda).toBeDefined();
+    expect(celda.pedidos).toBeGreaterThanOrEqual(1);
+    // El pedido de la otra sucursal (mismo momento) no suma: las ventas del
+    // admin de esta hora coinciden con las del reporte de ventas filtrado.
+    const ventas = await request(app).get('/api/v1/reportes/ventas').query({ desde: hoy, hasta: hoy, limite: 0 }).set('Authorization', `Bearer ${adminToken}`);
+    const deEstaHora = ventas.body.datos.filas.filter((p) => new Date(new Date(p.creado_en).getTime() - 4 * 3600000).getUTCHours() === hora);
+    expect(celda.pedidos).toBe(deEstaHora.length);
+  });
+
   it('el reporte de ventas incluye el objeto sucursal en cada fila', async () => {
     const res = await request(app)
       .get('/api/v1/reportes/ventas')

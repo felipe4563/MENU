@@ -100,4 +100,14 @@ async function cancelarPagoQr(req, res, next) {
   catch (err) { next(err); }
 }
 
-module.exports = { listar, obtener, misVentasHoy, reimprimir, crear, crearCompleta, agregarItem, actualizarItem, eliminarItem, cobrar, cancelar, listarCocina, marcarListo, marcarEntregado, estadoPagoQr, cancelarPagoQr };
+async function confirmarPagoQr(req, res, next) {
+  try { res.json({ ok: true, datos: await svc.confirmarPagoQrManual(req.params.id, req.usuario.id, _alcance(req)) }); }
+  catch (err) { next(err); }
+}
+
+async function pagosQrPorConfirmar(req, res, next) {
+  try { res.json({ ok: true, datos: await svc.listarPagosQrPorConfirmar(_alcance(req)) }); }
+  catch (err) { next(err); }
+}
+
+module.exports = { listar, obtener, misVentasHoy, reimprimir, crear, crearCompleta, agregarItem, actualizarItem, eliminarItem, cobrar, cancelar, listarCocina, marcarListo, marcarEntregado, estadoPagoQr, cancelarPagoQr, confirmarPagoQr, pagosQrPorConfirmar };

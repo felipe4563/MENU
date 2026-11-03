@@ -208,6 +208,9 @@ async function imprimirCierre(datos, origen) {
 // ── Canal 1: socket.io remoto (respaldo — funciona aunque esta PC no sea la que vendió) ──
 
 const socket = io(config.servidor, {
+  // Clave del agente (AGENTE_IMPRESION_CLAVE del servidor). Sin clave el
+  // servidor solo lo acepta si no tiene una configurada.
+  auth: config.clave_agente ? { clave_agente: config.clave_agente } : {},
   reconnection: true,
   reconnectionDelay: 1500,
   reconnectionAttempts: Infinity,

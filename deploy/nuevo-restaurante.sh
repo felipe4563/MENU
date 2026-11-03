@@ -65,6 +65,22 @@ CODEPAY_SECRET_KEY=
 CODEPAY_NOTIFICATION_SECRET=
 CODEPAY_SANDBOX_PUBLIC_KEY=
 CODEPAY_SANDBOX_SECRET_KEY=
+
+# Cifra en la base la cuenta y credenciales del banco que cargue el dueño.
+CONFIG_SECRET=$(openssl rand -hex 32)
+
+# Banco Económico (QR Connect): si se completa acá, nadie lo ve ni lo cambia
+# desde la app. Si se deja vacío, el dueño lo carga en Ajustes › Cobro con QR.
+BANECO_URL=https://apimktdesa.baneco.com.bo/ApiGateway
+BANECO_USUARIO=
+BANECO_PASSWORD=
+BANECO_AES_KEY=
+BANECO_CUENTA=
+BANECO_SUCURSAL=
+
+# Clave del agente de impresión (ver backend/.env.example). Para exigirla:
+#   AGENTE_IMPRESION_CLAVE=$(openssl rand -hex 24)  y la misma en el config.json del agente.
+AGENTE_IMPRESION_CLAVE=
 EOF
   umask 022
   echo "==> Creado ${archivo} (puerto ${puerto})"

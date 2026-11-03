@@ -34,11 +34,18 @@ const insumosRoutes = require('./modules/insumos/insumos.routes');
 const autoservicioRoutes = require('./modules/autoservicio/autoservicio.routes');
 const clientePublicoRoutes = require('./modules/clientePublico/clientePublico.routes');
 const codepayWebhookRoutes = require('./webhooks/codepay.webhook.routes');
+const banecoWebhookRoutes = require('./webhooks/baneco.webhook.routes');
 const impresionRoutes = require('./modules/impresion/impresion.routes');
 const devolucionesRoutes = require('./modules/devoluciones/devoluciones.routes');
 const personalRoutes = require('./modules/personal/personal.routes');
 
 const app = express();
+
+// En producción hay dos nginx delante (el del VPS y el del contenedor del
+// frontend): sin esto req.ip sería el del nginx y el límite de intentos
+// frenaría a todos juntos.
+app.set('trust proxy', Number(process.env.TRUST_PROXY ?? (process.env.NODE_ENV === 'production' ? 2 : 0)));
+app.disable('x-powered-by');
 
 app.use(cors({
   origin: process.env.CORS_ORIGIN || 'http://localhost:5173',
@@ -47,13 +54,18 @@ app.use(cors({
 app.use(express.json({
   verify: (req, _res, buf) => { req.rawBody = buf; },
 }));
-app.use('/uploads', express.static(path.join(__dirname, '../uploads')));
+app.use('/uploads', (_req, res, next) => {
+  res.set({ 'X-Content-Type-Options': 'nosniff', 'Content-Security-Policy': "default-src 'none'; img-src 'self'; sandbox" });
+  next();
+}, express.static(path.join(__dirname, '../uploads')));
 
 app.get('/api/v1/salud', (_req, res) => {
   res.json({ ok: true, datos: 'API restaurante funcionando' });
 });
 
 app.use('/webhooks', codepayWebhookRoutes);
+// Ruta fija que exige Banco Económico para avisar pagos de QR.
+app.use('/api/qrsimple', banecoWebhookRoutes);
 
 app.use('/api/v1/auth', authRoutes);
 app.use('/api/v1/roles', rolesRoutes);

@@ -245,21 +245,18 @@ describe('Caja — modo de cierre directo/ciego y tolerancia', () => {
 
     const rol = await Rol.findOne({ where: { nombre: 'Cajero' } });
     const hash = await bcrypt.hash('clave123', 10);
-    const usuario = await Usuario.create({ rol_id: rol.id, nombre: 'Tolerancia Cierre Test', email: 'tolerancia-cierre-test@restaurante.com', contrasena: hash });
-    await usuario.addSucursal(sucursalDirecta);
-    await usuario.addSucursal(sucursalCiega);
-    usuarioId = usuario.id;
+    // Un usuario por sucursal: con sesión única, dos logins del mismo usuario
+    // dejarían inválido el primer token.
+    const directo = await Usuario.create({ rol_id: rol.id, nombre: 'Tolerancia Cierre Test', email: 'tolerancia-cierre-test@restaurante.com', contrasena: hash });
+    await directo.addSucursal(sucursalDirecta);
+    const ciego = await Usuario.create({ rol_id: rol.id, nombre: 'Tolerancia Cierre Ciego Test', email: 'tolerancia-cierre-ciego-test@restaurante.com', contrasena: hash });
+    await ciego.addSucursal(sucursalCiega);
+    usuarioId = [directo.id, ciego.id];
 
-    // El usuario tiene acceso a dos sucursales, así que /auth/login devuelve
-    // requiere_sucursal + pre_token en vez de un token directo — hay que
-    // elegir sucursal explícitamente, una vez por cada una, para tener un
-    // token con el sucursal_id correcto al abrir cada caja.
-    const login = await request(app).post('/api/v1/auth/login').send({ email: 'tolerancia-cierre-test@restaurante.com', contrasena: 'clave123' });
-    const preToken = login.body.datos.pre_token;
-    const eligeDirecta = await request(app).post('/api/v1/auth/login/sucursal').send({ pre_token: preToken, sucursal_id: sucursalDirecta.id });
-    tokenDirecta = eligeDirecta.body.datos.token;
-    const eligeCiega = await request(app).post('/api/v1/auth/login/sucursal').send({ pre_token: preToken, sucursal_id: sucursalCiega.id });
-    tokenCiega = eligeCiega.body.datos.token;
+    const loginDirecto = await request(app).post('/api/v1/auth/login').send({ email: 'tolerancia-cierre-test@restaurante.com', contrasena: 'clave123' });
+    tokenDirecta = loginDirecto.body.datos.token;
+    const loginCiego = await request(app).post('/api/v1/auth/login').send({ email: 'tolerancia-cierre-ciego-test@restaurante.com', contrasena: 'clave123' });
+    tokenCiega = loginCiego.body.datos.token;
   });
 
   afterAll(async () => {
