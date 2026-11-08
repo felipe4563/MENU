@@ -5,14 +5,15 @@
 // armado por print-agent/agent.js, que no imprime logo (queda fuera de este
 // cambio — se puede agregar ahí después con el mismo criterio si hace falta).
 
-function cargarImagen(url) {
-  return new Promise((resolve, reject) => {
-    const img = new Image();
-    img.crossOrigin = 'anonymous';
-    img.onload = () => resolve(img);
-    img.onerror = () => reject(new Error('No se pudo cargar el logo: ' + url));
-    img.src = url;
-  });
+// Se descarga con fetch (no con <img crossOrigin>): si el mismo logo ya se
+// mostró en la página como <img> normal, Chrome puede reusar esa copia sin
+// permiso CORS y el canvas queda "contaminado" — el ticket salía sin logo y
+// sin avisar.
+async function cargarImagen(url) {
+  const res = await fetch(url, { mode: 'cors', cache: 'no-cache' });
+  if (!res.ok) throw new Error(`No se pudo descargar el logo (${res.status}).`);
+  const img = await createImageBitmap(await res.blob());
+  return img;
 }
 
 // Encaja el logo dentro de un cuadro de `maxAnchoPx` x `maxAltoPx` sin

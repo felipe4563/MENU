@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { NavLink, Outlet, useLocation, useNavigate } from 'react-router-dom';
 import { useQueryClient } from '@tanstack/react-query';
-import { MoreHorizontal, Search, LogOut, Moon, Sun, Monitor, UserRound, Clock, WifiOff } from 'lucide-react';
+import { MoreHorizontal, Search, LogOut, Moon, Sun, Monitor, UserRound, Clock, WifiOff, Bluetooth, ArrowLeft } from 'lucide-react';
 import { useAuthStore } from '../../store/authStore';
 import { useTemaStore } from '../../store/temaStore';
 import { usePermisos } from '../../hooks/usePermisos';
@@ -15,6 +15,7 @@ import Hoja from '../ui/Hoja';
 import CambioContrasena from './CambioContrasena';
 import ActualizarApp from './ActualizarApp';
 import CocinaPendienteBT from './CocinaPendienteBT';
+import ImpresoraDispositivo from './ImpresoraDispositivo';
 import { useEnLinea } from '../../hooks/useEnLinea';
 
 function Marca({ compacto }) {
@@ -45,6 +46,16 @@ function MenuUsuario({ onCerrar }) {
   const navigate = useNavigate();
   const qc = useQueryClient();
   const ir = (to) => { onCerrar(); navigate(to); };
+  const [verImpresora, setVerImpresora] = useState(false);
+
+  if (verImpresora) {
+    return (
+      <Hoja onCerrar={onCerrar} ancho="max-w-sm" titulo="Impresora de este dispositivo" subtitulo="Para cajas que imprimen por Bluetooth directo.">
+        <button className="btn-fantasma -ml-3 mb-3" onClick={() => setVerImpresora(false)}><ArrowLeft className="w-4 h-4" /> Volver</button>
+        <ImpresoraDispositivo compacto />
+      </Hoja>
+    );
+  }
 
   return (
     <Hoja onCerrar={onCerrar} ancho="max-w-sm">
@@ -58,6 +69,7 @@ function MenuUsuario({ onCerrar }) {
       <div className="space-y-1">
         <button className="btn-fantasma w-full justify-start" onClick={() => ir('/perfil')}><UserRound className="w-4 h-4" /> Mi perfil</button>
         <button className="btn-fantasma w-full justify-start" onClick={() => ir('/mi-asistencia')}><Clock className="w-4 h-4" /> Marcar asistencia</button>
+        <button className="btn-fantasma w-full justify-start" onClick={() => setVerImpresora(true)}><Bluetooth className="w-4 h-4" /> Impresora de este dispositivo</button>
       </div>
       <p className="etiqueta mt-4">Apariencia</p>
       <div className="grid grid-cols-3 gap-2">

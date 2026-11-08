@@ -1,10 +1,11 @@
-// Impresión Bluetooth vía RawBT (app de Android que ya sabe emparejarse y
-// hablarle a impresoras térmicas por Bluetooth). No hace falta Web Bluetooth
-// ni ninguna app propia: se arman los bytes ESC/POS acá mismo (ver escpos.js)
-// y se disparan como una URL con esquema `rawbt:`, que Android le pasa
-// automáticamente a RawBT si está instalado — mismo mecanismo que "compartir"
-// a otra app.
-import { buildCaja, buildCocina, LOGO_MAX_PX } from './escpos';
+// Impresión Bluetooth. Los bytes ESC/POS se arman acá (ver escpos.js) y salen
+// por uno de dos caminos, según la caja:
+// - 'directo': Web Bluetooth desde el navegador (ver bluetoothDirecto.js).
+// - 'rawbt': una URL `rawbt:` que Android le pasa a la app RawBT si está
+//   instalada — mismo mecanismo que "compartir" a otra app.
+import { Esc, buildCaja, buildCocina, buildCierre, LOGO_MAX_PX } from './escpos';
+import { emparejar, imprimirDirecto } from './bluetoothDirecto';
+import { avisar } from '../components/ui/Aviso';
 import { logoAEscPos } from './logoEscPos';
 import { logoSrc } from '../api/configuracion';
 
@@ -12,16 +13,28 @@ import { logoSrc } from '../api/configuracion';
 // (leer imagen + canvas + recorrer píxeles) en cada venta. El tamaño del
 // logo (~30x30mm, ver LOGO_MAX_PX) es el mismo sin importar el ancho de
 // papel de la caja, así que no hace falta separar la caché por ancho.
-let _logoCache = null; // { url, promise }
+// Solo se guarda cuando sale bien: si falla una vez (red, CORS), el próximo
+// ticket lo vuelve a intentar en vez de quedar sin logo hasta recargar.
+let _logoCache = null; // { url, logo }
 
-function obtenerLogoRasterizado(cfg) {
+async function cargarLogo(cfg) {
   const url = logoSrc(cfg?.logo);
-  if (!url) return Promise.resolve(null);
-  if (_logoCache?.url === url) return _logoCache.promise;
-  // Si falla (imagen corrupta, CORS, etc.) el ticket igual sale, solo sin logo.
-  const promise = logoAEscPos(url, LOGO_MAX_PX, LOGO_MAX_PX).catch(() => null);
-  _logoCache = { url, promise };
-  return promise;
+  if (!url) return { logo: null, error: 'El negocio no tiene logo cargado.' };
+  if (_logoCache?.url === url) return { logo: _logoCache.logo };
+  try {
+    const logo = await logoAEscPos(url, LOGO_MAX_PX, LOGO_MAX_PX);
+    _logoCache = { url, logo };
+    return { logo };
+  } catch (e) {
+    console.warn('Ticket sin logo:', e);
+    return { logo: null, error: e?.message || 'No se pudo preparar el logo.' };
+  }
+}
+
+// El ticket igual sale aunque el logo falle; la caja puede apagar el logo.
+async function obtenerLogoRasterizado(cfg, imprimirLogo = true) {
+  if (!imprimirLogo) return null;
+  return (await cargarLogo(cfg)).logo;
 }
 
 function bytesABase64(bytes) {
@@ -42,9 +55,52 @@ function dispararRawBT(bytes) {
   setTimeout(() => a.remove(), 1000);
 }
 
+// La caja elige cómo se conecta su impresora Bluetooth (Ajustes › Cajas):
+// 'directo' (Web Bluetooth, sin apps) o 'rawbt' (la app de Android). Los
+// bytes del ticket son los mismos; solo cambia por dónde salen.
+async function enviar(bytes, conexion, que) {
+  if (conexion !== 'directo') { dispararRawBT(bytes); return true; }
+  try {
+    await imprimirDirecto(bytes);
+    return true;
+  } catch (e) {
+    // Sin impresora en este aparato: el botón abre la lista del navegador
+    // (necesita el toque) y después imprime lo que quedó pendiente.
+    const falta = e.codigo === 'SIN_IMPRESORA' || e.codigo === 'OLVIDADA';
+    const reintentar = falta
+      ? () => emparejar().then(() => enviar(bytes, conexion, que)).catch((err) => err.codigo !== 'CANCELADO' && avisar.error(err.message))
+      : () => enviar(bytes, conexion, que);
+    avisar.error(`No se pudo imprimir ${que}. ${e.codigo === 'SIN_IMPRESORA' ? 'Este dispositivo no tiene la impresora Bluetooth conectada.' : e.message}`, {
+      duracion: 12000,
+      accion: e.codigo === 'SIN_SOPORTE' ? undefined : { texto: falta ? 'Conectar' : 'Reintentar', onClick: reintentar },
+    });
+    return false;
+  }
+}
+
 export async function imprimirBluetoothCaja(datosCaja) {
-  const logo = await obtenerLogoRasterizado(datosCaja.config);
-  dispararRawBT(buildCaja(datosCaja, logo));
+  const logo = await obtenerLogoRasterizado(datosCaja.config, datosCaja.imprimir_logo !== false);
+  return enviar(buildCaja(datosCaja, logo), datosCaja.conexion_bluetooth, 'el ticket');
+}
+
+// Resumen del cierre de turno, por la impresora Bluetooth de esa caja.
+export async function imprimirBluetoothCierre(reporte, config) {
+  const caja = reporte.sesion?.caja || {};
+  const logo = await obtenerLogoRasterizado(config, caja.imprimir_logo !== 0);
+  return enviar(buildCierre(reporte, config, caja.ancho_papel_bluetooth || '80mm', logo), caja.conexion_bluetooth, 'el resumen');
+}
+
+// Ticket corto para probar la impresora desde "Impresora de este dispositivo".
+// Devuelve si llevó logo, o por qué no, para mostrarlo en pantalla.
+export async function imprimirPrueba({ config, ancho = '80mm', nombreImpresora, conLogo = true }) {
+  const { logo, error } = conLogo ? await cargarLogo(config) : { logo: null };
+  const t = new Esc(ancho).init().charset();
+  if (logo) t.center().imagen(logo.anchoBytes, logo.alto, logo.datos).lf();
+  t.center().bold(true).dbl().line(config?.nombre_negocio || 'Prueba').normal().bold(false);
+  t.lf().line('Prueba de impresión').line(nombreImpresora || '').line(new Date().toLocaleString('es-BO'));
+  t.lf().line('Si lees esto bien, la impresora').line('está lista para los tickets.').lf(3).cut();
+  await imprimirDirecto(t.build());
+  return { conLogo: Boolean(logo), errorLogo: conLogo ? error : null, bytesLogo: logo ? logo.datos.length : 0 };
 }
 
 // Cuando hay que imprimir también el de cocina, este NO se dispara solo
@@ -54,5 +110,5 @@ export async function imprimirBluetoothCaja(datosCaja) {
 // "Imprimir cocina" (BotonCocinaPendiente.jsx) cuando ya cortó el ticket de
 // caja y está lista/o — este export es lo que ese botón termina llamando.
 export async function imprimirBluetoothCocina(datosCocina) {
-  dispararRawBT(buildCocina(datosCocina));
+  return enviar(buildCocina(datosCocina), datosCocina.conexion_bluetooth, 'la comanda');
 }

@@ -584,6 +584,8 @@ describe('Caja — devoluciones en efectivo restan del esperado', () => {
     expect(Number(get.body.datos.efectivo_esperado)).toBe(esperado);
 
     const rep = await request(app).get(`/api/v1/caja/${sesionId}/reporte`).set(auth);
+    // El resumen sale por la misma impresora que la caja (agente o Bluetooth).
+    expect(rep.body.datos.sesion.caja.modo_impresion).toBeDefined();
     expect(Number(rep.body.datos.efectivo_esperado)).toBe(esperado);
 
     const cierre = await request(app).post(`/api/v1/caja/${sesionId}/cerrar`).set(auth).send({ monto_cierre: esperado });

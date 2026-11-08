@@ -1,6 +1,6 @@
 import { useParams, useNavigate } from 'react-router-dom';
 import { useMutation, useQuery } from '@tanstack/react-query';
-import { ArrowLeft, Printer } from 'lucide-react';
+import { ArrowLeft, Bluetooth, Printer } from 'lucide-react';
 import { getReporte } from '../../api/caja';
 import { reimprimirVenta } from '../../api/ventas';
 import { useConfig, useMoneda } from '../../hooks/useConfig';
@@ -41,21 +41,48 @@ export default function ReporteCierrePage() {
   const totalVentas = metodos.reduce((a, m) => a + n(m.total), 0);
   const dif = n(s.diferencia);
   const tol = n(s.sucursal?.tolerancia_cierre_caja);
+  const porBluetooth = s.caja?.modo_impresion === 'bluetooth';
   const tonoDif = Math.abs(dif) < 0.005 ? 'text-hierba' : Math.abs(dif) <= tol ? 'text-tinta' : 'text-locoto';
 
+  // En pantallas anchas va a la derecha, arriba de los pedidos (columnas
+  // parejas); en las demás, debajo del resumen.
+  const max = n(productos[0]?.total_cantidad) || 1;
+  const masVendido = (
+    <section className="ficha">
+      <h2 className="px-5 pt-4 font-display font-semibold text-lg">Lo más vendido</h2>
+      {productos.length === 0 ? <p className="px-5 py-6 text-sm text-tenue">No hubo ventas.</p> : (
+        <ul className="px-5 py-3 grid 2xl:grid-cols-2 gap-x-8">
+          {productos.map((p) => (
+            <li key={p.nombre} className="py-2.5 border-b border-linea">
+              <div className="flex items-baseline gap-3 text-sm">
+                <span className="num font-bold w-8">{n(p.total_cantidad)}</span>
+                <span className="flex-1 truncate">{p.nombre}</span>
+                <span className="num">{dinero(p.total, moneda)}</span>
+              </div>
+              <div className="ml-11 mt-1.5 h-1.5 rounded-full bg-hundido overflow-hidden"><div className="h-full bg-aji rounded-full" style={{ width: `${(n(p.total_cantidad) / max) * 100}%` }} /></div>
+            </li>
+          ))}
+        </ul>
+      )}
+    </section>
+  );
+
   return (
-    <Pagina className="max-w-[1100px] pb-28 md:pb-8">
+    <Pagina className="pb-28 md:pb-8">
       <div className="flex items-center gap-2 mb-5">
         <button className="btn-icono btn-fantasma" onClick={() => navigate(-1)} aria-label="Volver"><ArrowLeft className="w-5 h-5" /></button>
         <div className="flex-1">
           <h1 className="text-2xl sm:text-3xl font-bold leading-tight">Cierre de turno</h1>
           <p className="text-sm text-tenue">{s.usuario?.nombre} · {fechaHora(s.abierto_en)} → {s.cerrado_en ? hora(s.cerrado_en) : 'abierto'}</p>
         </div>
-        <button className="btn-aji hidden md:inline-flex" onClick={() => imprimirCierreLocal(q.data, config)}><Printer className="w-4 h-4" /> Imprimir resumen</button>
+        <button className="btn-aji hidden md:inline-flex" onClick={() => imprimirCierreLocal(q.data, config)}>
+          {porBluetooth ? <Bluetooth className="w-4 h-4" /> : <Printer className="w-4 h-4" />} Imprimir resumen
+        </button>
       </div>
 
-      <div className="grid lg:grid-cols-[380px_1fr] gap-5 items-start">
-        <section className="comanda rounded-t-2xl shadow-papel px-6 pt-6 lg:sticky lg:top-4">
+      <div className="grid lg:grid-cols-[minmax(320px,400px)_minmax(0,1fr)] gap-5 items-start">
+        <div className="space-y-5 min-w-0">
+        <section className="comanda rounded-t-2xl shadow-papel px-6 pt-6">
           <p className="text-center font-display font-extrabold text-xl">{config.nombre_negocio || 'Resumen'}</p>
           <p className="text-center text-xs text-tenue">Turno #{s.id}{s.sucursal?.nombre ? ` · ${s.sucursal.nombre}` : ''}</p>
           <div className="perforado my-4" />
@@ -91,33 +118,17 @@ export default function ReporteCierrePage() {
           )}
         </section>
 
-        <div className="space-y-5">
-          <section className="ficha">
-            <h2 className="px-5 pt-4 font-display font-semibold text-lg">Lo más vendido</h2>
-            {productos.length === 0 ? <p className="px-5 py-6 text-sm text-tenue">No hubo ventas.</p> : (
-              <ul className="px-5 py-3 divide-y divide-linea">
-                {productos.map((p) => {
-                  const max = n(productos[0].total_cantidad) || 1;
-                  return (
-                    <li key={p.nombre} className="py-2.5">
-                      <div className="flex items-baseline gap-3 text-sm">
-                        <span className="num font-bold w-8">{n(p.total_cantidad)}</span>
-                        <span className="flex-1">{p.nombre}</span>
-                        <span className="num">{dinero(p.total, moneda)}</span>
-                      </div>
-                      <div className="ml-11 mt-1.5 h-1.5 rounded-full bg-hundido overflow-hidden"><div className="h-full bg-aji rounded-full" style={{ width: `${(n(p.total_cantidad) / max) * 100}%` }} /></div>
-                    </li>
-                  );
-                })}
-              </ul>
-            )}
-          </section>
+          <div className="2xl:hidden">{masVendido}</div>
+        </div>
 
-          <section className="ficha">
+        <div className="space-y-5 min-w-0">
+          <div className="hidden 2xl:block">{masVendido}</div>
+          <section className="ficha min-w-0">
             <h2 className="px-5 pt-4 font-display font-semibold text-lg">Pedidos del turno <span className="text-tenue font-normal text-sm">· {pedidos.length}</span></h2>
-            <ul className="px-5 py-3 divide-y divide-linea">
+            {pedidos.length === 0 && <p className="px-5 py-6 text-sm text-tenue">No hubo pedidos en este turno.</p>}
+            <ul className="px-5 py-3 grid 2xl:grid-cols-2 gap-x-8">
               {pedidos.map((p) => (
-                <li key={p.id} className="py-2.5 flex items-center gap-3 text-sm">
+                <li key={p.id} className="py-2.5 flex items-center gap-3 text-sm border-b border-linea">
                   <span className="num text-tenue w-12">{hora(p.creado_en)}</span>
                   <span className="flex-1 truncate">{etiquetaDestino(p)} <span className="text-tenue">· {METODO[p.metodo_pago] ?? p.metodo_pago}</span></span>
                   <span className="num font-semibold">{dinero(n(p.total) - n(p.total_devuelto), moneda)}</span>
@@ -131,7 +142,7 @@ export default function ReporteCierrePage() {
 
       <div className="md:hidden fixed inset-x-0 bottom-16 p-3 flex gap-2 bg-fondo/90 backdrop-blur border-t border-linea">
         <button className="btn-borde flex-1" onClick={() => navigate('/caja')}>Volver a caja</button>
-        <button className="btn-aji flex-1" onClick={() => imprimirCierreLocal(q.data, config)}><Printer className="w-4 h-4" /> Imprimir</button>
+        <button className="btn-aji flex-1" onClick={() => imprimirCierreLocal(q.data, config)}>{porBluetooth ? <Bluetooth className="w-4 h-4" /> : <Printer className="w-4 h-4" />} Imprimir</button>
       </div>
     </Pagina>
   );

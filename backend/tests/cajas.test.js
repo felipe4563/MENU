@@ -62,6 +62,25 @@ describe('Cajas CRUD', () => {
     expect(res.body.datos.imprimir_ticket_cliente).toBe(0);
   });
 
+  it('una caja nueva con Bluetooth arranca en conexión directa y se puede pasar a RawBT', async () => {
+    const auth = { Authorization: `Bearer ${adminToken}` };
+    const nueva = await request(app).post('/api/v1/cajas').set(auth)
+      .send({ sucursal_id: sucursalTest.id, nombre: 'Caja BT Test', modo_impresion: 'bluetooth' });
+    expect(nueva.status).toBe(201);
+    expect(nueva.body.datos.conexion_bluetooth).toBe('directo');
+
+    const editada = await request(app).put(`/api/v1/cajas/${nueva.body.datos.id}`).set(auth).send({ conexion_bluetooth: 'rawbt' });
+    expect(editada.status).toBe(200);
+    expect(editada.body.datos.conexion_bluetooth).toBe('rawbt');
+
+    const mala = await request(app).put(`/api/v1/cajas/${nueva.body.datos.id}`).set(auth).send({ conexion_bluetooth: 'usb' });
+    expect(mala.status).toBe(400);
+
+    expect(nueva.body.datos.imprimir_logo).toBe(1);
+    const sinLogo = await request(app).put(`/api/v1/cajas/${nueva.body.datos.id}`).set(auth).send({ imprimir_logo: false });
+    expect(sinLogo.body.datos.imprimir_logo).toBe(0);
+  });
+
   it('rechaza crear una caja con sucursal_id inexistente', async () => {
     const res = await request(app)
       .post('/api/v1/cajas')

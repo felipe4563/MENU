@@ -44,6 +44,8 @@ async function obtener(id, alcance) {
       { model: Sucursal, as: 'sucursal', attributes: ['id', 'nombre', 'modo_cierre_caja', 'tolerancia_cierre_caja'] },
       { model: DetalleArqueo, as: 'detalle_arqueo' },
       { model: Gasto, as: 'gastos' },
+      // Cómo imprime esa caja: el resumen del cierre sale por el mismo canal.
+      { model: Caja, as: 'caja', attributes: ['id', 'nombre', 'modo_impresion', 'ancho_papel_bluetooth', 'conexion_bluetooth', 'imprimir_logo'] },
     ],
   });
   if (!s) throw Object.assign(new Error('Sesión no encontrada'), { status: 404 });

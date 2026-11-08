@@ -8,6 +8,8 @@ import { getCajasPublico } from '../../api/cajas';
 import { imprimirBluetoothCocina } from '../../utils/rawbt';
 import socket from '../../socket';
 import { SinPermiso } from '../../components/ui/piezas';
+import Hoja from '../../components/ui/Hoja';
+import ImpresoraDispositivo from '../../components/shell/ImpresoraDispositivo';
 import { cx } from '../../lib/util';
 
 const TTL_DEDUP_MS = 5 * 60_000; // mismo criterio que print-agent/agent.js
@@ -24,10 +26,11 @@ function useWakeLock() {
   }, []);
 }
 
-// Celular o tablet en cocina con impresora Bluetooth (RawBT): recibe las
+// Celular o tablet en cocina con impresora Bluetooth (directo o RawBT): recibe las
 // comandas por socket y las imprime sola. La pantalla no se apaga.
 export default function CocinaBluetoothPage() {
   const { tiene } = usePermisos();
+  const [verImpresora, setVerImpresora] = useState(false);
   const navigate = useNavigate();
   const sucursalId = useAuthStore((s) => s.usuario?.sucursal_activa?.id ?? null);
   const { data: cajas = [] } = useQuery({ queryKey: ['cajas-publico', sucursalId], queryFn: () => getCajasPublico(sucursalId), enabled: !!sucursalId });
@@ -69,8 +72,15 @@ export default function CocinaBluetoothPage() {
       <header className="flex items-center gap-3">
         <button className="btn-icono text-white/70 hover:bg-white/10" onClick={() => navigate('/cocina')} aria-label="Volver"><ArrowLeft className="w-5 h-5" /></button>
         <h1 className="text-2xl font-extrabold text-white flex-1">Impresora de cocina</h1>
-        <Bluetooth className={cx('w-6 h-6', caja ? 'text-hierba' : 'text-white/40')} />
+        <button className="btn h-10 bg-white/10 text-white" onClick={() => setVerImpresora(true)}>
+          <Bluetooth className={cx('w-5 h-5', caja ? 'text-hierba' : 'text-white/60')} /> Impresora
+        </button>
       </header>
+      {verImpresora && (
+        <Hoja onCerrar={() => setVerImpresora(false)} titulo="Impresora de este dispositivo" subtitulo="Para cajas que imprimen por Bluetooth directo." ancho="max-w-sm">
+          <ImpresoraDispositivo compacto />
+        </Hoja>
+      )}
       <label className="block">
         <span className="text-sm text-white/60">¿De qué caja imprime las comandas?</span>
         <select className="campo mt-1 bg-white/10 border-white/15 text-white" value={caja} onChange={(e) => { setCaja(e.target.value); localStorage.setItem(CLAVE_CAJA, e.target.value); }}>
@@ -78,7 +88,7 @@ export default function CocinaBluetoothPage() {
           {cajas.map((c) => <option key={c.id} value={c.id} className="text-tinta">{c.nombre}</option>)}
         </select>
       </label>
-      <p className="text-sm text-white/60">Deja esta pantalla abierta: las comandas se imprimen solas por Bluetooth con RawBT. La pantalla no se apagará mientras esté abierta.</p>
+      <p className="text-sm text-white/60">Deja esta pantalla abierta: las comandas se imprimen solas por Bluetooth (directo o con RawBT, según la caja). La pantalla no se apagará mientras esté abierta.</p>
       <section className="flex-1">
         <h2 className="font-display font-bold text-lg text-white mb-2">Impresas en esta sesión</h2>
         {impresos.length === 0 ? <p className="text-white/40 text-sm">Todavía nada.</p> : (

@@ -324,4 +324,52 @@ function buildCocina(data) {
   return t.build();
 }
 
-export { Esc, buildCaja, buildCocina };
+// Resumen del cierre de turno para impresora Bluetooth: mismos datos que
+// ticketCierreCaja.js (HTML) y el agente, en ESC/POS.
+function buildCierre(reporte, cfg = {}, ancho = '80mm', logo = null) {
+  const { sesion, ventas_por_metodo: metodos = [], productos_vendidos: productos = [], efectivo_esperado } = reporte;
+  const sym = cfg.simbolo_moneda || 'Bs.';
+  const n = (v) => parseFloat(v || 0);
+  const m = (v) => sym + ' ' + n(v).toFixed(2);
+  const fh = (f) => (f ? new Date(f).toLocaleString('es-BO', { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' }) : '-');
+  const METODO = { efectivo: 'Efectivo', qr: 'QR', app_externa: 'App externa' };
+  const efectivo = n(metodos.find((x) => x.metodo_pago === 'efectivo')?.total);
+  const totalVentas = metodos.reduce((a, x) => a + n(x.total), 0);
+  const dif = n(sesion.diferencia);
+
+  const t = new Esc(ancho);
+  t.init().charset();
+  if (logo) t.center().imagen(logo.anchoBytes, logo.alto, logo.datos).lf();
+  t.center().bold(true).line((cfg.nombre_negocio || 'RESTAURANTE').toUpperCase()).bold(false);
+  t.center().dblH().bold(true).line('CIERRE DE TURNO').normal().bold(false);
+  t.center().line('Turno #' + sesion.id + (sesion.sucursal?.nombre ? ' - ' + sesion.sucursal.nombre : ''));
+  t.rule('=');
+  t.left().cols('Cajero', sesion.usuario?.nombre || '-');
+  if (sesion.caja?.nombre) t.cols('Caja', sesion.caja.nombre);
+  t.cols('Apertura', fh(sesion.abierto_en)).cols('Cierre', fh(sesion.cerrado_en));
+  t.rule('-');
+  t.center().bold(true).line('VENTAS').bold(false).left();
+  metodos.forEach((x) => t.cols((METODO[x.metodo_pago] || x.metodo_pago) + ' (' + x.cantidad + ')', m(x.total)));
+  t.bold(true).cols('Total vendido', m(totalVentas)).bold(false);
+  t.rule('-');
+  t.center().bold(true).line('EFECTIVO EN CAJA').bold(false).left();
+  t.cols('Apertura', m(sesion.monto_apertura)).cols('+ Efectivo vendido', m(efectivo));
+  t.cols('- Gastos', m(sesion.total_gastos)).cols('- Devoluciones', m(sesion.total_devoluciones));
+  t.bold(true).cols('Esperado', m(efectivo_esperado)).cols('Contado', sesion.monto_cierre != null ? m(sesion.monto_cierre) : '-').bold(false);
+  t.rule('=');
+  t.dblH().bold(true).cols('DIFERENCIA', (dif > 0 ? '+' : '') + dif.toFixed(2)).normal().bold(false);
+  if (sesion.nota_diferencia) t.line('Motivo: ' + sesion.nota_diferencia);
+  if ((sesion.gastos || []).length) {
+    t.rule('-').center().bold(true).line('GASTOS').bold(false).left();
+    sesion.gastos.forEach((g) => t.cols(g.descripcion, n(g.monto).toFixed(2)));
+  }
+  if (productos.length) {
+    t.rule('-').center().bold(true).line('PRODUCTOS VENDIDOS').bold(false).left();
+    productos.forEach((p) => t.cols(n(p.total_cantidad) + ' ' + p.nombre, n(p.total).toFixed(2)));
+  }
+  t.rule('=');
+  t.center().line('Impreso ' + fh(new Date())).lf(3).cut();
+  return t.build();
+}
+
+export { Esc, buildCaja, buildCocina, buildCierre };
