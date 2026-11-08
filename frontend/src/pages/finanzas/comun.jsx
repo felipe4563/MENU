@@ -1,6 +1,10 @@
-import { useState } from 'react';
-import { ChevronLeft, ChevronRight, Download } from 'lucide-react';
+import { useEffect, useRef, useState } from 'react';
+import { ChevronLeft, ChevronRight, Download, FileDown, Loader2, Printer } from 'lucide-react';
 import { Segmentado } from '../../components/ui/piezas';
+import { avisar } from '../../components/ui/Aviso';
+import { useConfig } from '../../hooks/useConfig';
+import { descargarPdf, imprimirReporte } from '../../utils/reporteDocumento';
+import { errorDe } from '../../lib/util';
 
 const iso = (d) => new Date(d.getTime() - d.getTimezoneOffset() * 60000).toISOString().slice(0, 10);
 
@@ -51,6 +55,50 @@ export function exportarCsv(nombre, columnas, filas) {
 
 export function BotonCsv({ onClick, disabled }) {
   return <button className="btn-borde h-9" onClick={onClick} disabled={disabled}><Download className="w-4 h-4" /> Excel</button>;
+}
+
+// Botón "Exportar": PDF tamaño carta o imprimir en impresora normal.
+// `armar` es async y devuelve la definición del reporte (ver reporteDocumento.js);
+// trae todos los datos del rango, no solo la página que se ve.
+export function BotonExportar({ armar, disabled }) {
+  const { config } = useConfig();
+  const [abierto, setAbierto] = useState(false);
+  const [ocupado, setOcupado] = useState(null);
+  const ref = useRef(null);
+  useEffect(() => {
+    if (!abierto) return undefined;
+    const fuera = (e) => { if (!ref.current?.contains(e.target)) setAbierto(false); };
+    const esc = (e) => { if (e.key === 'Escape') setAbierto(false); };
+    document.addEventListener('pointerdown', fuera);
+    document.addEventListener('keydown', esc);
+    return () => { document.removeEventListener('pointerdown', fuera); document.removeEventListener('keydown', esc); };
+  }, [abierto]);
+
+  const hacer = async (que) => {
+    setAbierto(false);
+    setOcupado(que);
+    try {
+      const def = await armar();
+      if (que === 'pdf') await descargarPdf(def, config);
+      else await imprimirReporte(def, config);
+    } catch (e) {
+      avisar.error(errorDe(e, 'No se pudo armar el reporte.'));
+    } finally { setOcupado(null); }
+  };
+
+  return (
+    <div className="relative" ref={ref}>
+      <button className="btn-borde h-9" disabled={disabled || !!ocupado} onClick={() => setAbierto(!abierto)} aria-haspopup="menu" aria-expanded={abierto}>
+        {ocupado ? <Loader2 className="w-4 h-4 animate-spin" /> : <FileDown className="w-4 h-4" />} Exportar
+      </button>
+      {abierto && (
+        <div role="menu" className="absolute right-0 z-30 mt-1.5 w-52 rounded-xl bg-papel border border-linea shadow-flota p-1 animate-entra">
+          <button role="menuitem" className="w-full flex items-center gap-2.5 rounded-lg px-3 h-10 text-sm font-medium hover:bg-hundido" onClick={() => hacer('pdf')}><FileDown className="w-4 h-4" /> Descargar PDF</button>
+          <button role="menuitem" className="w-full flex items-center gap-2.5 rounded-lg px-3 h-10 text-sm font-medium hover:bg-hundido" onClick={() => hacer('imprimir')}><Printer className="w-4 h-4" /> Imprimir</button>
+        </div>
+      )}
+    </div>
+  );
 }
 
 export function Paginador({ pagina, total, onCambio }) {

@@ -6,7 +6,8 @@ import { getGananciaPlatos } from '../../api/reportes';
 import { usePermisos } from '../../hooks/usePermisos';
 import { useMoneda } from '../../hooks/useConfig';
 import { Cargando, Encabezado, Pagina, Segmentado, SinPermiso, Vacio, Insignia } from '../../components/ui/piezas';
-import { useRango, SelectorRango, exportarCsv, BotonCsv } from './comun';
+import { useRango, SelectorRango, exportarCsv, BotonCsv, BotonExportar } from './comun';
+import { armarGananciaPlatos } from './exportes';
 import { cx, dinero } from '../../lib/util';
 
 // Lo sano en un restaurante: que los ingredientes no pasen del 30–35% del
@@ -105,7 +106,10 @@ export default function GananciaPlatosPage() {
   return (
     <Pagina>
       <Encabezado titulo="Ganancia por plato" texto={`Cuánto cuesta preparar cada plato contra lo que cobras. Del ${r.rango.desde} al ${r.rango.hasta}.`}>
-        <div className="w-full sm:w-auto sm:ml-auto"><SelectorRango r={r} /></div>
+        <div className="w-full sm:w-auto sm:ml-auto flex flex-wrap items-center gap-2">
+          <SelectorRango r={r} />
+          <BotonExportar disabled={!datos.data} armar={() => armarGananciaPlatos(r.rango, moneda)} />
+        </div>
       </Encabezado>
 
       {datos.isLoading ? <Cargando /> : !datos.data ? null : (

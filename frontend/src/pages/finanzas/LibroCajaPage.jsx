@@ -9,7 +9,8 @@ import Hoja from '../../components/ui/Hoja';
 import { Buscador, Cargando, Campo, Encabezado, Interruptor, Pagina, Segmentado, SinPermiso, Vacio, Insignia } from '../../components/ui/piezas';
 import { numero } from '../../components/ui/formulario';
 import { avisar } from '../../components/ui/Aviso';
-import { useRango, SelectorRango, exportarCsv, BotonCsv, Paginador } from './comun';
+import { useRango, SelectorRango, exportarCsv, BotonCsv, BotonExportar, Paginador } from './comun';
+import { armarLibro } from './exportes';
 import { cx, dinero, errorDe, fechaHora } from '../../lib/util';
 
 const METODO = { efectivo: 'Efectivo', qr: 'QR', app_externa: 'App' };
@@ -74,6 +75,7 @@ export default function LibroCajaPage() {
             { titulo: 'Medio', valor: (m) => METODO[m.metodo_pago] ?? m.metodo_pago }, { titulo: 'Usuario', valor: (m) => m.usuario?.nombre }, { titulo: 'Monto', valor: (m) => Number(m.monto).toFixed(2) },
           ], todo.filas ?? []);
         }} />
+        <BotonExportar disabled={!filas.length} armar={() => armarLibro(filtros, moneda)} />
       </div>
       {lista.isLoading ? <Cargando /> : filas.length === 0 ? <Vacio Icono={BookOpen} titulo="Sin movimientos" /> : (
         <ul className="ficha divide-y divide-linea">

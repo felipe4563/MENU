@@ -5,7 +5,8 @@ import { getReporteVentasResumen, getReporteVentasProductos, getReporteVentas, g
 import { usePermisos } from '../../hooks/usePermisos';
 import { useMoneda } from '../../hooks/useConfig';
 import { Cargando, Encabezado, Pagina, Segmentado, SinPermiso, Vacio, Insignia } from '../../components/ui/piezas';
-import { useRango, SelectorRango, exportarCsv, BotonCsv, Paginador } from './comun';
+import { useRango, SelectorRango, exportarCsv, BotonCsv, BotonExportar, Paginador } from './comun';
+import { armarVentas, armarResultado, armarArqueos } from './exportes';
 import { MOTIVOS_DEVOLUCION } from '../../utils/ticketDevolucion';
 import { etiquetaDestino } from '../vender/datosCatalogo';
 import { PorHora, FormasPago } from '../hoy/graficos';
@@ -268,7 +269,10 @@ export default function ReportesPage() {
       <Encabezado titulo="Reportes" texto={`Del ${r.rango.desde} al ${r.rango.hasta}`} />
       <div className="flex flex-wrap gap-3 items-center mb-5">
         <Segmentado valor={tab} onCambio={setTab} opciones={[{ valor: 'ventas', etiqueta: 'Ventas' }, { valor: 'resultado', etiqueta: 'Ganancia' }, { valor: 'arqueos', etiqueta: 'Cierres de caja' }]} />
-        <div className="sm:ml-auto"><SelectorRango r={r} /></div>
+        <div className="sm:ml-auto flex flex-wrap items-center gap-2">
+          <SelectorRango r={r} />
+          <BotonExportar armar={() => (tab === 'ventas' ? armarVentas : tab === 'resultado' ? armarResultado : armarArqueos)(r.rango, moneda)} />
+        </div>
       </div>
       {tab === 'ventas' && <Ventas rango={r.rango} moneda={moneda} />}
       {tab === 'resultado' && <Resultado rango={r.rango} moneda={moneda} />}
