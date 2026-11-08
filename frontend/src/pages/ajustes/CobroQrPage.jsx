@@ -1,12 +1,12 @@
-import { useState } from 'react';
+import { forwardRef, useEffect, useRef, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { QrCode, ImageUp, Landmark, Copy, PlugZap, Loader2, CheckCircle2, AlertTriangle, Lock, ShieldCheck, Server } from 'lucide-react';
+import { QrCode, ImageUp, Landmark, Copy, PlugZap, Loader2, CheckCircle2, AlertTriangle, Lock, LockKeyhole, ShieldCheck, Server, Timer } from 'lucide-react';
 import { usePermisos } from '../../hooks/usePermisos';
 import { Cargando, Campo, Encabezado, Pagina, SinPermiso } from '../../components/ui/piezas';
 import { SubirImagen, urlImagen } from '../../components/ui/formulario';
 import Hoja from '../../components/ui/Hoja';
 import { avisar } from '../../components/ui/Aviso';
-import { getCobroQr, guardarCobroQr, probarBaneco, BASE_URL } from '../../api/configuracion';
+import { getCobroQr, guardarCobroQr, probarBaneco, crearPinPagos, desbloquearCobroQr, BASE_URL } from '../../api/configuracion';
 import { OpcionTarjeta } from './comun';
 import { cx, errorDe, fechaHora } from '../../lib/util';
 
@@ -20,12 +20,127 @@ const PROVEEDORES = [
 
 export default function CobroQrPage() {
   const { tiene } = usePermisos();
-  const q = useQuery({ queryKey: ['cobro-qr'], queryFn: getCobroQr, enabled: tiene('configuracion', 'ver') });
+  // El pase del PIN vive solo mientras la pantalla está abierta.
+  const [pase, setPase] = useState(null);
+  const q = useQuery({ queryKey: ['cobro-qr', pase?.pase ?? null], queryFn: () => getCobroQr(pase?.pase), enabled: tiene('configuracion', 'ver') });
+  const desbloqueado = Boolean(pase && q.data?.desbloqueado);
+
+  // Se vuelve a bloquear sola cuando vence el pase.
+  useEffect(() => {
+    if (!pase) return undefined;
+    const t = setTimeout(() => setPase(null), Math.max(0, new Date(pase.vence) - Date.now()));
+    return () => clearTimeout(t);
+  }, [pase]);
+
   if (!tiene('configuracion', 'ver')) return <SinPermiso />;
   if (q.isLoading || !q.data) return <Cargando />;
-  return q.data.puede_configurar
-    ? <Formulario key={JSON.stringify(q.data)} datos={q.data} />
-    : <SoloLectura datos={q.data} />;
+  if (!q.data.puede_configurar) return <SoloLectura datos={q.data} />;
+  if (!desbloqueado) return <Candado datos={q.data} onPase={setPase} />;
+  return <Formulario key={JSON.stringify(q.data)} datos={q.data} pase={pase} onBloquear={() => setPase(null)} />;
+}
+
+// ---------- Candado: PIN de pagos ----------
+
+// Seis casillas que en realidad son un solo campo: se puede pegar, borrar y
+// el celular abre el teclado de números.
+const EntradaPin = forwardRef(function EntradaPin({ valor, onCambio, etiqueta, ocultarEtiqueta, autoFocus, error, disabled }, ref) {
+  return (
+    <label className="block">
+      <span className={ocultarEtiqueta ? 'sr-only' : 'etiqueta'}>{etiqueta}</span>
+      <span className="relative block">
+        <input
+          ref={ref} autoFocus={autoFocus} readOnly={disabled}
+          className="peer absolute inset-0 z-10 w-full h-full opacity-0 cursor-text"
+          type="password" inputMode="numeric" autoComplete="off" maxLength={6}
+          value={valor} onChange={(e) => onCambio(e.target.value.replace(/\D/g, '').slice(0, 6))}
+          aria-invalid={error || undefined}
+        />
+        <span aria-hidden className="grid grid-cols-6 gap-2">
+          {Array.from({ length: 6 }, (_, i) => {
+            const lleno = i < valor.length;
+            return (
+              <span key={i} className={cx(
+                'h-14 rounded-xl border-2 grid place-items-center bg-white transition-colors',
+                error ? 'border-locoto' : lleno ? 'border-tinta' : 'border-linea',
+              )}>
+                {lleno && <span className="w-3 h-3 rounded-full bg-tinta" />}
+              </span>
+            );
+          })}
+        </span>
+        <span aria-hidden className="pointer-events-none absolute -inset-1 rounded-2xl ring-2 ring-aji/0 peer-focus:ring-aji/50 transition" />
+      </span>
+    </label>
+  );
+});
+
+function Candado({ datos, onPase }) {
+  const creando = !datos.pin_creado;
+  const [pin, setPin] = useState('');
+  const [repetido, setRepetido] = useState('');
+  const [contrasena, setContrasena] = useState('');
+  const [error, setError] = useState('');
+  const campoPin = useRef(null);
+
+  const abrir = useMutation({
+    mutationFn: (v) => (creando ? crearPinPagos({ pin, contrasena }) : desbloquearCobroQr(v)),
+    onSuccess: (d) => { if (creando) avisar.ok('PIN de pagos creado'); onPase(d); },
+    onError: (e) => {
+      setError(errorDe(e)); setPin(''); setRepetido('');
+      setTimeout(() => campoPin.current?.focus(), 0);
+    },
+  });
+
+  const noCoinciden = creando && repetido.length === 6 && repetido !== pin;
+  const listo = pin.length === 6 && (!creando || (repetido === pin && contrasena));
+
+  // Para desbloquear no hace falta botón: al completar las 6 cifras se abre.
+  const cambiarPin = (v) => {
+    setPin(v); setError('');
+    if (!creando && v.length === 6 && !abrir.isPending) abrir.mutate(v);
+  };
+  const enviar = (e) => { e.preventDefault(); if (listo && !abrir.isPending) abrir.mutate(); };
+
+  return (
+    <Pagina className="min-h-[calc(100dvh-15rem)] md:min-h-[calc(100dvh-5rem)] grid place-items-center">
+      <section className="ficha w-full max-w-md p-6 sm:p-8 text-center shadow-flota animate-entra">
+        <span className="mx-auto w-14 h-14 rounded-2xl bg-tinta text-fondo grid place-items-center"><LockKeyhole className="w-7 h-7" /></span>
+        <p className="text-[13px] text-tenue mt-4">Cobro con QR</p>
+        <h2 className="font-display font-bold text-2xl mt-0.5 leading-tight">{creando ? 'Crea el PIN de pagos' : 'Escribe el PIN de pagos'}</h2>
+        <p className="text-sm text-tenue mt-1.5">
+          {creando
+            ? 'Son 6 números, distintos de tu contraseña. Quien crea el PIN queda como la única persona que puede ver y cambiar el cobro con QR. Guárdalo bien: si lo olvidas, solo se puede borrar desde el servidor.'
+            : 'Esta pantalla está protegida. Se vuelve a bloquear a los 5 minutos o cuando sales.'}
+        </p>
+        <form onSubmit={enviar} className="mt-6 space-y-4 text-left">
+          <EntradaPin ref={campoPin} etiqueta={creando ? 'PIN nuevo' : 'PIN de pagos'} ocultarEtiqueta={!creando} valor={pin} onCambio={cambiarPin} autoFocus error={!!error && !creando} disabled={abrir.isPending} />
+          {creando && (
+            <>
+              <EntradaPin etiqueta="Repite el PIN" valor={repetido} onCambio={setRepetido} error={noCoinciden} />
+              {noCoinciden && <p className="text-sm text-locoto -mt-2">Los dos PIN no coinciden.</p>}
+              <Campo etiqueta="Tu contraseña, para confirmar que eres tú">
+                <input type="password" className="campo h-12" autoComplete="current-password" value={contrasena} onChange={(e) => setContrasena(e.target.value)} />
+              </Campo>
+            </>
+          )}
+          {error && <p role="alert" className="text-sm text-locoto bg-locoto/10 rounded-xl px-3 py-2.5">{error}</p>}
+          {creando && (
+            <button className="btn-aji btn-lg w-full" disabled={!listo || abrir.isPending}>
+              {abrir.isPending ? <Loader2 className="w-5 h-5 animate-spin" /> : 'Crear PIN y entrar'}
+            </button>
+          )}
+          {!creando && abrir.isPending && <p className="text-sm text-tenue flex items-center gap-2"><Loader2 className="w-4 h-4 animate-spin" /> Revisando…</p>}
+        </form>
+      </section>
+    </Pagina>
+  );
+}
+
+function Restante({ vence }) {
+  const calcular = () => Math.max(0, Math.round((new Date(vence) - Date.now()) / 1000));
+  const [seg, setSeg] = useState(calcular);
+  useEffect(() => { const t = setInterval(() => setSeg(calcular()), 1000); return () => clearInterval(t); });
+  return <span className="num font-semibold">{Math.floor(seg / 60)}:{String(seg % 60).padStart(2, '0')}</span>;
 }
 
 function UltimoCambio({ cambio }) {
@@ -44,14 +159,14 @@ function SoloLectura({ datos }) {
           <span className="w-11 h-11 rounded-xl bg-aji text-sobre-aji grid place-items-center"><p.Icono className="w-5 h-5" /></span>
           <div><p className="text-[13px] text-tenue">Se cobra con</p><p className="font-display font-semibold text-lg">{p.titulo}</p></div>
         </div>
-        <p className="text-sm rounded-xl bg-hundido px-3 py-2.5 flex gap-2"><Lock className="w-4 h-4 shrink-0 mt-0.5" /> Solo el dueño (o quien tenga el permiso “Cobro con QR”) puede ver los datos y cambiar esta opción.</p>
+        <p className="text-sm rounded-xl bg-hundido px-3 py-2.5 flex gap-2"><Lock className="w-4 h-4 shrink-0 mt-0.5" /> {datos.titular ? `Solo ${datos.titular.nombre} puede ver los datos y cambiar esta opción.` : 'Solo el dueño puede ver los datos y cambiar esta opción.'}</p>
         <UltimoCambio cambio={datos.ultimo_cambio} />
       </section>
     </Pagina>
   );
 }
 
-function Formulario({ datos }) {
+function Formulario({ datos, pase, onBloquear }) {
   const qc = useQueryClient();
   const b = datos.baneco;
   const enServidor = b.origen === 'servidor';
@@ -62,7 +177,7 @@ function Formulario({ datos }) {
   };
   const [f, setF] = useState(inicial);
   const [confirmando, setConfirmando] = useState(false);
-  const [contrasena, setContrasena] = useState('');
+  const [pinGuardar, setPinGuardar] = useState('');
   const set = (k) => ({ value: f[k], onChange: (e) => setF({ ...f, [k]: e.target.value }), className: 'campo' });
   const cambiado = Object.keys(inicial).some((k) => f[k] !== inicial[k]);
   const prov = f.qr_proveedor;
@@ -78,18 +193,23 @@ function Formulario({ datos }) {
     : null;
 
   const guardar = useMutation({
-    mutationFn: () => guardarCobroQr({ ...f, contrasena }),
+    mutationFn: () => guardarCobroQr({ ...f, pin: pinGuardar }, pase.pase),
     onSuccess: (d) => {
-      qc.setQueryData(['cobro-qr'], d);
+      qc.setQueryData(['cobro-qr', pase.pase], d);
       qc.invalidateQueries({ queryKey: ['configuracion'] });
       qc.invalidateQueries({ queryKey: ['configuracion-publica'] });
-      setConfirmando(false); setContrasena('');
+      setConfirmando(false); setPinGuardar('');
       avisar.ok('Cobro con QR guardado');
     },
-    onError: (e) => avisar.error(errorDe(e)),
+    onError: (e) => {
+      const codigo = e?.response?.data?.codigo;
+      if (codigo === 'PIN_REQUERIDO' || codigo === 'PIN_BLOQUEADO') onBloquear();
+      setPinGuardar('');
+      avisar.error(errorDe(e));
+    },
   });
   const probar = useMutation({
-    mutationFn: probarBaneco,
+    mutationFn: () => probarBaneco(pase.pase),
     onSuccess: () => avisar.ok('Conexión correcta con Banco Económico'),
     onError: (e) => avisar.error(errorDe(e, 'No se pudo conectar con el banco')),
   });
@@ -108,8 +228,12 @@ function Formulario({ datos }) {
       <Encabezado titulo="Cobro con QR" texto="Elige con qué se cobra cuando el cajero o el cliente del menú QR eligen pagar con QR." />
 
       <div className="flex flex-wrap items-center gap-x-6 gap-y-2 mb-4 -mt-2">
-        <p className="text-[13px] text-tenue flex items-center gap-1.5"><Lock className="w-4 h-4" /> Solo lo ve y lo cambia quien tiene el permiso “Cobro con QR”. Cada cambio pide tu contraseña.</p>
+        <p className="text-[13px] text-tenue flex items-center gap-1.5"><Lock className="w-4 h-4" /> Solo tú ves y cambias esta pantalla. Cada cambio pide el PIN de pagos.</p>
         <UltimoCambio cambio={datos.ultimo_cambio} />
+        <p className="text-[13px] flex items-center gap-1.5 sm:ml-auto">
+          <Timer className="w-4 h-4 text-tenue" /> <span className="text-tenue">Se bloquea en</span> <Restante vence={pase.vence} />
+          <button className="btn-fantasma h-8 px-2.5 text-[13px] ml-1" onClick={onBloquear}><LockKeyhole className="w-4 h-4" /> Bloquear ahora</button>
+        </p>
       </div>
 
       <div className="grid md:grid-cols-3 gap-3 mb-6">
@@ -204,11 +328,11 @@ function Formulario({ datos }) {
       )}
 
       {confirmando && (
-        <Hoja onCerrar={() => { setConfirmando(false); setContrasena(''); }} titulo="Confirma que eres tú" subtitulo="Esto cambia a dónde llega el dinero de los cobros con QR." ancho="max-w-sm" bloquear={guardar.isPending}
-          pie={<button data-principal className="btn-aji w-full" disabled={!contrasena || guardar.isPending} onClick={() => guardar.mutate()}>{guardar.isPending ? <Loader2 className="w-4 h-4 animate-spin" /> : 'Guardar cambios'}</button>}>
-          <form onSubmit={(e) => { e.preventDefault(); if (contrasena) guardar.mutate(); }}>
+        <Hoja onCerrar={() => { setConfirmando(false); setPinGuardar(''); }} titulo="Confirma con el PIN de pagos" subtitulo="Esto cambia a dónde llega el dinero de los cobros con QR." ancho="max-w-sm" bloquear={guardar.isPending}
+          pie={<button data-principal className="btn-aji w-full" disabled={pinGuardar.length !== 6 || guardar.isPending} onClick={() => guardar.mutate()}>{guardar.isPending ? <Loader2 className="w-4 h-4 animate-spin" /> : 'Guardar cambios'}</button>}>
+          <form onSubmit={(e) => { e.preventDefault(); if (pinGuardar.length === 6) guardar.mutate(); }}>
             {prov === 'propio' && f.qr_propio_imagen && <img src={urlImagen(f.qr_propio_imagen)} alt="" className="w-28 h-28 object-contain rounded-xl border border-linea mx-auto mb-4 bg-white" />}
-            <Campo etiqueta="Tu contraseña"><input autoFocus type="password" className="campo" autoComplete="current-password" value={contrasena} onChange={(e) => setContrasena(e.target.value)} /></Campo>
+            <EntradaPin etiqueta="PIN de pagos" valor={pinGuardar} onCambio={setPinGuardar} autoFocus disabled={guardar.isPending} />
           </form>
         </Hoja>
       )}

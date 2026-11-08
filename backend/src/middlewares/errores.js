@@ -16,7 +16,7 @@ function manejarErrores(err, _req, res, _next) {
     ? 'Error interno del servidor'
     : (err.message || 'Error interno del servidor');
 
-  res.status(estado).json({ ok: false, mensaje });
+  res.status(estado).json({ ok: false, mensaje, ...(err.codigo && { codigo: err.codigo }) });
 }
 
 module.exports = manejarErrores;

@@ -1,12 +1,12 @@
-const bcrypt = require('bcryptjs');
 const { Configuracion, Usuario } = require('../../models');
 const { cifrarSecreto } = require('../../utils/secretos');
 const banecoClient = require('../../integrations/baneco/baneco.client');
+const pin = require('./pinCobroQr');
 
 // El cobro con QR (a qué cuenta o QR llega el dinero) no se ve ni se cambia
 // por la configuración general: tiene su propio endpoint, con el permiso
-// pagos_qr.configurar y confirmando la contraseña (ver obtenerCobroQr).
-const esDeCobroQr = (clave) => clave.startsWith('baneco_') || clave === 'qr_ultimo_cambio';
+// pagos_qr.configurar y el PIN de pagos (ver pinCobroQr.js).
+const esDeCobroQr = (clave) => clave.startsWith('baneco_') || clave.startsWith('qr_pin') || clave === 'qr_ultimo_cambio';
 const SOLO_COBRO_QR = (clave) => esDeCobroQr(clave) || clave === 'qr_proveedor' || clave === 'qr_propio_imagen';
 
 async function obtenerTodo() {
@@ -47,11 +47,15 @@ async function _valores(claves) {
 
 // Lo que ve la pantalla. Los datos del banco solo los recibe quien puede
 // configurarlos, y aun así nunca la contraseña, la llave ni la cuenta completa.
-async function obtenerCobroQr({ puedeConfigurar }) {
+async function obtenerCobroQr({ puedeConfigurar, usuario_id, pase }) {
   const v = await _valores(['qr_proveedor', 'qr_propio_imagen', 'qr_ultimo_cambio', 'baneco_url', 'baneco_usuario', 'baneco_password', 'baneco_aes_key', 'baneco_cuenta', 'baneco_sucursal']);
   let ultimoCambio = null;
   try { ultimoCambio = v.qr_ultimo_cambio ? JSON.parse(v.qr_ultimo_cambio) : null; } catch { /* valor viejo */ }
+  // Con titular, solo él configura; los demás quedan como solo lectura.
+  const titular = await pin.titular();
+  if (puedeConfigurar && titular && titular.id !== usuario_id) puedeConfigurar = false;
   const respuesta = {
+    titular: titular ? { nombre: titular.nombre } : null,
     qr_proveedor: PROVEEDORES.includes(v.qr_proveedor) ? v.qr_proveedor : 'codepay',
     qr_propio_imagen: v.qr_propio_imagen,
     codepay_configurado: Boolean(process.env.CODEPAY_API_URL),
@@ -59,6 +63,15 @@ async function obtenerCobroQr({ puedeConfigurar }) {
     ultimo_cambio: ultimoCambio,
     baneco: { origen: banecoClient.enServidor() ? 'servidor' : 'pantalla' },
   };
+  // Sin el PIN, quien puede configurar solo sabe que hay que desbloquear.
+  if (puedeConfigurar) {
+    respuesta.pin_creado = await pin.hayPin();
+    respuesta.desbloqueado = pin.paseValido(pase, usuario_id);
+    if (!respuesta.desbloqueado) {
+      delete respuesta.qr_propio_imagen;
+      return respuesta;
+    }
+  }
   if (puedeConfigurar && !banecoClient.enServidor()) {
     let cuentaFinal = '';
     try {
@@ -73,11 +86,10 @@ async function obtenerCobroQr({ puedeConfigurar }) {
   return respuesta;
 }
 
-async function guardarCobroQr(usuario_id, datos) {
+async function guardarCobroQr(usuario_id, datos, pase) {
+  pin.exigirPase(pase, usuario_id);
+  await pin.verificarPin(datos.pin, usuario_id);
   const usuario = await Usuario.findByPk(usuario_id);
-  if (!usuario || !datos.contrasena || !(await bcrypt.compare(String(datos.contrasena), usuario.contrasena))) {
-    throw Object.assign(new Error('La contraseña no es correcta.'), { status: 401 });
-  }
 
   const proveedor = datos.qr_proveedor;
   if (!PROVEEDORES.includes(proveedor)) throw Object.assign(new Error('Proveedor de QR inválido'), { status: 400 });
@@ -115,7 +127,7 @@ async function guardarCobroQr(usuario_id, datos) {
     await Configuracion.upsert({ clave, valor });
   }
   console.log(`Cobro QR actualizado por ${usuario.nombre} (#${usuario.id}): proveedor ${proveedor}, claves ${Object.keys(cambios).join(', ')}`);
-  return obtenerCobroQr({ puedeConfigurar: true });
+  return obtenerCobroQr({ puedeConfigurar: true, usuario_id, pase });
 }
 
 module.exports = { obtenerTodo, obtenerPublica, actualizar, obtenerCobroQr, guardarCobroQr };

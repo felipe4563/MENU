@@ -20,12 +20,21 @@ export const subirLogo = (file) => {
   return api.post('/uploads/imagen', form).then((r) => r.data.datos.url);
 };
 
-// Cobro con QR: endpoint propio (permiso pagos_qr.configurar + contraseña).
-export const getCobroQr = () =>
-  api.get('/configuracion/cobro-qr').then((r) => r.data.datos);
+// Cobro con QR: endpoint propio (permiso pagos_qr.configurar + PIN de pagos).
+// El pase que da el PIN vive solo en la pantalla (nunca en el navegador).
+const conPase = (pase) => (pase ? { headers: { 'x-pase-cobro-qr': pase } } : undefined);
 
-export const guardarCobroQr = (datos) =>
-  api.put('/configuracion/cobro-qr', datos).then((r) => r.data.datos);
+export const getCobroQr = (pase) =>
+  api.get('/configuracion/cobro-qr', conPase(pase)).then((r) => r.data.datos);
 
-export const probarBaneco = () =>
-  api.post('/configuracion/cobro-qr/probar').then((r) => r.data.datos);
+export const guardarCobroQr = (datos, pase) =>
+  api.put('/configuracion/cobro-qr', datos, conPase(pase)).then((r) => r.data.datos);
+
+export const probarBaneco = (pase) =>
+  api.post('/configuracion/cobro-qr/probar', null, conPase(pase)).then((r) => r.data.datos);
+
+export const crearPinPagos = (datos) =>
+  api.post('/configuracion/cobro-qr/pin', datos).then((r) => r.data.datos);
+
+export const desbloquearCobroQr = (pin) =>
+  api.post('/configuracion/cobro-qr/desbloquear', { pin }).then((r) => r.data.datos);

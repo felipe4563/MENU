@@ -1,5 +1,8 @@
 const svc = require('./configuracion.service');
 const banecoClient = require('../../integrations/baneco/baneco.client');
+const pin = require('./pinCobroQr');
+
+const paseDe = (req) => req.get('x-pase-cobro-qr');
 
 async function obtenerTodo(req, res, next) {
   try { res.json({ ok: true, datos: await svc.obtenerTodo() }); }
@@ -20,19 +23,32 @@ async function actualizar(req, res, next) {
   } catch (err) { next(err); }
 }
 
-async function probarBaneco(_req, res, next) {
-  try { res.json({ ok: true, datos: await banecoClient.probarConexion() }); }
+async function probarBaneco(req, res, next) {
+  try {
+    pin.exigirPase(paseDe(req), req.usuario.id);
+    await pin.exigirTitular(req.usuario.id);
+    res.json({ ok: true, datos: await banecoClient.probarConexion() });
+  } catch (err) { next(err); }
+}
+
+async function crearPin(req, res, next) {
+  try { res.json({ ok: true, datos: await pin.crearPin(req.usuario.id, req.body || {}) }); }
+  catch (err) { next(err); }
+}
+
+async function desbloquear(req, res, next) {
+  try { res.json({ ok: true, datos: await pin.desbloquear(req.usuario.id, req.body || {}) }); }
   catch (err) { next(err); }
 }
 
 async function obtenerCobroQr(req, res, next) {
-  try { res.json({ ok: true, datos: await svc.obtenerCobroQr({ puedeConfigurar: req.usuario.permisos.includes('pagos_qr.configurar') }) }); }
+  try { res.json({ ok: true, datos: await svc.obtenerCobroQr({ puedeConfigurar: req.usuario.permisos.includes('pagos_qr.configurar'), usuario_id: req.usuario.id, pase: paseDe(req) }) }); }
   catch (err) { next(err); }
 }
 
 async function guardarCobroQr(req, res, next) {
-  try { res.json({ ok: true, datos: await svc.guardarCobroQr(req.usuario.id, req.body || {}) }); }
+  try { res.json({ ok: true, datos: await svc.guardarCobroQr(req.usuario.id, req.body || {}, paseDe(req)) }); }
   catch (err) { next(err); }
 }
 
-module.exports = { obtenerTodo, obtenerPublica, actualizar, probarBaneco, obtenerCobroQr, guardarCobroQr };
+module.exports = { obtenerTodo, obtenerPublica, actualizar, probarBaneco, crearPin, desbloquear, obtenerCobroQr, guardarCobroQr };

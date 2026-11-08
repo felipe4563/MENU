@@ -8,7 +8,8 @@
     "dev": "nodemon src/server.js",
     "test": "jest --runInBand",
     "seed": "node database/seeds/seed.js",
-    "test:preparar": "node database/preparar-test.js"
+    "test:preparar": "node database/preparar-test.js",
+    "pin-qr:borrar": "node scripts/borrar-pin-qr.js"
   },
   "jest": {
     "testEnvironment": "node",
