@@ -86,6 +86,23 @@ describe('Autoservicio API', () => {
       expect(otraVez.body.datos.puede_pedir).toBe(true);
     });
 
+    it('con los pedidos desde la mesa apagados, el menú queda solo para ver y el pedido → 409', async () => {
+      await Configuracion.upsert({ clave: 'autoservicio_pedidos', valor: 'false' });
+      try {
+        const menuRes = await request(app).get(`/api/v1/autoservicio/mesa/${mesa.codigo_qr}`);
+        expect(menuRes.status).toBe(200);
+        expect(menuRes.body.datos.puede_pedir).toBe(false);
+        const res = await request(app)
+          .post(`/api/v1/autoservicio/mesa/${mesa.codigo_qr}/pedido`)
+          .send({ items: [{ producto_id: 1, cantidad: 1 }] });
+        expect(res.status).toBe(409);
+      } finally {
+        await Configuracion.destroy({ where: { clave: 'autoservicio_pedidos' } });
+      }
+      const otraVez = await request(app).get(`/api/v1/autoservicio/mesa/${mesa.codigo_qr}`);
+      expect(otraVez.body.datos.puede_pedir).toBe(true);
+    });
+
     it('crear pedido sin caja abierta en la sucursal → 409', async () => {
       const res = await request(app)
         .post(`/api/v1/autoservicio/mesa/${mesa.codigo_qr}/pedido`)

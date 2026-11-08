@@ -1,4 +1,4 @@
-const { SesionCaja, Pedido, Producto, Combo } = require('../../models');
+const { SesionCaja, Pedido, Producto, Combo, Configuracion } = require('../../models');
 const mesasService = require('../mesas/mesas.service');
 const ventasService = require('../ventas/ventas.service');
 const cuponesService = require('../cupones/cupones.service');
@@ -19,6 +19,15 @@ async function _mesaConSesionActiva(codigo_qr) {
   return { mesa, sesion };
 }
 
+// El dueño puede apagar los pedidos desde la mesa (Ajustes › Salón y mesas):
+// el QR sigue mostrando el menú, pero no deja pedir. Además solo se puede
+// pedir con un cobro QR que se confirme solo (ver qrConfirmaSolo).
+async function aceptaPedidos() {
+  const fila = await Configuracion.findOne({ where: { clave: 'autoservicio_pedidos' } });
+  if (fila?.valor === 'false') return false;
+  return ventasService.qrConfirmaSolo();
+}
+
 async function obtenerMenu(codigo_qr) {
   const { mesa } = await _mesaConSesionActiva(codigo_qr);
   const alcance = { sucursal_id: mesa.area.sucursal_id, acceso_todas: false };
@@ -26,7 +35,7 @@ async function obtenerMenu(codigo_qr) {
     listarProductos({ solo_vendibles: true, solo_disponibles: true, solo_disponibles_hoy: true }, alcance),
     listarCombosActivos(),
     listarPromocionesActivas(),
-    ventasService.qrConfirmaSolo(),
+    aceptaPedidos(),
   ]);
   return { mesa: { id: mesa.id, nombre: mesa.nombre }, productos, combos, promociones, puede_pedir };
 }
@@ -69,7 +78,7 @@ const MAX_PAGOS_PENDIENTES = 3;
 
 async function crearPedido(codigo_qr, { items, cupon_codigo, numero_documento, puntos_canjear, clienteIdAutenticado }) {
   const { mesa, sesion } = await _mesaConSesionActiva(codigo_qr);
-  if (!(await ventasService.qrConfirmaSolo())) {
+  if (!(await aceptaPedidos())) {
     throw Object.assign(new Error('Este local no recibe pedidos desde la mesa. Pide al mozo.'), { status: 409 });
   }
   // El cliente_id que gana puntos puede venir de un CI suelto (silencioso,

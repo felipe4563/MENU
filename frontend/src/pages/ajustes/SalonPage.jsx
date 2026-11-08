@@ -1,16 +1,46 @@
 import { useEffect, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import QRCode from 'qrcode';
-import { Plus, Armchair, Pencil, Trash2, QrCode, Printer, RefreshCw, Copy } from 'lucide-react';
+import { Plus, Armchair, Pencil, Trash2, QrCode, Printer, RefreshCw, Copy, AlertTriangle } from 'lucide-react';
+import { Link } from 'react-router-dom';
 import { getAreas, crearArea, actualizarArea, eliminarArea } from '../../api/areas';
 import { getMesas, crearMesa, actualizarMesa, eliminarMesa, regenerarCodigoQrMesa } from '../../api/mesas';
 import { usePermisos } from '../../hooks/usePermisos';
 import { useConfigPublica } from '../../hooks/useConfig';
 import Hoja from '../../components/ui/Hoja';
-import { Cargando, Campo, Encabezado, Pagina, SinPermiso, Vacio, useConfirmar, usePedirTexto } from '../../components/ui/piezas';
+import { Cargando, Campo, Encabezado, Interruptor, Pagina, SinPermiso, Vacio, useConfirmar, usePedirTexto } from '../../components/ui/piezas';
+import { useConfiguracion } from './comun';
 import { avisar } from '../../components/ui/Aviso';
 import { imprimirHtml } from '../../utils/imprimirHtml';
 import { errorDe } from '../../lib/util';
+
+// Interruptor de pedidos desde la mesa. Con "Tu propio QR" no se puede pedir
+// igual (nadie confirmaría el pago a tiempo), así que se avisa.
+function PedidosDesdeMesa({ editar }) {
+  const { config, guardar } = useConfiguracion();
+  if (!config) return null;
+  const activo = config.autoservicio_pedidos !== 'false';
+  const qrPropio = config.qr_proveedor === 'propio';
+  return (
+    <section className="ficha p-4 sm:p-5 mb-8">
+      <Interruptor
+        disabled={!editar || guardar.isPending}
+        activo={activo}
+        onCambio={(v) => guardar.mutate({ autoservicio_pedidos: v ? 'true' : 'false' })}
+        etiqueta="Pedidos desde la mesa"
+        descripcion={activo
+          ? 'El cliente escanea el QR de su mesa, pide y paga desde el celular.'
+          : 'El QR de la mesa solo muestra el menú: el cliente pide al mozo.'}
+      />
+      {activo && qrPropio && (
+        <p className="mt-3 text-[13px] rounded-xl bg-aji/15 px-3 py-2.5 flex gap-2">
+          <AlertTriangle className="w-4 h-4 shrink-0 mt-0.5" />
+          <span>Ahora no se puede pedir desde la mesa porque cobras con tu propio QR. Para que funcione, elige Banco Económico o CodePay en <Link to="/ajustes/cobro-qr" className="font-semibold underline">Cobro con QR</Link>.</span>
+        </p>
+      )}
+    </section>
+  );
+}
 
 const urlMesa = (codigo) => `${window.location.origin}/m/${codigo}`;
 
@@ -129,8 +159,9 @@ export default function SalonPage() {
 
   return (
     <Pagina>
-      <Encabezado titulo="Salón y mesas" texto="Organiza las mesas por área. Cada mesa tiene su QR para que los clientes pidan solos."
+      <Encabezado titulo="Salón y mesas" texto="Organiza las mesas por área. Cada mesa tiene su QR con el menú."
         acciones={editar && <button className="btn-aji" onClick={async () => { const n = await pedirTexto({ titulo: 'Nueva área', placeholder: 'Ej.: Salón, Terraza', confirmar: 'Crear área' }); if (n) nuevaArea.mutate(n); }}><Plus className="w-4 h-4" /> Nueva área</button>} />
+      <PedidosDesdeMesa editar={editar} />
       {listaAreas.length === 0 ? (
         <Vacio Icono={Armchair} titulo="Empieza creando un área" texto="Por ejemplo “Salón principal” o “Terraza”. Después agregas sus mesas." />
       ) : listaAreas.map((a) => {
