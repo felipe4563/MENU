@@ -42,4 +42,9 @@ async function resetearPin(req, res, next) {
   catch (err) { next(err); }
 }
 
-module.exports = { listar, obtener, crear, actualizar, buscarDocumento, buscarNombre, buscarCodigo, resetearPin };
+async function ficha(req, res, next) {
+  try { res.json({ ok: true, datos: await require('./ficha.service').ficha(req.params.id) }); }
+  catch (err) { next(err); }
+}
+
+module.exports = { ficha, listar, obtener, crear, actualizar, buscarDocumento, buscarNombre, buscarCodigo, resetearPin };

@@ -23,3 +23,6 @@ export const buscarClientePorCodigo = (codigo) =>
 
 export const resetearPinCliente = (id) =>
   api.post(`/clientes/${id}/resetear-pin`).then(r => r.data.datos);
+
+// Todo lo del cliente: cupones, ruleta, movimientos de puntos y lo que más pide.
+export const getFichaCliente = (id) => api.get(`/clientes/${id}/ficha`).then((r) => r.data.datos);

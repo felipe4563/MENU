@@ -12,6 +12,7 @@ router.post('/', verificarPermiso('clientes', 'crear'), ctrl.crear);
 router.get('/buscar-documento/:numero', verificarPermiso('clientes', 'crear'), ctrl.buscarDocumento);
 router.get('/buscar-nombre', verificarPermiso('clientes', 'crear'), ctrl.buscarNombre);
 router.get('/buscar-codigo/:codigo', verificarPermiso('clientes', 'crear'), ctrl.buscarCodigo);
+router.get('/:id/ficha', verificarPermiso('clientes', 'ver'), ctrl.ficha);
 router.get('/:id', verificarPermiso('clientes', 'ver'), ctrl.obtener);
 router.put('/:id', verificarPermiso('clientes', 'editar'), ctrl.actualizar);
 router.post('/:id/resetear-pin', verificarPermiso('clientes', 'editar'), ctrl.resetearPin);
