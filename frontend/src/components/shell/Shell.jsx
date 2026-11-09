@@ -13,7 +13,6 @@ import { cx, iniciales } from '../../lib/util';
 import Paleta from './Paleta';
 import Hoja from '../ui/Hoja';
 import CambioContrasena from './CambioContrasena';
-import ActualizarApp from './ActualizarApp';
 import CocinaPendienteBT from './CocinaPendienteBT';
 import ImpresoraDispositivo from './ImpresoraDispositivo';
 import { useEnLinea } from '../../hooks/useEnLinea';
@@ -208,7 +207,6 @@ export default function Shell() {
       {paleta && <Paleta onCerrar={() => setPaleta(false)} />}
       {menuUsuario && <MenuUsuario onCerrar={() => setMenuUsuario(false)} />}
       {usuario?.debe_cambiar_contrasena && <CambioContrasena />}
-      <ActualizarApp />
       <CocinaPendienteBT />
     </div>
   );

@@ -5,6 +5,7 @@ import { router } from './router';
 import { Avisos } from './components/ui/Aviso';
 import { useTemaStore } from './store/temaStore';
 import { useConfigPublica } from './hooks/useConfig';
+import ActualizarApp from './components/shell/ActualizarApp';
 import { hexACanales, tintaSobre } from './lib/util';
 
 const queryClient = new QueryClient({
@@ -43,9 +44,20 @@ function Tema() {
       setAcento(null);
     }
     if (cfg?.nombre_negocio) document.title = cfg.nombre_negocio;
+    if (cfg) iconoPestana(cfg);
   }, [cfg, setAcento]);
 
   return null;
+}
+
+// Ícono de la pestaña con el logo del negocio (lo genera el backend). ?v cambia
+// con el logo para que el navegador no se quede con el anterior.
+function iconoPestana(cfg) {
+  const v = encodeURIComponent(`${cfg?.logo || ''}${cfg?.nombre_negocio || ''}`);
+  for (const [rel, tam] of [['icon', 64], ['apple-touch-icon', 180]]) {
+    const link = document.querySelector(`link[rel="${rel}"]`);
+    if (link) link.href = `/api/v1/pwa/icono/${tam}?v=${v}`;
+  }
 }
 
 export default function App() {
@@ -54,6 +66,7 @@ export default function App() {
       <Tema />
       <RouterProvider router={router} future={{ v7_startTransition: true }} />
       <Avisos />
+      <ActualizarApp />
     </QueryClientProvider>
   );
 }

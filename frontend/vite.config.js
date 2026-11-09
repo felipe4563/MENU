@@ -17,31 +17,9 @@ export default defineConfig(({ mode }) => {
         registerType: 'prompt',
         devOptions: { enabled: false },
         includeAssets: ['favicon.svg', 'favicon.png', 'icons/*.png', 'icons/icon.svg'],
-        manifest: {
-          name: 'Rusoft Menú',
-          short_name: 'Menú',
-          description: 'Punto de venta, cocina y caja para restaurantes',
-          theme_color: '#17262B',
-          background_color: '#17262B',
-          display: 'standalone',
-          display_override: ['window-controls-overlay', 'standalone'],
-          start_url: '/',
-          scope: '/',
-          orientation: 'any',
-          lang: 'es',
-          categories: ['business', 'food'],
-          icons: [
-            { src: '/icons/icon.svg', sizes: 'any', type: 'image/svg+xml', purpose: 'any' },
-            { src: '/icons/icon-192.png', sizes: '192x192', type: 'image/png', purpose: 'any' },
-            { src: '/icons/icon-512.png', sizes: '512x512', type: 'image/png', purpose: 'any' },
-            { src: '/icons/icon-512.png', sizes: '512x512', type: 'image/png', purpose: 'maskable' },
-          ],
-          shortcuts: [
-            { name: 'Vender', url: '/vender', icons: [{ src: '/icons/icon-192.png', sizes: '192x192' }] },
-            { name: 'Cocina', url: '/cocina', icons: [{ src: '/icons/icon-192.png', sizes: '192x192' }] },
-            { name: 'Caja', url: '/caja', icons: [{ src: '/icons/icon-192.png', sizes: '192x192' }] },
-          ],
-        },
+        // El manifest no sale del build: lo arma el backend con el nombre y el
+        // logo de cada restaurante (ver index.html y backend/src/modules/pwa).
+        manifest: false,
         workbox: {
           globPatterns: ['**/*.{js,css,html,ico,png,svg,woff,woff2}'],
           maximumFileSizeToCacheInBytes: 4 * 1024 * 1024,
@@ -77,7 +55,9 @@ export default defineConfig(({ mode }) => {
     resolve: {
       alias: { '@': fileURLToPath(new URL('./src', import.meta.url)) },
     },
-    server: { host: true, port: 5173 },
+    // En desarrollo el manifest y los íconos se piden al backend como si
+    // fuera el mismo dominio (en producción lo hace nginx).
+    server: { host: true, port: 5173, proxy: { '/api/v1/pwa': 'http://localhost:3001' } },
     build: {
       rollupOptions: {
         output: {
