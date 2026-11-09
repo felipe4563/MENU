@@ -26,4 +26,27 @@ async function enviarCodigoPin({ to, codigo }) {
   }
 }
 
-module.exports = { enviarCodigoPin };
+// true si el servidor tiene correo configurado (SMTP_* en el .env).
+const correoConfigurado = () => Boolean(process.env.SMTP_HOST && process.env.SMTP_USER && process.env.SMTP_FROM);
+
+// Recordatorio de un cupón por vencer. Lanza si el envío falla, para que el
+// job no lo marque como avisado y lo reintente al día siguiente.
+async function enviarAvisoCupon({ to, cliente, negocio, premio, codigo, vence }) {
+  const nombre = String(cliente || '').split(' ')[0] || 'Hola';
+  await _obtenerTransporter().sendMail({
+    from: process.env.SMTP_FROM,
+    to,
+    subject: `${nombre}, tu cupón de ${negocio} vence ${vence}`,
+    text: [
+      `Hola ${nombre}:`,
+      '',
+      `Tienes un cupón sin usar en ${negocio}${premio ? `: ${premio}` : ''}.`,
+      `Código: ${codigo}`,
+      `Vence ${vence}.`,
+      '',
+      'Muéstralo al pagar en tu próxima visita. ¡Te esperamos!',
+    ].join('\n'),
+  });
+}
+
+module.exports = { enviarCodigoPin, enviarAvisoCupon, correoConfigurado };

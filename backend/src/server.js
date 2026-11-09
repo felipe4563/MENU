@@ -5,6 +5,7 @@ const app = require('./app');
 const { init: initSocket } = require('./socket');
 const { sequelize } = require('./models');
 const { generarCuponesCumpleanos } = require('./jobs/cumpleanos.job');
+const { avisarCuponesPorVencer } = require('./jobs/avisoCupones.job');
 const { expirarPagosQrVencidos } = require('./jobs/expirarPagosQr.job');
 const { resetDisponibilidadDiaria } = require('./jobs/resetDisponibilidad.job');
 const { cerrarMarcacionesAbandonadas } = require('./jobs/cierreAutomaticoPersonal.job');
@@ -18,6 +19,12 @@ function _correrJobCumpleanos() {
   generarCuponesCumpleanos()
     .then(({ generados }) => { if (generados > 0) console.log(`Cupones de cumpleaños generados: ${generados}`); })
     .catch(err => console.error('Error generando cupones de cumpleaños:', err));
+}
+
+function _correrJobAvisoCupones() {
+  avisarCuponesPorVencer()
+    .then(({ enviados }) => { if (enviados > 0) console.log(`Avisos de cupones por vencer enviados: ${enviados}`); })
+    .catch(err => console.error('Error avisando cupones por vencer:', err));
 }
 
 function _correrJobExpirarPagosQr() {
@@ -49,6 +56,10 @@ sequelize.authenticate()
     // año, así que un cliente ya procesado se salta sin duplicar.
     _correrJobCumpleanos();
     cron.schedule('0 8 * * *', _correrJobCumpleanos, { timezone: 'America/La_Paz' });
+
+    // Recordatorio por correo de cupones por vencer, a media mañana. No corre
+    // al iniciar: un reinicio no debe mandar correos a una hora rara.
+    cron.schedule('0 10 * * *', _correrJobAvisoCupones, { timezone: 'America/La_Paz' });
 
     // Corre cada 5 minutos para limpiar pagos QR vencidos. No depende de
     // hora de negocio, así que corre siempre sin timezone.

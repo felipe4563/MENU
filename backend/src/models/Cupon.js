@@ -22,6 +22,7 @@ const Cupon = sequelize.define('Cupon', {
   fecha_expiracion: { type: DataTypes.DATEONLY },
   activo: { type: DataTypes.TINYINT(1), defaultValue: 1 },
   usado_en: { type: DataTypes.DATE },
+  aviso_vencimiento_en: { type: DataTypes.DATE },
   creado_por: { type: DataTypes.INTEGER.UNSIGNED },
 }, {
   tableName: 'cupones',

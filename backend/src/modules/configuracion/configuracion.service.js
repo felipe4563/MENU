@@ -11,10 +11,13 @@ const SOLO_COBRO_QR = (clave) => esDeCobroQr(clave) || clave === 'qr_proveedor' 
 
 async function obtenerTodo() {
   const configs = await Configuracion.findAll({ order: [['clave', 'ASC']] });
-  return configs.reduce((obj, c) => {
+  const todo = configs.reduce((obj, c) => {
     if (!esDeCobroQr(c.clave)) obj[c.clave] = c.valor;
     return obj;
   }, {});
+  // Solo lectura: si el servidor puede mandar correos (SMTP_* del .env).
+  todo.correo_configurado = require('../../integrations/email/email.client').correoConfigurado() ? 'true' : 'false';
+  return todo;
 }
 
 async function obtenerPublica() {

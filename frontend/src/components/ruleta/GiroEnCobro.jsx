@@ -12,7 +12,7 @@ import { usePermisos } from '../../hooks/usePermisos';
 import { cx, dinero, errorDe } from '../../lib/util';
 import { DatosGiro, LeyendaPremios, Rueda, TarjetaPremio, useGiro } from './Rueda';
 
-const vence = (f) => (f ? new Date(`${f}T12:00`).toLocaleDateString('es-BO', { day: 'numeric', month: 'short' }) : null);
+import { vencimiento } from '../../lib/cupones';
 
 // Los cupones guardados del cliente, para aplicarlos con un toque.
 export function CuponesCliente({ cliente, aplicando, onElegir }) {
@@ -26,6 +26,7 @@ export function CuponesCliente({ cliente, aplicando, onElegir }) {
         {data.map((c) => {
           const Icono = c.origen === 'ruleta' ? Disc3 : c.origen === 'cumpleanos' ? Cake : Ticket;
           const valor = c.tipo === 'porcentaje' ? `${Number(c.valor)}%` : dinero(c.valor, moneda);
+          const v = vencimiento(c.fecha_expiracion);
           return (
             <li key={c.id}>
               <button type="button" disabled={aplicando} onClick={() => onElegir(c.codigo, c.descripcion)}
@@ -33,7 +34,10 @@ export function CuponesCliente({ cliente, aplicando, onElegir }) {
                 <Icono className="w-5 h-5 shrink-0 text-aji" />
                 <span className="flex-1 min-w-0">
                   <span className="block font-semibold truncate">{c.descripcion || c.codigo}</span>
-                  <span className="block text-xs text-tenue truncate">{c.descripcion ? `${c.codigo} · ` : ''}{c.fecha_expiracion ? `vence ${vence(c.fecha_expiracion)}` : 'sin vencimiento'}</span>
+                  <span className="block text-xs text-tenue truncate">
+                    {v.urgente && <span className="font-semibold text-locoto">{v.texto[0].toUpperCase() + v.texto.slice(1)} · </span>}
+                    {c.descripcion ? c.codigo : ''}{!v.urgente && `${c.descripcion ? ' · ' : ''}${v.texto}`}
+                  </span>
                 </span>
                 <span className="num font-bold shrink-0">−{valor}</span>
               </button>

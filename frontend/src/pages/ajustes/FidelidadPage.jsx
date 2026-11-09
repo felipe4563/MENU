@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { Link } from 'react-router-dom';
-import { Coins, Cake, Dices, Banknote, QrCode, Check, ArrowRight } from 'lucide-react';
+import { Coins, Cake, Dices, Banknote, QrCode, Check, ArrowRight, MailWarning } from 'lucide-react';
 import { usePermisos } from '../../hooks/usePermisos';
 import { useMoneda } from '../../hooks/useConfig';
 import { Cargando, Campo, Encabezado, Interruptor, Pagina, Segmentado, SinPermiso } from '../../components/ui/piezas';
@@ -12,8 +12,9 @@ const CLAVES = [
   'fidelidad_activa', 'puntos_por_bs', 'valor_punto_bs', 'fidelidad_canje_efectivo', 'fidelidad_canje_qr',
   'cumple_activo', 'cumple_dias_anticipacion', 'cumple_vigencia_dias', 'cumple_tipo', 'cumple_valor',
   'ruleta_activa', 'ruleta_costo_puntos', 'ruleta_max_giros_periodo', 'ruleta_periodo', 'ruleta_vigencia_dias_premio',
+  'cupones_aviso_activo', 'cupones_aviso_dias',
 ];
-const inicial = (c) => Object.fromEntries(CLAVES.map((k) => [k, c[k] ?? '']));
+const inicial = (c) => ({ ...Object.fromEntries(CLAVES.map((k) => [k, c[k] ?? ''])), cupones_aviso_dias: c.cupones_aviso_dias || '2' });
 
 export default function FidelidadPage() {
   const { tiene } = usePermisos();
@@ -69,7 +70,7 @@ function Formulario({ config, guardar, editar }) {
   const n = (k) => Number(f[k] || 0);
   const sw = (k) => ({ activo: si(k), onCambio: (v) => setF({ ...f, [k]: v ? 'true' : 'false' }), disabled: !editar });
   const num = (k) => ({ value: f[k], onChange: (e) => setF({ ...f, [k]: numero(e.target.value) }), disabled: !editar, inputMode: 'decimal', className: 'campo num' });
-  const cambiado = CLAVES.some((k) => String(f[k]) !== String(config[k] ?? ''));
+  const cambiado = CLAVES.some((k) => String(f[k]) !== String(inicial(config)[k]));
 
   const ejemplo = 100;
   const puntosEjemplo = Math.floor(ejemplo * n('puntos_por_bs'));
@@ -133,6 +134,13 @@ function Formulario({ config, guardar, editar }) {
             </div>
           </div>
           <Link to="/clientes/ruleta" className="btn-borde w-full">Configurar premios <ArrowRight className="w-4 h-4" /></Link>
+        </Programa>
+
+        <Programa Icono={MailWarning} titulo="Aviso de cupones por vencer" texto="Un correo para que vuelva a usar su cupón antes de que se pierda."
+          activo={si('cupones_aviso_activo')} interruptor={sw('cupones_aviso_activo')}
+          resumen={<>Si tiene un cupón suyo sin usar (de la ruleta, de cumpleaños o uno que le diste), le llega un correo {n('cupones_aviso_dias') === 0 ? 'el mismo día que vence' : <><b>{plural(n('cupones_aviso_dias'), 'día', 'días')}</b> antes de que venza</>}, a las 10 de la mañana. Una sola vez por cupón.</>}>
+          {config.correo_configurado !== 'true' && <p className="text-[13px] rounded-xl bg-locoto/10 text-locoto px-3 py-2">Este servidor no tiene correo configurado: los avisos no saldrán hasta que se configure (SMTP).</p>}
+          <Campo etiqueta="Avisar antes" ayuda="Solo llega a clientes con correo registrado."><Unidad unidad="días" {...num('cupones_aviso_dias')} /></Campo>
         </Programa>
       </div>
 
