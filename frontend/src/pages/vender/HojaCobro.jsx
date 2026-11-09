@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { Banknote, QrCode, CheckCircle2, Printer, UserRound, UserPlus, Ticket, X, Loader2, Star, Clock } from 'lucide-react';
+import { Banknote, QrCode, CheckCircle2, Printer, UserRound, UserPlus, Ticket, X, Loader2, Star, Clock, Disc3 } from 'lucide-react';
 import Hoja from '../../components/ui/Hoja';
 import { Segmentado } from '../../components/ui/piezas';
 import { getClientes, crearCliente } from '../../api/clientes';
@@ -13,6 +13,7 @@ import { imprimirLocal, reimprimirConFallback } from '../../utils/impresionLocal
 import { useConfig, useMoneda } from '../../hooks/useConfig';
 import { usePermisos } from '../../hooks/usePermisos';
 import { cx, dinero, errorDe } from '../../lib/util';
+import { CuponesCliente, HojaGiroCobro, useRuletaDisponible } from '../../components/ruleta/GiroEnCobro';
 
 const BILLETES = [10, 20, 50, 100, 200];
 
@@ -208,6 +209,8 @@ export default function HojaCobro({ total, subtitulo, items = [], clienteInicial
   const [error, setError] = useState('');
   const [qr, setQr] = useState(null);
   const [exito, setExito] = useState(null);
+  const [ruleta, setRuleta] = useState(false);
+  const ruletaDisponible = useRuletaDisponible();
 
   const fidelidad = config.fidelidad_activa === 'true';
   const valorPunto = parseFloat(config.valor_punto_bs || 0);
@@ -221,8 +224,8 @@ export default function HojaCobro({ total, subtitulo, items = [], clienteInicial
   const sugeridos = useMemo(() => sugerencias(aPagar), [aPagar]);
 
   const aplicarCupon = useMutation({
-    mutationFn: () => validarCupon(cuponTxt.trim(), total, cliente?.id, items),
-    onSuccess: (r) => { setCupon(r); setError(''); },
+    mutationFn: ({ codigo }) => validarCupon(codigo, total, cliente?.id, items),
+    onSuccess: (r, { nombre }) => { setCupon({ ...r, nombre }); setCuponTxt(''); setError(''); },
     onError: (e) => setError(errorDe(e, 'Ese cupón no es válido.')),
   });
 
@@ -306,7 +309,7 @@ export default function HojaCobro({ total, subtitulo, items = [], clienteInicial
   return (
     <Hoja
       onCerrar={onCerrar}
-      bloquear={ocupado}
+      bloquear={ocupado || ruleta}
       titulo={puedeCobrar ? 'Cobrar' : 'Enviar pedido'}
       subtitulo={subtitulo}
       ancho="max-w-md md:max-w-3xl"
@@ -394,21 +397,36 @@ export default function HojaCobro({ total, subtitulo, items = [], clienteInicial
                 <input id="puntos" type="number" min={0} max={maxPuntos} className="campo w-24 h-10 num" value={puntos || ''} onChange={(e) => setPuntos(Math.max(0, Math.min(maxPuntos, parseInt(e.target.value, 10) || 0)))} />
               </div>
             )}
+            {cliente && ruletaDisponible && (
+              <button type="button" className="w-full flex items-center gap-3 rounded-xl bg-pizarra text-sobre-pizarra px-3 py-2.5 text-left hover:opacity-95" onClick={() => setRuleta(true)}>
+                <span className="w-9 h-9 rounded-full bg-aji text-sobre-aji grid place-items-center shrink-0"><Disc3 className="w-5 h-5" /></span>
+                <span className="flex-1 min-w-0"><span className="block font-semibold">Girar la ruleta</span><span className="block text-xs opacity-70">Canjea puntos por un premio</span></span>
+              </button>
+            )}
+            {cliente && !cupon && <CuponesCliente cliente={cliente} aplicando={aplicarCupon.isPending} onElegir={(codigo, nombre) => aplicarCupon.mutate({ codigo, nombre })} />}
             {cupon ? (
               <div className="flex items-center gap-2 rounded-xl bg-hierba/10 text-hierba px-3 py-2 text-sm font-semibold">
-                <Ticket className="w-4 h-4" /> {cupon.codigo} · −{dinero(cupon.descuento, moneda)}
+                <Ticket className="w-4 h-4 shrink-0" /> <span className="min-w-0 truncate">{cupon.nombre ? `${cupon.nombre} · ` : ""}{cupon.codigo}</span> <span className="num shrink-0">−{dinero(cupon.descuento, moneda)}</span>
                 <button className="ml-auto" onClick={() => setCupon(null)} aria-label="Quitar cupón"><X className="w-4 h-4" /></button>
               </div>
             ) : (
               <div className="flex gap-2">
                 <input className="campo uppercase" placeholder="Código de cupón" value={cuponTxt} onChange={(e) => setCuponTxt(e.target.value.toUpperCase())} />
-                <button className="btn-suave" disabled={!cuponTxt.trim() || aplicarCupon.isPending} onClick={() => aplicarCupon.mutate()}>Aplicar</button>
+                <button className="btn-suave" disabled={!cuponTxt.trim() || aplicarCupon.isPending} onClick={() => aplicarCupon.mutate({ codigo: cuponTxt.trim() })}>Aplicar</button>
               </div>
             )}
             <textarea rows={ancho ? 3 : 1} className="campo resize-none py-3" placeholder="Nota del pedido (opcional)" value={notas} onChange={(e) => setNotas(e.target.value)} maxLength={200} />
           </div>
         </details>
       </div>
+      {ruleta && cliente && (
+        <HojaGiroCobro
+          cliente={cliente}
+          onCerrar={() => setRuleta(false)}
+          onPuntos={(p) => { setCliente((c) => (c ? { ...c, puntos: p } : c)); setPuntos(0); }}
+          onUsarCupon={(codigo, nombre) => { setRuleta(false); aplicarCupon.mutate({ codigo, nombre }); }}
+        />
+      )}
     </Hoja>
   );
 }
