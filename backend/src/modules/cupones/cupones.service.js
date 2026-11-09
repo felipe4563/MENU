@@ -1,5 +1,5 @@
 const { Sequelize, Op } = require('sequelize');
-const { Cupon, Pedido, Cliente, Producto } = require('../../models');
+const { Cupon, Pedido, Cliente, Producto, Combo, RuletaGiro, RuletaPremio } = require('../../models');
 const { estaActivoHoy } = require('../../utils/disponibilidad');
 
 const INCLUDE_CUPON = [
@@ -115,8 +115,8 @@ async function eliminar(id) {
 // cobros concurrentes con el mismo código no superen su límite de usos.
 // `cliente_id` es el cliente de la venta (si se eligió uno) — hace falta
 // para los cupones exclusivos de un cliente o con límite por cliente.
-// `items`: líneas del carrito ({ producto_id, cantidad, precio }) — solo se
-// usan si el cupón está restringido a ciertos productos (ver más abajo); si
+// `items`: líneas del carrito ({ producto_id, combo_id, cantidad, precio }) — solo se
+// usan si el cupón está restringido a ciertos productos o a un combo; si
 // el cupón no tiene productos asociados, el descuento sigue calculándose
 // sobre `subtotal` (todo el carrito), como siempre.
 async function resolver(codigo, subtotal, cliente_id, transaction, items) {
@@ -124,7 +124,7 @@ async function resolver(codigo, subtotal, cliente_id, transaction, items) {
   const codigoNorm = _normalizarCodigo(codigo);
   const cupon = await Cupon.findOne({
     where: { codigo: codigoNorm },
-    include: [{ model: Producto, as: 'productos', attributes: ['id'], through: { attributes: [] }, required: false }],
+    include: [{ model: Producto, as: 'productos', attributes: ['id', 'nombre'], through: { attributes: [] }, required: false }],
     ...(transaction ? { transaction, lock: transaction.LOCK.UPDATE } : {}),
   });
   if (!cupon || !cupon.activo) {
@@ -153,13 +153,22 @@ async function resolver(codigo, subtotal, cliente_id, transaction, items) {
   }
 
   let base = subtotal;
-  if (cupon.productos && cupon.productos.length > 0) {
+  if (cupon.combo_id) {
+    base = (items || []).reduce((sum, it) => (
+      it.combo_id && Number(it.combo_id) === cupon.combo_id ? sum + it.cantidad * parseFloat(it.precio) : sum
+    ), 0);
+    if (base === 0) {
+      const combo = await Combo.findByPk(cupon.combo_id, { attributes: ['nombre'], ...(transaction ? { transaction } : {}) });
+      throw Object.assign(new Error(`Este cupón es para el combo ${combo ? combo.nombre : ''}: agrégalo al pedido para usarlo`.replace(' combo :', ' combo:')), { status: 400 });
+    }
+  } else if (cupon.productos && cupon.productos.length > 0) {
     const idsAplicables = new Set(cupon.productos.map((p) => p.id));
     base = (items || []).reduce((sum, it) => (
       it.producto_id && idsAplicables.has(Number(it.producto_id)) ? sum + it.cantidad * parseFloat(it.precio) : sum
     ), 0);
     if (base === 0) {
-      throw Object.assign(new Error('Este cupón solo aplica a ciertos productos que no están en el pedido'), { status: 400 });
+      const nombres = cupon.productos.map((p) => p.nombre).slice(0, 3).join(', ');
+      throw Object.assign(new Error(`Este cupón solo aplica a productos que no están en el pedido (${nombres}): agrégalos para usarlo`), { status: 400 });
     }
   }
 
@@ -198,7 +207,28 @@ async function listarPorCliente(cliente_id) {
     }
     disponibles.push(cupon);
   }
-  return disponibles;
+  return _conDescripcion(disponibles);
+}
+
+// Nombre entendible para elegir el cupón en el cobro: el premio de la ruleta
+// que lo generó, o "Regalo de cumpleaños". Los demás quedan solo con su código.
+async function _conDescripcion(cupones) {
+  if (!cupones.length) return [];
+  const giros = await RuletaGiro.findAll({
+    where: { cupon_id: cupones.map((c) => c.id) },
+    attributes: ['cupon_id'],
+    include: [{ model: RuletaPremio, as: 'premio', attributes: ['nombre'] }],
+  });
+  const premioDe = new Map(giros.map((g) => [g.cupon_id, g.premio?.nombre]));
+  return cupones.map((c) => {
+    const premio = premioDe.get(c.id);
+    const origen = premio ? 'ruleta' : c.codigo.startsWith('CUMPLE') ? 'cumpleanos' : 'cupon';
+    return {
+      ...c.toJSON(),
+      origen,
+      descripcion: premio || (origen === 'cumpleanos' ? 'Regalo de cumpleaños' : null),
+    };
+  });
 }
 
 module.exports = { listar, obtener, crear, actualizar, eliminar, resolver, validar, listarPorCliente };

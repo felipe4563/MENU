@@ -1168,7 +1168,7 @@ async function crearCompleta({ tipo, mesa_id, nombre_cliente, documento_cliente,
   const { descuento: descuentoPuntos } = await _resolverCanje(cliente_id, puntos_canjear, cfgFidelidad, null, metodo_pago);
 
   const total = productos.reduce((sum, { linea }) => sum + linea.cantidad * linea.precio, 0);
-  const itemsCupon = productos.map(({ item, combo, linea }) => ({ producto_id: combo ? null : item.producto_id, cantidad: linea.cantidad, precio: linea.precio }));
+  const itemsCupon = productos.map(({ item, combo, linea }) => ({ producto_id: combo ? null : item.producto_id, combo_id: combo ? combo.id : null, cantidad: linea.cantidad, precio: linea.precio }));
   const { descuento: descuentoCupon } = await _resolverCupon(cupon_codigo, total - parseFloat(descuento), cliente_id, undefined, itemsCupon);
   const monto_neto = Math.max(0, total - parseFloat(descuento) - descuentoPuntos - descuentoCupon + parseFloat(propina));
 
@@ -1373,7 +1373,7 @@ async function cobrar(pedido_id, usuario_id, { metodo_pago, monto_recibido, desc
 
   const cfgFidelidad = await _configFidelidad();
   const { descuento: descuentoPuntos } = await _resolverCanje(pedido.cliente_id, puntos_canjear, cfgFidelidad, null, metodo_pago);
-  const itemsCupon = pedido.detalles.map((d) => ({ producto_id: d.producto_id, cantidad: cantidadVigente(d), precio: parseFloat(d.precio) }));
+  const itemsCupon = pedido.detalles.map((d) => ({ producto_id: d.producto_id, combo_id: d.combo_id, cantidad: cantidadVigente(d), precio: parseFloat(d.precio) }));
   const { descuento: descuentoCupon } = await _resolverCupon(cupon_codigo, parseFloat(pedido.total) - parseFloat(descuento), pedido.cliente_id, undefined, itemsCupon);
   const monto_neto = Math.max(0, parseFloat(pedido.total) - parseFloat(descuento) - descuentoPuntos - descuentoCupon + parseFloat(propina));
 

@@ -83,7 +83,7 @@ export default function ExternosPage() {
         <HojaCobro
           total={Number(cobrar.total)}
           subtitulo={`${cobrar.origen_app || 'App'} #${cobrar.numero_llevar ?? cobrar.id}`}
-          items={cobrar.detalles.map((d) => ({ producto_id: d.producto_id, cantidad: vigente(d), precio: Number(d.precio) }))}
+          items={cobrar.detalles.map((d) => ({ producto_id: d.producto_id, combo_id: d.combo_id, cantidad: vigente(d), precio: Number(d.precio) }))}
           onConfirmar={(datos) => cobrarVenta(cobrar.id, datos)}
           onTerminado={() => { setCobrar(null); qc.invalidateQueries({ queryKey: ['ventas'] }); }}
           onCerrar={() => setCobrar(null)}

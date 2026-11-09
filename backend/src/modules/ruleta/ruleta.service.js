@@ -200,9 +200,8 @@ async function girar(cliente_id, usuario_id) {
       // producto_gratis/combo_gratis se traducen a un cupón 'fijo' por el
       // precio VIGENTE del ítem (no uno guardado en el premio), para que no
       // quede desactualizado si el precio del menú cambia después de
-      // configurar el premio. Con eso, el cupón "regala" el ítem siempre
-      // que el cajero lo agregue al pedido (mismo mecanismo que cualquier
-      // otro cupón de monto fijo, sin tocar la lógica de cobro).
+      // configurar el premio. El cupón queda amarrado a ese producto/combo:
+      // solo descuenta si está en la venta, y nunca más que lo que cuesta ahí.
       let tipoCupon = premioGanado.tipo;
       let valorCupon = premioGanado.valor;
       if (premioGanado.tipo === 'producto_gratis') {
@@ -226,7 +225,9 @@ async function girar(cliente_id, usuario_id) {
         cliente_id: cliente.id,
         activo: 1,
         creado_por: usuario_id,
+        combo_id: premioGanado.tipo === 'combo_gratis' ? premioGanado.combo_id : null,
       }, { transaction: t });
+      if (premioGanado.tipo === 'producto_gratis') await cupon.setProductos([premioGanado.producto_id], { transaction: t });
     }
 
     await RuletaGiro.create({

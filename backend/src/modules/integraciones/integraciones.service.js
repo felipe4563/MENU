@@ -47,7 +47,7 @@ async function validarCupon({ codigo, items }) {
 
   const itemsConPrecio = (items || []).map((i) => (
     i.combo_id
-      ? { producto_id: null, cantidad: i.cantidad, precio: preciosCombo.get(Number(i.combo_id)) ?? 0 }
+      ? { producto_id: null, combo_id: Number(i.combo_id), cantidad: i.cantidad, precio: preciosCombo.get(Number(i.combo_id)) ?? 0 }
       : { producto_id: i.producto_id, cantidad: i.cantidad, precio: preciosProducto.get(Number(i.producto_id)) ?? 0 }
   ));
   const subtotal = itemsConPrecio.reduce((s, i) => s + i.precio * i.cantidad, 0);

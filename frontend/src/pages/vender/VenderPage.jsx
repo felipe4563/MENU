@@ -285,7 +285,7 @@ export default function VenderPage() {
         <HojaCobro
           total={total}
           subtitulo={subtituloDestino}
-          items={lineas.map((l) => ({ producto_id: l.producto_id ?? null, cantidad: l.cantidad, precio: l.precio }))}
+          items={lineas.map((l) => ({ producto_id: l.combo_id ? null : (l.producto_id ?? null), combo_id: l.combo_id ?? null, cantidad: l.cantidad, precio: l.precio }))}
           permitirDespues={destino?.tipo === 'mesa' || destino?.tipo === 'delivery' || !puedeCobrar}
           puedeCobrar={puedeCobrar}
           onConfirmar={(p) => crearVentaCompleta({ ...datosVenta(), ...p })}

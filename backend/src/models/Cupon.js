@@ -16,6 +16,9 @@ const Cupon = sequelize.define('Cupon', {
   usos_actuales: { type: DataTypes.INTEGER.UNSIGNED, allowNull: false, defaultValue: 0 },
   limite_por_cliente: { type: DataTypes.INTEGER.UNSIGNED },
   cliente_id: { type: DataTypes.INTEGER.UNSIGNED },
+  // Si se define, el cupón solo descuenta cuando ese combo está en la venta
+  // (premio "combo gratis" de la ruleta). Para productos: cupon_productos.
+  combo_id: { type: DataTypes.INTEGER.UNSIGNED },
   fecha_expiracion: { type: DataTypes.DATEONLY },
   activo: { type: DataTypes.TINYINT(1), defaultValue: 1 },
   usado_en: { type: DataTypes.DATE },

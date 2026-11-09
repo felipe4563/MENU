@@ -141,7 +141,7 @@ export default function PedidoPage() {
           total={total}
           subtitulo={etiquetaDestino(p)}
           clienteInicial={p.cliente}
-          items={detalles.map((d) => ({ producto_id: d.producto_id, cantidad: vigente(d), precio: Number(d.precio) }))}
+          items={detalles.map((d) => ({ producto_id: d.producto_id, combo_id: d.combo_id, cantidad: vigente(d), precio: Number(d.precio) }))}
           onConfirmar={(datos) => cobrarVenta(id, datos)}
           onTerminado={() => { qc.invalidateQueries({ queryKey: ['ventas'] }); qc.invalidateQueries({ queryKey: ['mesas'] }); navigate('/vender'); }}
           onCerrar={() => { setHoja(null); refrescar(); }}
