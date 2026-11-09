@@ -22,6 +22,15 @@ cd backend && npm install --omit=dev && cd ..
 echo "==> Construyendo frontend..."
 cd frontend && npm install && npm run build && cd ..
 
+echo "==> Publicando agente de impresión..."
+# Deja el .exe en backend/agente-dist/ para que las cajas se auto-actualicen.
+# Solo lo descargan si subió "version" en print-agent/package.json.
+if (cd print-agent && npm install --no-audit --no-fund && npm run publicar); then
+  echo "    agente publicado"
+else
+  echo "    AVISO: no se pudo construir el agente; se sigue ofreciendo la versión anterior"
+fi
+
 echo "==> Reiniciando servicio..."
 pm2 reload scarnestropicales-api
 

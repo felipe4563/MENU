@@ -125,7 +125,7 @@ export function Campo({ etiqueta, ayuda, error, children, className }) {
   );
 }
 
-export function Insignia({ tono = 'neutro', children, className }) {
+export function Insignia({ tono = 'neutro', children, className, title }) {
   const tonos = {
     neutro: 'bg-hundido text-tenue',
     ok: 'bg-hierba/15 text-hierba',
@@ -134,7 +134,7 @@ export function Insignia({ tono = 'neutro', children, className }) {
     info: 'bg-cielo/12 text-cielo',
     tinta: 'bg-tinta text-fondo',
   };
-  return <span className={cx('chip', tonos[tono], className)}>{children}</span>;
+  return <span title={title} className={cx('chip', tonos[tono], className)}>{children}</span>;
 }
 
 // Confirmación reutilizable. Devuelve [elemento, pedir(opciones) => Promise<boolean>].

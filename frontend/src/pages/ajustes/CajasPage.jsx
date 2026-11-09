@@ -3,7 +3,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Plus, Landmark, Pencil, Printer, Bluetooth, Trash2, Download } from 'lucide-react';
 import { getCajas, crearCaja, actualizarCaja, eliminarCaja } from '../../api/cajas';
 import { getSucursales } from '../../api/sucursales';
-import { getEstadoAgentes } from '../../api/impresion';
+import { getEstadoAgentes, urlDescargaAgente } from '../../api/impresion';
 import { useAuthStore } from '../../store/authStore';
 import { usePermisos } from '../../hooks/usePermisos';
 import Hoja from '../../components/ui/Hoja';
@@ -13,6 +13,31 @@ import { OpcionTarjeta } from './comun';
 import ImpresoraDispositivo from '../../components/shell/ImpresoraDispositivo';
 import { avisar } from '../../components/ui/Aviso';
 import { errorDe } from '../../lib/util';
+
+// "hace 3 h" / "hace 12 min" / "hace 2 días".
+function hace(ms) {
+  const min = Math.max(1, Math.round((Date.now() - ms) / 60000));
+  if (min < 60) return `hace ${min} min`;
+  const h = Math.round(min / 60);
+  return h < 48 ? `hace ${h} h` : `hace ${Math.round(h / 24)} días`;
+}
+
+// Estado del agente de impresión de una caja: conexión, versión y si ya
+// descargó una nueva (se aplica sola al prender la PC).
+function EstadoAgente({ a }) {
+  if (!a) return null;
+  if (!a.conectado) {
+    return <Insignia tono="peligro">{a.desconectado_en ? `Desconectado ${hace(a.desconectado_en)}` : 'Impresora sin conexión'}</Insignia>;
+  }
+  return (
+    <>
+      <Insignia tono="ok">Impresora conectada{a.version ? ` · v${a.version}` : ''}</Insignia>
+      {!a.version && <Insignia tono="alerta" title="Este agente no se actualiza solo. Instala la versión actual una vez en esa PC.">Agente antiguo</Insignia>}
+      {a.version && a.version_pendiente && <Insignia tono="info" title="Ya la descargó; se aplica sola la próxima vez que prendan esa PC.">v{a.version_pendiente} al reiniciar</Insignia>}
+      {a.version && a.autoactualizacion === false && <Insignia tono="alerta" title="El agente apunta a una dirección http://. Reinstálalo con la dirección https://.">Sin actualización automática</Insignia>}
+    </>
+  );
+}
 
 function HojaCaja({ caja, sucursales, sucursalDefecto, onCerrar }) {
   const qc = useQueryClient();
@@ -82,7 +107,8 @@ export default function CajasPage() {
   const borrar = useMutation({ mutationFn: (c) => eliminarCaja(c.id), onSuccess: () => { qc.invalidateQueries({ queryKey: ['cajas'] }); avisar.ok('Caja eliminada'); }, onError: (e) => avisar.error(errorDe(e)) });
   if (!tiene('cajas', 'ver')) return <SinPermiso />;
   const listaSuc = sucursales.data ?? (usuario?.sucursal_activa?.id ? [usuario.sucursal_activa] : []);
-  const conectada = (id) => (agentes.data ?? []).find((a) => a.caja_id === id)?.conectado;
+  const agenteDe = (id) => (agentes.data ?? []).find((a) => a.caja_id === id);
+  const versionPublicada = agentes.data?.[0]?.version_publicada;
 
   return (
     <Pagina>
@@ -93,7 +119,7 @@ export default function CajasPage() {
           {cajas.data.map((c) => {
             const estado = (
               <>
-                {c.modo_impresion === 'fisica' && agentes.data && (conectada(c.id) ? <Insignia tono="ok">Impresora conectada</Insignia> : <Insignia tono="peligro">Impresora sin conexión</Insignia>)}
+                {c.modo_impresion === 'fisica' && agentes.data && <EstadoAgente a={agenteDe(c.id)} />}
                 {!c.activo && <Insignia>Inactiva</Insignia>}
               </>
             );
@@ -125,7 +151,11 @@ export default function CajasPage() {
       )}
       <div className="mt-6 rounded-2xl bg-hundido p-4 flex gap-3 items-start">
         <Download className="w-5 h-5 mt-0.5" />
-        <p className="text-sm">Para imprimir desde una computadora con Windows se instala el <b>agente de impresión</b> en esa PC (carpeta <code>print-agent</code> del sistema). Cuando está abierto, aquí aparece “Impresora conectada”.</p>
+        <div className="text-sm space-y-2">
+          <p>Para imprimir desde una computadora con Windows se instala el <b>agente de impresión</b> en esa PC. Cuando está abierto, aquí aparece “Impresora conectada” con su versión.</p>
+          <p className="text-tenue">Se instala a mano una sola vez: después se actualiza solo cuando prenden la PC.</p>
+          {versionPublicada && <a className="btn-borde inline-flex" href={urlDescargaAgente} download><Download className="w-4 h-4" /> Descargar agente v{versionPublicada}</a>}
+        </div>
       </div>
       {editar && <HojaCaja caja={editar === 'nueva' ? null : editar} sucursales={listaSuc} sucursalDefecto={usuario?.sucursal_activa?.id} onCerrar={() => setEditar(null)} />}
       {confirmacion}

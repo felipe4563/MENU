@@ -1,6 +1,7 @@
 jest.mock('../src/socket', () => ({
   emitir: jest.fn(), init: jest.fn(),
   estadoAgentes: jest.fn(() => []),
+  desconectadoEn: jest.fn(() => null),
 }));
 const { estadoAgentes } = require('../src/socket');
 const request = require('supertest');
@@ -60,5 +61,17 @@ describe('GET /api/v1/impresion/estado-agentes', () => {
       .set('Authorization', `Bearer ${token}`);
 
     expect(res.body.datos.find((a) => a.caja_id === cajaFisica.id).conectado).toBe(false);
+  });
+
+  it('muestra la versión del agente, la pendiente y si se auto-actualiza', async () => {
+    estadoAgentes.mockReturnValue([{ sucursal_id: sucursal.id, caja_id: cajaFisica.id, conectado_en: Date.now(), version: '1.1.2', version_pendiente: '1.1.3', autoactualizacion: true }]);
+
+    const res = await request(app)
+      .get('/api/v1/impresion/estado-agentes')
+      .set('Authorization', `Bearer ${token}`);
+
+    expect(res.body.datos.find((a) => a.caja_id === cajaFisica.id)).toMatchObject({
+      conectado: true, version: '1.1.2', version_pendiente: '1.1.3', autoactualizacion: true, desconectado_en: null,
+    });
   });
 });

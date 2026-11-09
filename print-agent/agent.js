@@ -4,6 +4,8 @@ const { writeFileSync, unlinkSync, readFileSync, existsSync, appendFileSync, sta
 const path             = require('path');
 const os               = require('os');
 const http             = require('http');
+const act              = require('./actualizacion');
+const VERSION          = require('./package.json').version;
 
 // En producción (pkg) lee config junto al .exe; en dev, junto al script
 const CONFIG_DIR = process.pkg
@@ -56,14 +58,6 @@ process.on('unhandledRejection', function(reason) {
 // garantiza indivisible, así solo uno de los dos puede ganar la carrera.
 const LOCK_FILE = path.join(CONFIG_DIR, 'agente.lock');
 
-function procesoVivo(pid) {
-  try {
-    // En Windows, tasklist devuelve la línea solo si el proceso existe
-    const out = execSync('tasklist /FI "PID eq ' + pid + '" /NH', { encoding: 'utf8' });
-    return out.includes(String(pid));
-  } catch { return false; }
-}
-
 function tomarLock() {
   try {
     writeFileSync(LOCK_FILE, String(process.pid), { encoding: 'utf8', flag: 'wx' });
@@ -73,9 +67,9 @@ function tomarLock() {
     // El archivo ya existe. Puede ser un lock vigente (hay que retirarse) o uno
     // abandonado por un proceso que murió sin limpiar (crash, corte de luz) —
     // en ese caso el PID ya no corresponde a nadie y es seguro tomar el lock.
-    let pidViejo = NaN;
-    try { pidViejo = parseInt(readFileSync(LOCK_FILE, 'utf8').trim(), 10); } catch {}
-    if (!isNaN(pidViejo) && procesoVivo(pidViejo)) return false;
+    if (act.agenteVivoSegunLock(LOCK_FILE)) return false;
+    const pidViejo = act.pidDelLock(LOCK_FILE);
+    console.log('.. Lock abandonado (PID ' + (isNaN(pidViejo) ? '?' : pidViejo) + ' ya no es un agente) — se toma de nuevo');
     try { unlinkSync(LOCK_FILE); } catch {}
     try {
       writeFileSync(LOCK_FILE, String(process.pid), { encoding: 'utf8', flag: 'wx' });
@@ -92,7 +86,9 @@ if (!tomarLock()) {
   process.exit(0);
 }
 
-process.on('exit',    function() { try { unlinkSync(LOCK_FILE); } catch {} });
+// Solo se borra el lock si sigue siendo de este proceso: tras aplicar una
+// actualización, el agente viejo termina cuando el nuevo ya tomó el suyo.
+process.on('exit',    function() { act.borrarLockSiEsMio(LOCK_FILE, process.pid); });
 process.on('SIGINT',  function() { process.exit(0); });
 process.on('SIGTERM', function() { process.exit(0); });
 
@@ -107,7 +103,7 @@ try {
   process.exit(1);
 }
 
-console.log('=== Agente de impresión térmica ===');
+console.log('=== Agente de impresión térmica v' + VERSION + ' ===');
 console.log(`Servidor : ${config.servidor}`);
 console.log(`Caja     : ${config.impresora_caja}`);
 console.log(`Cocina   : ${config.impresora_cocina}`);
@@ -144,6 +140,16 @@ function liberar(tipo, pedidoId) {
   impresos.delete(tipo + ':' + pedidoId);
 }
 
+// Impresiones físicas en curso: antes de reemplazar el exe (vuelta de
+// hibernación con actualización pendiente) se espera a que no quede ninguna.
+let impresionesEnCurso = 0;
+
+async function imprimirContando(impresora, buffer) {
+  impresionesEnCurso++;
+  try { return await printRaw(impresora, buffer); }
+  finally { impresionesEnCurso--; }
+}
+
 async function imprimirCaja(datos, origen, forzar) {
   var pid = datos.pedido ? datos.pedido.id : '?';
   var motivo = motivoNoPertenece(datos);
@@ -158,7 +164,7 @@ async function imprimirCaja(datos, origen, forzar) {
   reservar('caja', pid);
   console.log('[' + ts() + '] >> print:caja  Pedido #' + pid + ' (' + origen + (forzar ? ', forzado' : '') + ')');
   try {
-    await printRaw(config.impresora_caja, buildCaja(datos));
+    await imprimirContando(config.impresora_caja, buildCaja(datos, COLS_CAJA));
     console.log('[' + ts() + '] OK Caja impreso');
   } catch (err) {
     liberar('caja', pid);
@@ -187,7 +193,7 @@ async function imprimirCocina(datos, origen, forzar) {
   reservar(tipoDedup, claveDedup);
   console.log('[' + ts() + '] >> print:cocina ' + etiqueta + ' (' + origen + (forzar ? ', forzado' : '') + ')');
   try {
-    await printRaw(config.impresora_cocina, buildCocina(datos));
+    await imprimirContando(config.impresora_cocina, buildCocina(datos, COLS_COCINA));
     console.log('[' + ts() + '] OK Cocina impreso');
   } catch (err) {
     liberar(tipoDedup, claveDedup);
@@ -201,7 +207,7 @@ async function imprimirCocina(datos, origen, forzar) {
 // cada cierre es un evento único.
 async function imprimirCierre(datos, origen) {
   console.log('[' + ts() + '] >> print:cierre Sesión #' + (datos.reporte && datos.reporte.sesion ? datos.reporte.sesion.id : '?') + ' (' + origen + ')');
-  await printRaw(config.impresora_caja, buildCierre(datos));
+  await imprimirContando(config.impresora_caja, buildCierre(datos, COLS_CAJA));
   console.log('[' + ts() + '] OK Cierre impreso');
 }
 
@@ -249,9 +255,22 @@ function motivoNoPertenece(datos) {
   return null;
 }
 
+// Datos que el dashboard muestra de este agente. version_pendiente solo si lo
+// descargado es realmente más nuevo que lo que corre.
+function anunciarAgente() {
+  var pend = act.leerPendiente(CONFIG_DIR);
+  socket.emit('agente:conectado', {
+    sucursal_id: config.sucursal_id || null,
+    caja_ids: cajaIds,
+    version: VERSION,
+    version_pendiente: pend && act.compararVersiones(pend.version, VERSION) > 0 ? pend.version : null,
+    autoactualizacion: act.urlPermitida(config.servidor),
+  });
+}
+
 socket.on('connect', () => {
   console.log(`[${ts()}] ✓ Conectado (id: ${socket.id})`);
-  socket.emit('agente:conectado', { sucursal_id: config.sucursal_id || null, caja_ids: cajaIds });
+  anunciarAgente();
   if (config.sucursal_id) {
     socket.emit('unirse_sucursal', config.sucursal_id);
     console.log(`[${ts()}] → Unido a la sala de la sucursal ${config.sucursal_id} (comandas de cocina)`);
@@ -282,6 +301,285 @@ socket.on('print:cocina', async function(datos) {
   catch (err) { console.error('[' + ts() + '] ERROR cocina (socket): ' + err.message); }
 });
 
+// Reconexión forzada pedida desde el dashboard (POST /reconectar, abajo):
+// corta el socket y lo vuelve a abrir en vez de esperar al próximo reintento
+// automático, por si quedó trabado. Resuelve con el resultado del primer
+// intento (o con timeout), para que el dashboard pueda mostrarlo.
+const TIMEOUT_RECONEXION_MS = 8000;
+
+// Si ya hay una reconexión en curso (p. ej. la vigía justo disparó y alguien
+// aprieta el botón del dashboard), se devuelve la misma promesa en vez de
+// cortar el socket por segunda vez a mitad del intento.
+let reconexionEnCurso = null;
+
+function reconectarSocket(motivo) {
+  if (reconexionEnCurso) return reconexionEnCurso;
+  reconexionEnCurso = new Promise(function(resolve) {
+    var terminado = false;
+    function fin(resultado) {
+      if (terminado) return;
+      terminado = true;
+      clearTimeout(timer);
+      socket.off('connect', alConectar);
+      socket.off('connect_error', alFallar);
+      reconexionEnCurso = null;
+      resolve(resultado);
+    }
+    function alConectar() { fin({ conectado: true }); }
+    function alFallar(e) { fin({ conectado: false, error: e.message }); }
+    var timer = setTimeout(function() {
+      fin({ conectado: false, error: 'el servidor no respondió en ' + (TIMEOUT_RECONEXION_MS / 1000) + ' s' });
+    }, TIMEOUT_RECONEXION_MS);
+    socket.on('connect', alConectar);
+    socket.on('connect_error', alFallar);
+    console.log('[' + ts() + '] ↻ Reconexión forzada (' + motivo + ')');
+    socket.disconnect();
+    socket.connect();
+  });
+  return reconexionEnCurso;
+}
+
+// ── Vigía de conexión ─────────────────────────────────────────────────────────
+// socket.io ya reintenta solo, pero hay casos donde el reintento se traba:
+// típicamente una laptop/PC que despierta de suspensión con la conexión
+// "muerta" o con el backoff de reintentos colgado. Cada 30 s se revisa:
+// - si lleva más de 2 min sin conexión → se fuerza la reconexión (lo mismo
+//   que el botón del dashboard), y se vuelve a intentar cada 2 min;
+// - si entre una revisión y otra pasó mucho más tiempo del esperado, la PC
+//   estuvo suspendida → se fuerza la reconexión de inmediato, sin esperar.
+// Además, una vez por hora se deja una línea "♥ activo" en el log: si un
+// cliente dice que no imprimió, el log muestra desde qué hora el agente dejó
+// de estar vivo (no hay ♥) o de estar conectado (♥ con "conectado: no").
+const VIGIA_INTERVALO_MS      = 30 * 1000;
+const VIGIA_SIN_CONEXION_MS   = 2 * 60 * 1000;
+const VIGIA_SALTO_SUSPENSION  = 90 * 1000;   // un tick de 30 s que tardó >90 s
+const LATIDO_INTERVALO_MS     = 60 * 60 * 1000;
+
+const agenteIniciadoEn = Date.now();
+let sinConexionDesde = Date.now(); // arranca sin conexión hasta el primer connect
+let ultimoTick = Date.now();
+let ultimoUptimeSeg = os.uptime(); // incluye el tiempo dormida/hibernada (ver esVueltaDeHibernacion)
+let ultimoLatido = Date.now();
+
+socket.on('connect', function() { sinConexionDesde = null; });
+socket.on('disconnect', function() { if (sinConexionDesde == null) sinConexionDesde = Date.now(); });
+
+function minutos(ms) { return Math.round(ms / 60000); }
+
+function reconectarTrasSuspension() {
+  reconectarSocket('vigía: la PC volvió de suspensión').then(function(r) {
+    console.log('[' + ts() + '] ' + (r.conectado ? '✓ Reconectado tras suspensión' : '✗ Sin conexión tras suspensión: ' + r.error));
+  });
+}
+
+setInterval(function() {
+  const ahora = Date.now();
+  const desdeUltimoTick = ahora - ultimoTick;
+  ultimoTick = ahora;
+  const uptimeSeg = os.uptime();
+  const avanceUptimeMs = (uptimeSeg - ultimoUptimeSeg) * 1000;
+  ultimoUptimeSeg = uptimeSeg;
+
+  // Mientras se reemplaza el exe, el socket y el puerto están cerrados a
+  // propósito: la vigía no debe reabrirlos.
+  if (aplicandoActualizacion) return;
+
+  if (desdeUltimoTick > VIGIA_SALTO_SUSPENSION) {
+    console.log('[' + ts() + '] ↯ La PC estuvo suspendida ~' + minutos(desdeUltimoTick) + ' min');
+    // Volver de hibernación >= 2 h cuenta como "prender la PC" (Inicio rápido de
+    // Windows: "Apagar" hiberna y la tarea de arranque no se dispara). Solo en el
+    // exe (en dev no hay nada que reemplazar) y solo con un pendiente de una
+    // versión mayor; el hash se verifica en aplicarTrasHibernacion. Un salto
+    // solo del reloj (cambio de hora, NTP) no cuenta: el uptime no avanzó.
+    // Tampoco mientras se sigue restaurando el exe anterior de un fallo previo.
+    const candidato = (process.pkg && act.esVueltaDeHibernacion(desdeUltimoTick, avanceUptimeMs) && !act.restauracionPendiente())
+      ? act.pendienteCandidato(CONFIG_DIR, VERSION) : null;
+    if (candidato) aplicarTrasHibernacion();
+    else reconectarTrasSuspension();
+    sinConexionDesde = socket.connected ? null : ahora;
+  } else if (!socket.connected && sinConexionDesde != null && ahora - sinConexionDesde > VIGIA_SIN_CONEXION_MS) {
+    reconectarSocket('vigía: sin conexión hace ' + minutos(ahora - sinConexionDesde) + ' min').then(function(r) {
+      if (r.conectado) console.log('[' + ts() + '] ✓ Reconectado por la vigía');
+      else console.log('[' + ts() + '] ✗ La vigía no logró reconectar: ' + r.error);
+    });
+    sinConexionDesde = ahora; // próximo intento forzado en otros 2 min
+  }
+
+  if (ahora - ultimoLatido >= LATIDO_INTERVALO_MS) {
+    ultimoLatido = ahora;
+    console.log('[' + ts() + '] ♥ activo — conectado: ' + (socket.connected ? 'sí' : 'no') +
+      ' (PID ' + process.pid + ', encendido hace ' + Math.floor((ahora - agenteIniciadoEn) / 3600000) + ' h)');
+  }
+}, VIGIA_INTERVALO_MS);
+
+// ── Auto-actualización ───────────────────────────────────────────────────────
+// Revisa ~60 s después de arrancar y luego cada 6 h si el servidor publica una
+// versión más nueva; si la hay, la deja descargada y verificada como pendiente.
+// Si la revisión o la descarga fallan (típico justo al prender la PC, con la
+// red todavía inestable), reintenta a los 15 min en vez de esperar 6 h.
+// Nunca reemplaza el exe aquí: eso solo pasa al prender la PC (index.js) o al
+// volver de hibernación (vigía).
+const REVISION_PRIMERA_MS     = 60 * 1000;
+const REVISION_INTERVALO_MS   = 6 * 3600 * 1000;
+const REVISION_REINTENTO_MS   = 15 * 60 * 1000;
+
+let aplicandoActualizacion = false;
+let revisionEnCurso = null;
+let ultimoEstadoRevision = null;
+let ultimoErrorRevision = null;
+
+// Cada revisión agenda la siguiente: 15 min si falló, 6 h si no.
+function agendarRevision(ms) {
+  setTimeout(revisarActualizacion, ms);
+}
+
+function revisarActualizacion() {
+  // Ya hay una revisión en curso: ella misma agenda la siguiente (no se
+  // duplica el ciclo).
+  if (revisionEnCurso) return;
+  if (aplicandoActualizacion) {
+    agendarRevision(REVISION_REINTENTO_MS);
+    return;
+  }
+  let siguiente = REVISION_INTERVALO_MS;
+  revisionEnCurso = act.revisarYDescargar({
+    servidor: config.servidor, dirBase: CONFIG_DIR, versionActual: VERSION,
+    log: function(m) { console.log('[' + ts() + '] ' + m); },
+  }).then(function(r) {
+    // Solo se loguean los cambios: un servidor caído no llena el log cada 15 min.
+    if (r.estado === 'error') {
+      siguiente = REVISION_REINTENTO_MS;
+      if (r.error !== ultimoErrorRevision) console.log('[' + ts() + '] ✗ No se pudo revisar si hay actualización: ' + r.error + ' — se reintenta cada 15 min');
+      ultimoErrorRevision = r.error;
+    } else {
+      ultimoErrorRevision = null;
+      if (r.estado === 'sin_https' && ultimoEstadoRevision !== 'sin_https') {
+        console.log('[' + ts() + '] .. Auto-actualización desactivada: el servidor no usa https (' + config.servidor + ')');
+      }
+    }
+    ultimoEstadoRevision = r.estado;
+    if (r.estado === 'descargado' && socket.connected) anunciarAgente();
+  }).catch(function(e) {
+    siguiente = REVISION_REINTENTO_MS;
+    console.error('[' + ts() + '] ✗ Revisión de actualización: ' + (e && e.message ? e.message : e));
+  }).finally(function() {
+    revisionEnCurso = null;
+    agendarRevision(siguiente);
+  });
+}
+
+agendarRevision(REVISION_PRIMERA_MS);
+
+function cerrarServidorLocal() {
+  return new Promise(function(resolve) {
+    if (!servidorLocal.listening) return resolve();
+    // close() suelta el puerto en el acto; su callback espera a que terminen las
+    // conexiones abiertas (keep-alive del navegador), por eso el tope de 5 s.
+    servidorLocal.close(function() { resolve(); });
+    if (servidorLocal.closeIdleConnections) servidorLocal.closeIdleConnections();
+    setTimeout(resolve, 5000);
+  });
+}
+
+async function esperarSinImpresiones() {
+  const limite = Date.now() + 2 * 60 * 1000;
+  while (impresionesEnCurso > 0 && Date.now() < limite) {
+    await new Promise(function(r) { setTimeout(r, 200); });
+  }
+}
+
+// Vuelve a ser el agente normal (tras una vuelta atrás o un error a mitad).
+function reanudarComoAgente() {
+  if (!tomarLock()) {
+    if (act.restauracionPendiente()) {
+      // Sin puerto ni socket (no atiende), solo termina de devolver el exe
+      // anterior a su lugar para que la PC no arranque con la versión fallida.
+      console.log('[' + ts() + '] .. Otro agente tomó el lock mientras se actualizaba — este solo termina de restaurar el exe anterior y se retira.');
+      act.restaurarEnSegundoPlano(CONFIG_DIR).then(function() { process.exit(0); });
+      return;
+    }
+    console.log('[' + ts() + '] .. Otro agente tomó el lock mientras se actualizaba — este se retira.');
+    process.exit(0);
+  }
+  escucharTrasReanudar(1);
+  if (!socket.connected) socket.connect();
+}
+
+// Reabre el puerto local tras una vuelta atrás. Si sigue ocupado (p. ej. el
+// agente nuevo, recién matado, todavía no lo soltó) se reintenta 5 veces cada
+// 2 s; si no hay caso, el agente se cierra (soltando agente.lock) para que la
+// vigía lo relance limpio, en vez de quedar vivo con el lock y sin puerto.
+const REANUDAR_INTENTOS_ESCUCHA = 5;
+const REANUDAR_ESPERA_ESCUCHA_MS = 2000;
+
+function escucharTrasReanudar(intento) {
+  if (servidorLocal.listening) return;
+  function alFallar(err) {
+    servidorLocal.removeListener('listening', alEscuchar);
+    if (err.code !== 'EADDRINUSE') return;
+    if (intento >= REANUDAR_INTENTOS_ESCUCHA) {
+      if (act.restauracionPendiente()) {
+        // Cerrarse ahora haría que la vigía relance el exe que falló (y, en uso,
+        // ya no se podría restaurar). Se queda con el lock y el socket, y vuelve
+        // a probar el puerto cuando el exe anterior esté de nuevo en su lugar.
+        console.error('[' + ts() + '] ✗ El puerto ' + PUERTO_LOCAL + ' sigue ocupado tras ' + intento + ' intentos — se reintenta cuando se restaure el exe anterior');
+        act.restaurarEnSegundoPlano(CONFIG_DIR).then(function() { escucharTrasReanudar(1); });
+        return;
+      }
+      console.error('[' + ts() + '] ✗ El puerto ' + PUERTO_LOCAL + ' sigue ocupado tras ' + intento + ' intentos — el agente se cierra para que la vigía lo relance');
+      process.exit(1);
+    }
+    setTimeout(function() { escucharTrasReanudar(intento + 1); }, REANUDAR_ESPERA_ESCUCHA_MS);
+  }
+  function alEscuchar() {
+    servidorLocal.removeListener('error', alFallar);
+    console.log('[' + ts() + '] ✓ Servidor local escuchando de nuevo en http://127.0.0.1:' + PUERTO_LOCAL);
+  }
+  servidorLocal.once('error', alFallar);
+  servidorLocal.once('listening', alEscuchar);
+  servidorLocal.listen(PUERTO_LOCAL, '127.0.0.1');
+}
+
+async function aplicarTrasHibernacion() {
+  aplicandoActualizacion = true;
+  let detenido = false;
+  try {
+    if (revisionEnCurso) await revisionEnCurso; // no copiar un pendiente a medio descargar
+    const pend = await act.pendienteAplicable(CONFIG_DIR, VERSION);
+    if (!pend) {
+      console.log('[' + ts() + '] .. La actualización pendiente no pasó la verificación — se descartó');
+      return reconectarTrasSuspension();
+    }
+    if (!act.tomarLockAplicando(CONFIG_DIR)) {
+      console.log('[' + ts() + '] .. Otro proceso está aplicando la actualización');
+      return reconectarTrasSuspension();
+    }
+    let res;
+    try {
+      console.log('[' + ts() + '] ⇪ Volvió de hibernación: aplicando actualización ' + VERSION + ' → ' + pend.version + '...');
+      detenido = true;
+      socket.disconnect();
+      await cerrarServidorLocal();
+      await esperarSinImpresiones();
+      if (servidorLocal.closeAllConnections) servidorLocal.closeAllConnections();
+      act.borrarLockSiEsMio(LOCK_FILE, process.pid);
+      res = await act.reemplazarYLanzar(Object.assign({
+        dirBase: CONFIG_DIR, versionNueva: pend.version,
+        log: function(m) { console.log('[' + ts() + '] ' + m); },
+      }, act.lanzadorReal({ puerto: PUERTO_LOCAL })));
+    } finally {
+      act.soltarLockAplicando(CONFIG_DIR);
+    }
+    if (res.ok) process.exit(0); // ya atiende la versión nueva (el exit no toca su agente.lock)
+    reanudarComoAgente();
+  } catch (e) {
+    console.error('[' + ts() + '] ✗ Error al aplicar la actualización: ' + (e && e.message ? e.message : e));
+    if (detenido) reanudarComoAgente();
+  } finally {
+    aplicandoActualizacion = false;
+  }
+}
+
 // ── Canal 2: HTTP local (principal — el navegador de ESTA PC llama directo, sin Internet) ──
 // Solo escucha en 127.0.0.1: nadie fuera de esta máquina puede llegar a este puerto.
 
@@ -308,7 +606,7 @@ function origenPermitido(req) {
 
 function enviarCors(req, res) {
   res.setHeader('Access-Control-Allow-Origin', origenPermitido(req));
-  res.setHeader('Access-Control-Allow-Methods', 'POST, OPTIONS');
+  res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
   res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
   // Chrome exige esta cabecera para permitir que una página https:// (red pública)
   // le hable a 127.0.0.1 (red privada) — "Private Network Access".
@@ -368,9 +666,18 @@ const servidorLocal = http.createServer(async (req, res) => {
     return;
   }
 
+  if (req.method === 'POST' && pathname === '/reconectar') {
+    const resultado = await reconectarSocket('pedida desde el dashboard');
+    if (resultado.conectado) console.log('[' + ts() + '] ✓ Reconexión forzada OK');
+    else console.log('[' + ts() + '] ✗ Reconexión forzada falló: ' + resultado.error);
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({ ok: true, conectado: resultado.conectado, error: resultado.error || null, servidor: config.servidor }));
+    return;
+  }
+
   if (req.method === 'GET' && req.url === '/salud') {
     res.writeHead(200, { 'Content-Type': 'application/json' });
-    res.end(JSON.stringify({ ok: true, sucursal_id: config.sucursal_id || null }));
+    res.end(JSON.stringify({ ok: true, version: VERSION, sucursal_id: config.sucursal_id || null, caja_ids: cajaIds, conectado: socket.connected }));
     return;
   }
 
@@ -392,7 +699,19 @@ servidorLocal.listen(PUERTO_LOCAL, '127.0.0.1', () => {
 
 // ── ESC/POS ──────────────────────────────────────────────────────────────────
 
-const COLS = 48;
+// Ancho del papel, por impresora ("ancho_caja" / "ancho_cocina" en
+// config.json): 80mm = 48 columnas, 58mm (rollos de 55/57/58mm) = 32
+// columnas, con la fuente estándar (Font A). Sin configurar → 80mm, como
+// era siempre antes de existir esta opción.
+const COLUMNAS_POR_ANCHO = { '80mm': 48, '58mm': 32, '55mm': 32 };
+
+function columnasPara(ancho) {
+  return COLUMNAS_POR_ANCHO[String(ancho || '80mm').toLowerCase()] || 48;
+}
+
+const COLS_CAJA   = columnasPara(config.ancho_caja);
+const COLS_COCINA = columnasPara(config.ancho_cocina);
+console.log('Papel    : caja ' + (COLS_CAJA === 48 ? '80mm' : '58mm') + ' (' + COLS_CAJA + ' col), cocina ' + (COLS_COCINA === 48 ? '80mm' : '58mm') + ' (' + COLS_COCINA + ' col)');
 
 // Tres formas de mandar tildes/ñ, elegibles con "codepage" en config.json.
 // Muchas impresoras térmicas clon no respetan la tabla PC850 tal como la
@@ -448,7 +767,7 @@ function _opcionesPorProducto(comboOpciones) {
 }
 
 class Esc {
-  constructor() { this.b = []; }
+  constructor(cols) { this.b = []; this.COLS = cols || 48; }
   raw(bytes)  { this.b.push(...bytes); return this; }
   init()      { return this.raw([0x1B, 0x40]); }
   charset()   { return this.raw([0x1B, 0x74, TABLA_ESC_T[CODEPAGE]]); }
@@ -462,6 +781,9 @@ class Esc {
   dbl()       { return this.raw([0x1D, 0x21, 0x11]); }
   dblH()      { return this.raw([0x1D, 0x21, 0x01]); }
   dblW()      { return this.raw([0x1D, 0x21, 0x10]); }
+  // Texto destacado de un ítem: doble alto y ancho en 80mm; en 58mm solo doble
+  // alto, porque a doble ancho entran 16 letras y los nombres se cortan.
+  destacado() { return this.COLS >= 48 ? this.dbl() : this.dblH(); }
   text(s) {
     var str = String(s != null ? s : '');
     if (CODEPAGE === 'ascii') str = quitarAcentos(str);
@@ -474,18 +796,18 @@ class Esc {
     return this;
   }
   line(s)  { return this.text(s != null ? s : '').lf(); }
-  rule(c)  { var ch = c || '-'; return this.line(ch.repeat(COLS)); }
+  rule(c)  { var ch = c || '-'; return this.line(ch.repeat(this.COLS)); }
   cols(left, right) {
     var r  = String(right != null ? right : '');
     var l  = String(left  != null ? left  : '');
-    const lw = COLS - r.length;
+    const lw = this.COLS - r.length;
     const lp = l.length > lw ? l.substring(0, lw - 1) + '.' : l.padEnd(lw);
     return this.line(lp + r);
   }
   build() { return Buffer.from(this.b); }
 }
 
-function buildCaja(data) {
+function buildCaja(data, cols) {
   var pedido      = data.pedido;
   var metodo_pago = data.metodo_pago;
   var cfg         = data.config || {};
@@ -517,7 +839,7 @@ function buildCaja(data) {
   var descuentoPuntos = Math.max(0, subtotalLineas - descuento - descuentoCupon + propina - total);
   var hayAjustes      = descuento > 0 || descuentoCupon > 0 || descuentoPuntos > 0 || propina > 0;
 
-  var t = new Esc();
+  var t = new Esc(cols);
   t.init().charset();
 
   // ── Encabezado ────────────────────────────────────────────────────────────
@@ -546,7 +868,7 @@ function buildCaja(data) {
   t.rule('-');
 
   // ── Items ─────────────────────────────────────────────────────────────────
-  t.left().line('Cant  Descripcion                      Importe');
+  t.left().cols('Cant  Descripcion', 'Importe');
   t.rule('-');
   var detalles = pedido.detalles || [];
   for (var i = 0; i < detalles.length; i++) {
@@ -621,10 +943,17 @@ function buildCaja(data) {
   return t.build();
 }
 
-function buildCocina(data) {
+// Precio unitario + subtotal de un ítem de cocina. En 80mm queda igual que
+// siempre; en 58mm no entra en una línea, así que se alinea a dos columnas.
+function lineaPrecioCocina(t, precio, subtotal) {
+  if (t.COLS >= 48) t.left().line('     ' + precio + '       Sub: ' + subtotal);
+  else t.left().cols('  ' + precio, 'Sub: ' + subtotal);
+}
+
+function buildCocina(data, cols) {
   var pedido   = data.pedido;
   var cfg      = data.config || {};
-  var t        = new Esc();
+  var t        = new Esc(cols);
   var esLlevar = pedido.tipo === 'llevar';
   var esDelivery = pedido.tipo === 'delivery';
   var nLevar   = pedido.numero_llevar != null ? pedido.numero_llevar : pedido.id;
@@ -678,17 +1007,17 @@ function buildCocina(data) {
     var sub2     = (parseFloat(d2.precio) * d2.cantidad).toFixed(2);
     if (esAnulacion) {
       var cantAnul = d2.peso != null ? parseFloat(d2.peso).toFixed(3) + 'kg' : d2.cantidad;
-      t.left().dbl().bold(true).line('ANULAR ' + cantAnul + '  ' + prod2).normal().bold(false);
+      t.left().destacado().bold(true).line('ANULAR ' + cantAnul + '  ' + prod2).normal().bold(false);
     } else if (d2.peso != null) {
       var pesoKg2   = parseFloat(d2.peso).toFixed(3);
       var precioKg2 = parseFloat((d2.producto && d2.producto.precio) || 0).toFixed(2);
-      t.left().dbl().bold(true).line(pesoKg2 + 'kg  ' + prod2).normal().bold(false);
-      t.left().line('     ' + sym + ' ' + precioKg2 + '/kg       Sub: ' + sym + ' ' + sub2);
+      t.left().destacado().bold(true).line(pesoKg2 + 'kg  ' + prod2).normal().bold(false);
+      lineaPrecioCocina(t, sym + ' ' + precioKg2 + '/kg', sym + ' ' + sub2);
     } else {
       var qty2 = d2.cantidad;
       var pu2  = parseFloat(d2.precio).toFixed(2);
-      t.left().dbl().bold(true).line(qty2 + '  ' + prod2).normal().bold(false);
-      t.left().line('     ' + sym + ' ' + pu2 + ' c/u       Sub: ' + sym + ' ' + sub2);
+      t.left().destacado().bold(true).line(qty2 + '  ' + prod2).normal().bold(false);
+      lineaPrecioCocina(t, sym + ' ' + pu2 + ' c/u', sym + ' ' + sub2);
     }
     if (esCombo2 && d2.combo.productos && d2.combo.productos.length) {
       var opcionesPorProducto2 = _opcionesPorProducto(d2.combo_opciones);
@@ -725,7 +1054,7 @@ function buildCocina(data) {
   return t.build();
 }
 
-function buildCierre(data) {
+function buildCierre(data, cols) {
   var reporte = data.reporte;
   var cfg     = data.config || {};
   var sesion  = reporte.sesion;
@@ -752,7 +1081,7 @@ function buildCierre(data) {
     return new Date(f).toLocaleString('es-BO', { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' });
   }
 
-  var t = new Esc();
+  var t = new Esc(cols);
   t.init().charset();
 
   // ── Encabezado ────────────────────────────────────────────────────────────
@@ -771,7 +1100,7 @@ function buildCierre(data) {
   // ── Productos vendidos ────────────────────────────────────────────────────
   t.left().bold(true).line('PRODUCTOS VENDIDOS').bold(false);
   if (productosVendidos.length) {
-    t.left().line('Cant  Producto                      Total');
+    t.left().cols('Cant  Producto', 'Total');
     t.rule('-');
     for (var i = 0; i < productosVendidos.length; i++) {
       var p = productosVendidos[i];

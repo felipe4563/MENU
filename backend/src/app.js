@@ -36,6 +36,7 @@ const clientePublicoRoutes = require('./modules/clientePublico/clientePublico.ro
 const codepayWebhookRoutes = require('./webhooks/codepay.webhook.routes');
 const banecoWebhookRoutes = require('./webhooks/baneco.webhook.routes');
 const impresionRoutes = require('./modules/impresion/impresion.routes');
+const agenteRoutes = require('./modules/agente/agente.routes');
 const devolucionesRoutes = require('./modules/devoluciones/devoluciones.routes');
 const personalRoutes = require('./modules/personal/personal.routes');
 
@@ -97,6 +98,7 @@ app.use('/api/v1/insumos', insumosRoutes);
 app.use('/api/v1/autoservicio', autoservicioRoutes);
 app.use('/api/v1/cliente', clientePublicoRoutes);
 app.use('/api/v1/impresion', impresionRoutes);
+app.use('/api/v1/agente', agenteRoutes);
 app.use('/api/v1/uploads', uploadsRoutes);
 app.use('/api/v1/personal', personalRoutes);
 app.use('/api/v1/devoluciones', devolucionesRoutes);

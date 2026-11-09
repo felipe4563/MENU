@@ -11,6 +11,10 @@ let _io = null;
 // PC/agente puede atender más de una caja (una sola impresora para varios
 // puntos de cobro).
 const agentesConectados = new Map();
+// caja_id (o 'sucursal:<id>' sin caja) -> última vez que su agente se
+// desconectó, para mostrar "Desconectado hace 3 h". Solo en memoria: tras
+// reiniciar el servidor se pierde, y el dashboard muestra solo "sin conexión".
+const ultimaDesconexion = new Map();
 
 const igualSeguro = (a, b) => {
   const x = Buffer.from(String(a)); const y = Buffer.from(String(b));
@@ -92,12 +96,18 @@ function init(server) {
     // print-agent/agent.js) — a diferencia de unirse_sucursal/unirse_caja
     // (que también usan pantallas de staff normales), esto es exclusivo
     // del agente, así que sirve para saber "está vivo" desde el backend.
-    socket.on('agente:conectado', ({ sucursal_id, caja_id, caja_ids } = {}) => {
+    socket.on('agente:conectado', ({ sucursal_id, caja_id, caja_ids, version, version_pendiente, autoactualizacion } = {}) => {
       if (!sucursal_id || socket.data.quien?.tipo !== 'agente') return;
       // Compatibilidad: agentes viejos (antes de la selección múltiple de
       // cajas) mandan un único `caja_id` en vez de `caja_ids`.
       const idsFinal = Array.isArray(caja_ids) && caja_ids.length ? caja_ids : (caja_id ? [caja_id] : []);
-      agentesConectados.set(socket.id, { sucursal_id, caja_ids: idsFinal, conectado_en: Date.now() });
+      // version llega desde el agente 1.1.0 (auto-actualización); los anteriores no la mandan.
+      const texto = (v) => (typeof v === 'string' && /^\d+\.\d+\.\d+$/.test(v) ? v : null);
+      agentesConectados.set(socket.id, {
+        sucursal_id, caja_ids: idsFinal, conectado_en: Date.now(),
+        version: texto(version), version_pendiente: texto(version_pendiente),
+        autoactualizacion: autoactualizacion === undefined ? null : Boolean(autoactualizacion),
+      });
       if (idsFinal.length) {
         idsFinal.forEach((id) => emitir('agente:estado', { caja_id: id, conectado: true }, sucursal_id));
       } else {
@@ -109,6 +119,9 @@ function init(server) {
       const info = agentesConectados.get(socket.id);
       if (info) {
         agentesConectados.delete(socket.id);
+        const ahora = Date.now();
+        if (info.caja_ids.length) info.caja_ids.forEach((id) => ultimaDesconexion.set(id, ahora));
+        else ultimaDesconexion.set(`sucursal:${info.sucursal_id}`, ahora);
         if (info.caja_ids.length) {
           info.caja_ids.forEach((id) => emitir('agente:estado', { caja_id: id, conectado: false }, info.sucursal_id));
         } else {
@@ -137,13 +150,16 @@ function emitir(evento, datos = {}, sucursal_id = null, caja_id = null) {
 function estadoAgentes() {
   const filas = [];
   for (const info of agentesConectados.values()) {
+    const datos = { sucursal_id: info.sucursal_id, conectado_en: info.conectado_en, version: info.version, version_pendiente: info.version_pendiente, autoactualizacion: info.autoactualizacion };
     if (info.caja_ids.length) {
-      info.caja_ids.forEach((caja_id) => filas.push({ sucursal_id: info.sucursal_id, caja_id, conectado_en: info.conectado_en }));
+      info.caja_ids.forEach((caja_id) => filas.push({ ...datos, caja_id }));
     } else {
-      filas.push({ sucursal_id: info.sucursal_id, caja_id: null, conectado_en: info.conectado_en });
+      filas.push({ ...datos, caja_id: null });
     }
   }
   return filas;
 }
 
-module.exports = { init, emitir, estadoAgentes };
+const desconectadoEn = (caja_id) => ultimaDesconexion.get(caja_id) ?? null;
+
+module.exports = { init, emitir, estadoAgentes, desconectadoEn };

@@ -5,6 +5,8 @@ print-agent/dist/
 print-agent/config.json
 print-agent/agente.lock
 print-agent/agente.log
+# El .exe que el backend ofrece a las cajas: se construye en cada deploy.
+backend/agente-dist/
 print-agent-test/
 node_modules/
 

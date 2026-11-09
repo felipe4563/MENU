@@ -26,6 +26,25 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      # El backend sirve el .exe del agente de impresión para que las cajas se
+      # auto-actualicen (GET /api/v1/agente/version y /descargar). Se construye
+      # aquí y entra a la imagen en backend/agente-dist/. Si falla, la imagen
+      # sale igual y las cajas siguen con la versión que tienen.
+      - uses: actions/setup-node@v4
+        if: matrix.servicio == 'backend'
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: print-agent/package-lock.json
+
+      - name: Construir agente de impresión
+        if: matrix.servicio == 'backend'
+        continue-on-error: true
+        working-directory: print-agent
+        run: |
+          npm ci
+          npm run publicar -- --salida ../backend/agente-dist
+
       - uses: docker/setup-buildx-action@v3
 
       - uses: docker/login-action@v3
