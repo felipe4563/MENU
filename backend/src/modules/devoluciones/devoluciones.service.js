@@ -4,6 +4,7 @@ const {
 const { ajustarStockSucursal } = require('../inventario/stock.service');
 const { emitir } = require('../../socket');
 const ventasService = require('../ventas/ventas.service');
+const pagosParciales = require('../ventas/pagosParciales.service');
 const { cantidadVigente, calcularDevolucion, round2 } = require('./calculo');
 
 const _error = (mensaje, status) => Object.assign(new Error(mensaje), { status });
@@ -77,6 +78,9 @@ async function _cargarLineas(pedido, items, transaction) {
 }
 
 async function _anularSinCobrar(pedido, usuario_id, { items, motivo, nota }, transaction) {
+  // Partes ya cobradas (o con QR esperando): se leen antes de anular para
+  // verificar después que no se tocó nada pagado.
+  const pagos = await pagosParciales.partesVigentes(pedido.id, transaction);
   const lineas = await _cargarLineas(pedido, items, transaction);
 
   const devolucion = await Devolucion.create({
@@ -94,6 +98,7 @@ async function _anularSinCobrar(pedido, usuario_id, { items, motivo, nota }, tra
   }
 
   await ventasService.recalcularTotal(pedido.id, { transaction });
+  await pagosParciales.verificarLoPagado(pedido.id, pagos, transaction);
   await pedido.reload({ transaction });
   const estadoCocinaPrevio = await _limpiarCocinaSiVacio(pedido, transaction);
   const dev = await Devolucion.findByPk(devolucion.id, {

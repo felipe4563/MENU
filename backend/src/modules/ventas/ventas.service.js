@@ -1318,6 +1318,19 @@ async function crearCompleta({ tipo, mesa_id, nombre_cliente, documento_cliente,
   return { ...creado.toJSON(), datos_impresion };
 }
 
+// Cambia los platos de un pedido con su fila bloqueada y volviendo a ver que
+// siga pendiente: así un cambio no se cruza con el cobro de la última parte
+// (que completaría el pedido con un total viejo). `fn(t)` hace el cambio.
+async function _conPedidoBloqueado(pedido_id, mensajeNoModificable, fn) {
+  return sequelize.transaction(async (t) => {
+    const bloqueado = await Pedido.findByPk(pedido_id, { transaction: t, lock: t.LOCK.UPDATE });
+    if (!bloqueado || bloqueado.estado !== 'pendiente') {
+      throw Object.assign(new Error(mensajeNoModificable), { status: 409 });
+    }
+    return fn(t);
+  });
+}
+
 async function agregarItem(pedido_id, { producto_id, combo_id, cantidad = 1, nota, peso, opcion_ids, opciones_por_producto }, alcance) {
   const pedido = await Pedido.findByPk(pedido_id);
   if (!pedido) throw Object.assign(new Error('Pedido no encontrado'), { status: 404 });
@@ -1332,16 +1345,19 @@ async function agregarItem(pedido_id, { producto_id, combo_id, cantidad = 1, not
     }
     const opcionesPorProductoValidadas = await _validarOpcionesCombo(combo_id, opciones_por_producto);
     const extraCombo = await _extraPorOpciones(opcionesPorProductoValidadas.flatMap((o) => o.opcion_ids || []));
-    const item = await DetallePedido.create({
-      pedido_id, combo_id, producto_id: null, cantidad, precio: parseFloat(combo.precio) + extraCombo, peso: null, nota,
+    const item = await _conPedidoBloqueado(pedido_id, 'El pedido no está pendiente', async (t) => {
+      const creado = await DetallePedido.create({
+        pedido_id, combo_id, producto_id: null, cantidad, precio: parseFloat(combo.precio) + extraCombo, peso: null, nota,
+      }, { transaction: t });
+      if (opcionesPorProductoValidadas.length) {
+        const filas = opcionesPorProductoValidadas.flatMap((o) =>
+          (o.opcion_ids || []).map((opcion_id) => ({ detalle_pedido_id: creado.id, producto_id: o.producto_id, opcion_id }))
+        );
+        if (filas.length) await DetallePedidoComboOpcion.bulkCreate(filas, { transaction: t });
+      }
+      await _recalcularTotal(pedido_id, { transaction: t });
+      return creado;
     });
-    if (opcionesPorProductoValidadas.length) {
-      const filas = opcionesPorProductoValidadas.flatMap((o) =>
-        (o.opcion_ids || []).map((opcion_id) => ({ detalle_pedido_id: item.id, producto_id: o.producto_id, opcion_id }))
-      );
-      if (filas.length) await DetallePedidoComboOpcion.bulkCreate(filas);
-    }
-    await _recalcularTotal(pedido_id);
     await _relojCocinaAlAgregar(pedido);
     emitir('restaurante:actualizar', { tipo: 'pedido_items' });
     return item;
@@ -1355,20 +1371,23 @@ async function agregarItem(pedido_id, { producto_id, combo_id, cantidad = 1, not
   const precioBase = await _precioConPromocion(producto);
   const linea = _datosLinea({ cantidad, peso }, producto, precioBase, extra);
 
-  const item = await DetallePedido.create({
-    pedido_id,
-    producto_id,
-    cantidad: linea.cantidad,
-    precio: linea.precio,
-    peso: linea.peso,
-    nota,
+  const item = await _conPedidoBloqueado(pedido_id, 'El pedido no está pendiente', async (t) => {
+    const creado = await DetallePedido.create({
+      pedido_id,
+      producto_id,
+      cantidad: linea.cantidad,
+      precio: linea.precio,
+      peso: linea.peso,
+      nota,
+    }, { transaction: t });
+
+    if (opcion_ids?.length) {
+      await DetallePedidoOpcion.bulkCreate(opcion_ids.map(opcion_id => ({ detalle_pedido_id: creado.id, opcion_id })), { transaction: t });
+    }
+
+    await _recalcularTotal(pedido_id, { transaction: t });
+    return creado;
   });
-
-  if (opcion_ids?.length) {
-    await DetallePedidoOpcion.bulkCreate(opcion_ids.map(opcion_id => ({ detalle_pedido_id: item.id, opcion_id })));
-  }
-
-  await _recalcularTotal(pedido_id);
   await _relojCocinaAlAgregar(pedido);
   emitir('restaurante:actualizar', { tipo: 'pedido_items' });
   return item;
@@ -1382,20 +1401,31 @@ async function actualizarItem(pedido_id, item_id, { cantidad, nota, estado, peso
   const item = await DetallePedido.findOne({ where: { id: item_id, pedido_id } });
   if (!item) throw Object.assign(new Error('Item no encontrado'), { status: 404 });
 
+  let cambios;
   if (item.peso !== null && peso !== undefined) {
     const producto = await Producto.findByPk(item.producto_id);
     const precioBase = await _precioConPromocion(producto);
     const linea = _datosLinea({ peso }, producto, precioBase);
-    await item.update({ peso: linea.peso, precio: linea.precio, nota, estado });
+    cambios = { peso: linea.peso, precio: linea.precio, nota, estado };
   } else {
     const anulada = Number(item.cantidad_anulada || 0);
     if (cantidad !== undefined && cantidad !== null && Number(cantidad) < anulada) {
       throw Object.assign(new Error(`La cantidad no puede ser menor a lo ya anulado (${anulada})`), { status: 400 });
     }
-    await item.update({ cantidad, nota, estado });
+    cambios = { cantidad, nota, estado };
   }
 
-  await _recalcularTotal(pedido_id);
+  const partes = require('./pagosParciales.service');
+  await _conPedidoBloqueado(pedido_id, 'Pedido no modificable', async (t) => {
+    const pagos = await partes.partesVigentes(pedido_id, t);
+    // Una línea por peso ya pagada no cambia de precio.
+    if (cambios.peso !== undefined && partes.unidadesPagadas({ pagos }).get(item.id)) {
+      throw Object.assign(new Error(partes.MSJ_YA_PAGADO), { status: 409 });
+    }
+    await item.update(cambios, { transaction: t });
+    await _recalcularTotal(pedido_id, { transaction: t });
+    await partes.verificarLoPagado(pedido_id, pagos, t);
+  });
   emitir('restaurante:actualizar', { tipo: 'pedido_items' });
   return item;
 }
@@ -1407,14 +1437,20 @@ async function eliminarItem(pedido_id, item_id, alcance) {
   if (pedido.estado !== 'pendiente') throw Object.assign(new Error('Pedido no modificable'), { status: 409 });
   const item = await DetallePedido.findOne({ where: { id: item_id, pedido_id } });
   if (!item) throw Object.assign(new Error('Item no encontrado'), { status: 404 });
-  if (Number(item.cantidad_anulada || 0) > 0) {
-    // Con anulaciones registradas la línea no se borra (devolucion_items la
-    // referencia y es parte del registro): queda totalmente anulada.
-    await item.update({ cantidad: item.cantidad_anulada });
-  } else {
-    await item.destroy();
-  }
-  await _recalcularTotal(pedido_id);
+  const partes = require('./pagosParciales.service');
+  await _conPedidoBloqueado(pedido_id, 'Pedido no modificable', async (t) => {
+    // Se leen antes de borrar: los platos pagados se borrarían en cascada.
+    const pagos = await partes.partesVigentes(pedido_id, t);
+    if (Number(item.cantidad_anulada || 0) > 0) {
+      // Con anulaciones registradas la línea no se borra (devolucion_items la
+      // referencia y es parte del registro): queda totalmente anulada.
+      await item.update({ cantidad: item.cantidad_anulada }, { transaction: t });
+    } else {
+      await item.destroy({ transaction: t });
+    }
+    await _recalcularTotal(pedido_id, { transaction: t });
+    await partes.verificarLoPagado(pedido_id, pagos, t);
+  });
   emitir('restaurante:actualizar', { tipo: 'pedido_items' });
 }
 
@@ -1423,6 +1459,13 @@ async function cobrar(pedido_id, usuario_id, { metodo_pago, monto_recibido, desc
   if (!pedido) throw Object.assign(new Error('Pedido no encontrado'), { status: 404 });
   _verificarAlcance(pedido, alcance);
   if (!['pendiente', 'listo'].includes(pedido.estado)) throw Object.assign(new Error('El pedido no puede cobrarse'), { status: 409 });
+
+  // Con partes ya cobradas (o un QR de parte esperando) se cobra solo lo que falta.
+  const loQueFalta = await require('./pagosParciales.service').cobrarLoQueFalta(
+    pedido, usuario_id, { metodo_pago, monto_recibido, descuento, cupon_codigo, puntos_canjear, propina }, alcance,
+  );
+  if (loQueFalta) return loQueFalta;
+
   if (!pedido.sesion_caja_id) throw Object.assign(new Error('No hay sesión de caja activa en este pedido'), { status: 409 });
 
   const sesion = await SesionCaja.findByPk(pedido.sesion_caja_id);
@@ -1458,7 +1501,9 @@ async function cobrar(pedido_id, usuario_id, { metodo_pago, monto_recibido, desc
     if (!bloqueado || !['pendiente', 'listo'].includes(bloqueado.estado)) {
       throw Object.assign(new Error('El pedido no puede cobrarse'), { status: 409 });
     }
-    if (parseFloat(bloqueado.total) !== parseFloat(pedido.total)) {
+    // Una parte cobrada mientras tanto también cambia lo que hay que cobrar.
+    const conPartes = await PedidoPago.count({ where: { pedido_id, estado: ['pendiente', 'completado'] }, transaction: t });
+    if (parseFloat(bloqueado.total) !== parseFloat(pedido.total) || conPartes > 0) {
       throw Object.assign(new Error('El pedido cambió mientras se cobraba. Vuelve a intentarlo'), { status: 409 });
     }
     const filas = await DetallePedido.findAll({ where: { pedido_id }, transaction: t });
@@ -1486,7 +1531,15 @@ async function cancelar(pedido_id, usuario_id, alcance) {
   _verificarAlcance(pedido, alcance);
   if (pedido.estado !== 'pendiente') throw Object.assign(new Error('Solo se pueden cancelar pedidos pendientes'), { status: 409 });
 
-  await pedido.update({ estado: 'cancelado', estado_cocina: null });
+  await sequelize.transaction(async (t) => {
+    // Bloqueado: no se cruza con el cobro de una parte.
+    const bloqueado = await Pedido.findByPk(pedido_id, { transaction: t, lock: t.LOCK.UPDATE });
+    if (bloqueado.estado !== 'pendiente') throw Object.assign(new Error('Solo se pueden cancelar pedidos pendientes'), { status: 409 });
+    // Con partes cobradas (o un QR de parte esperando) hay dinero de por medio.
+    const conPartes = await PedidoPago.count({ where: { pedido_id, estado: ['pendiente', 'completado'] }, transaction: t });
+    if (conPartes > 0) throw Object.assign(new Error(require('./pagosParciales.service').MSJ_YA_PAGADO), { status: 409 });
+    await bloqueado.update({ estado: 'cancelado', estado_cocina: null }, { transaction: t });
+  });
 
   if (pedido.tipo !== 'llevar' && pedido.mesa_id) {
     // Libera mesa.estado; la sesión de autoservicio se cierra solo a mano

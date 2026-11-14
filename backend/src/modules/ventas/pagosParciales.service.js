@@ -14,6 +14,9 @@ const METODOS = ['efectivo', 'qr'];
 
 const error = (mensaje, status) => Object.assign(new Error(mensaje), { status });
 
+const MSJ_YA_PAGADO = 'Ya se pagó una parte: termina de cobrar y haz una devolución';
+const MSJ_QR_PENDIENTE = 'Hay un QR esperando confirmación';
+
 // Unidades ya pagadas (o comprometidas en un QR pendiente) por cada línea del
 // pedido. Espera `pedido.pagos` con sus `items`.
 function unidadesPagadas(pedido) {
@@ -30,6 +33,32 @@ function unidadesPagadas(pedido) {
 // Lo que falta pagar del pedido.
 function falta(pedido) {
   return round2(Number(pedido.total || 0) - Number(pedido.pagado || 0));
+}
+
+// Partes vigentes del pedido (cobradas o con un QR esperando), con sus platos.
+async function partesVigentes(pedido_id, transaction) {
+  return PedidoPago.findAll({
+    where: { pedido_id, estado: ['pendiente', 'completado'] },
+    include: [{ model: PedidoPagoItem, as: 'items' }],
+    transaction,
+  });
+}
+
+// Después de bajar platos de un pedido (anular, editar o quitar una línea),
+// con el pedido bloqueado y `pagos` leídas antes del cambio: ninguna unidad
+// pagada (o reservada por un QR pendiente) puede quedar fuera, ni el total
+// por debajo de lo cobrado más lo que espera un QR. Si pasa, 409 y la
+// transacción se revierte.
+async function verificarLoPagado(pedido_id, pagos, transaction) {
+  if (!pagos.length) return;
+  const pedido = await Pedido.findByPk(pedido_id, { transaction });
+  const detalles = await DetallePedido.findAll({ where: { pedido_id }, transaction });
+  for (const [detalle_pedido_id, cantidad] of unidadesPagadas({ pagos })) {
+    const detalle = detalles.find((d) => d.id === detalle_pedido_id);
+    if (!detalle || cantidadVigente(detalle) < cantidad) throw error(MSJ_YA_PAGADO, 409);
+  }
+  const comprometido = round2(pagos.reduce((s, p) => s + Number(p.monto), 0));
+  if (Number(pedido.total) < comprometido - 0.005) throw error(MSJ_YA_PAGADO, 409);
 }
 
 // Caja abierta de un usuario en la sucursal del pedido (o null).
@@ -133,7 +162,9 @@ function _montoPorPlatos(items, detalles, pagadas) {
 // Campos del cobro completo que no aplican a una parte.
 const _hayAjuste = (v) => (typeof v === 'string' ? v.trim() !== '' && Number(v) !== 0 : Boolean(v) && Number(v) !== 0);
 
-async function cobrarParte(pedido_id, usuario_id, { metodo_pago, monto_recibido, persona, modo, monto, items, descuento, cupon_codigo, puntos_canjear, propina } = {}, alcance) {
+// Con `saldoCompleto` (cobro de la cuenta completa con pagos hechos) la parte
+// es exactamente lo que falta, leído con el pedido bloqueado.
+async function cobrarParte(pedido_id, usuario_id, { metodo_pago, monto_recibido, persona, modo, monto, items, descuento, cupon_codigo, puntos_canjear, propina } = {}, alcance, { saldoCompleto = false } = {}) {
   if (!MODOS.includes(modo)) throw error("modo debe ser 'platos' o 'iguales'", 400);
   if (_hayAjuste(descuento) || (cupon_codigo && String(cupon_codigo).trim() !== '') || _hayAjuste(puntos_canjear) || _hayAjuste(propina)) {
     throw error('Con pagos parciales no se aplican descuentos, cupones ni puntos', 400);
@@ -153,7 +184,7 @@ async function cobrarParte(pedido_id, usuario_id, { metodo_pago, monto_recibido,
       include: [{ model: PedidoPagoItem, as: 'items' }],
       transaction: t,
     });
-    if (pagos.some((p) => p.estado === 'pendiente')) throw error('Hay un QR esperando confirmación', 409);
+    if (pagos.some((p) => p.estado === 'pendiente')) throw error(MSJ_QR_PENDIENTE, 409);
 
     const faltante = falta(pedido);
     let montoParte;
@@ -162,7 +193,7 @@ async function cobrarParte(pedido_id, usuario_id, { metodo_pago, monto_recibido,
       const detalles = await DetallePedido.findAll({ where: { pedido_id: pedido.id }, transaction: t });
       ({ monto: montoParte, lineas } = _montoPorPlatos(items, detalles, unidadesPagadas({ pagos })));
     } else {
-      montoParte = round2(Number(monto));
+      montoParte = saldoCompleto ? faltante : round2(Number(monto));
       if (!Number.isFinite(montoParte) || montoParte <= 0) throw error('El monto debe ser mayor a cero', 400);
     }
     if (montoParte > faltante + 0.005) throw error('Es más de lo que falta', 409);
@@ -218,6 +249,23 @@ async function cobrarParte(pedido_id, usuario_id, { metodo_pago, monto_recibido,
   };
 }
 
+// Cobro de la cuenta completa (POST /ventas/:id/cobrar) sobre un pedido que
+// ya tiene partes: cobra solo lo que falta como una última parte en partes
+// iguales, sin descuentos. Devuelve la misma forma que ventasService.cobrar,
+// o null si el pedido no tiene partes (sigue el cobro de siempre).
+async function cobrarLoQueFalta(pedido, usuario_id, { metodo_pago, monto_recibido, descuento, cupon_codigo, puntos_canjear, propina } = {}, alcance) {
+  const pagos = await PedidoPago.findAll({ where: { pedido_id: pedido.id, estado: ['pendiente', 'completado'] } });
+  if (!pagos.length) return null;
+  if (pagos.some((p) => p.estado === 'pendiente')) throw error(MSJ_QR_PENDIENTE, 409);
+  if (_hayAjuste(descuento) || (cupon_codigo && String(cupon_codigo).trim() !== '') || _hayAjuste(puntos_canjear) || _hayAjuste(propina)) {
+    throw error('Con pagos hechos, cobra lo que falta sin descuentos', 400);
+  }
+
+  const r = await cobrarParte(pedido.id, usuario_id, { metodo_pago, monto_recibido, modo: 'iguales' }, alcance, { saldoCompleto: true });
+  if (r.pago_qr) return { pedido: r.pedido, pago_qr: r.pago_qr };
+  return { ...r.pedido.toJSON(), datos_impresion: r.datos_impresion };
+}
+
 // Confirma el QR de una parte (webhook, consulta o confirmación manual):
 // la parte pasa a completada y se asienta como una en efectivo (caja según
 // _sesionParaConfirmar). Corre dentro de la transacción de _confirmarPagoQr.
@@ -247,5 +295,5 @@ async function _anularParteQr(pagoQr, transaction) {
 }
 
 module.exports = {
-  cobrarParte, unidadesPagadas, falta, _sesionParaCobrar, _completarSiCorresponde, _confirmarParteQr, _anularParteQr,
+  cobrarParte, cobrarLoQueFalta, unidadesPagadas, falta, partesVigentes, verificarLoPagado, MSJ_YA_PAGADO, MSJ_QR_PENDIENTE, _sesionParaCobrar, _completarSiCorresponde, _confirmarParteQr, _anularParteQr,
 };

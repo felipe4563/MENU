@@ -4,7 +4,7 @@ const bcrypt = require('bcryptjs');
 const app = require('../src/app');
 const {
   Sucursal, Area, Mesa, Caja, SesionCaja, Usuario, Rol, Categoria, Producto, ProductoStockSucursal, RegistroInventario,
-  Pedido, DetallePedido, LibroCaja, PedidoPago, PedidoPagoItem, PagoQr, Configuracion,
+  Pedido, DetallePedido, LibroCaja, PedidoPago, PedidoPagoItem, PagoQr, Configuracion, Devolucion, DevolucionItem,
 } = require('../src/models');
 
 // Las partes por QR usan el QR propio del negocio (lo confirma el cajero).
@@ -89,6 +89,9 @@ describe('Dividir cuenta', () => {
     await PagoQr.destroy({ where: { pedido_id: ids } });
     await PedidoPagoItem.destroy({ where: { pedido_pago_id: pagos } });
     await PedidoPago.destroy({ where: { pedido_id: ids } });
+    const devoluciones = (await Devolucion.findAll({ where: { pedido_id: ids }, attributes: ['id'] })).map((d) => d.id);
+    await DevolucionItem.destroy({ where: { devolucion_id: devoluciones } });
+    await Devolucion.destroy({ where: { id: devoluciones } });
     await LibroCaja.destroy({ where: { sesion_caja_id: sesiones } });
     await DetallePedido.destroy({ where: { pedido_id: ids } });
     await Pedido.destroy({ where: { id: ids } });
@@ -428,6 +431,108 @@ describe('Dividir cuenta', () => {
       expect(pago.sesion_caja_id).toBe(sesion2.id);
       const asientos = await LibroCaja.findAll({ where: { referencia_id: id, tipo: 'ingreso', sesion_caja_id: [sesion.id, sesion2.id, ...sesionesExtra.map((x) => x.id)] } });
       expect(asientos.map((a) => a.sesion_caja_id)).toEqual([sesion2.id]);
+    });
+  });
+
+  describe('reglas con pagos hechos', () => {
+    const MSJ_PAGADO = 'Ya se pagó una parte: termina de cobrar y haz una devolución';
+    const anular = (id, items) => request(app).post(`/api/v1/ventas/${id}/anular`).set('Authorization', `Bearer ${token}`)
+      .send({ items, motivo: 'demora' });
+    const cancelar = (id) => request(app).post(`/api/v1/ventas/${id}/cancelar`).set('Authorization', `Bearer ${token}`);
+    const cobrar = (id, body) => request(app).post(`/api/v1/ventas/${id}/cobrar`).set('Authorization', `Bearer ${token}`).send(body);
+
+    it('no se cancela un pedido con pagos', async () => {
+      const id = await nuevoPedido([{ producto: platoC, cantidad: 1 }]);
+      expect((await parte(id, { modo: 'iguales', monto: 40, metodo_pago: 'efectivo', monto_recibido: 40 })).status).toBe(201);
+      const r = await cancelar(id);
+      expect(r.status).toBe(409);
+      expect(r.body.mensaje).toBe(MSJ_PAGADO);
+      expect((await ver(id)).estado).toBe('pendiente');
+    });
+
+    it('no se anula un plato ya pagado', async () => {
+      const id = await nuevoPedido([{ producto: platoA, cantidad: 1 }, { producto: platoB, cantidad: 1 }]);
+      const dA = detalleDe(await ver(id), platoA);
+      expect((await parte(id, { modo: 'platos', items: [{ detalle_pedido_id: dA.id, cantidad: 1 }], metodo_pago: 'efectivo', monto_recibido: 30 })).status).toBe(201);
+      const r = await anular(id, [{ detalle_pedido_id: dA.id, cantidad: 1 }]);
+      expect(r.status).toBe(409);
+      expect(r.body.mensaje).toBe(MSJ_PAGADO);
+      const pedido = await ver(id);
+      expect(pedido.total).toBe('55.00');
+      expect(detalleDe(pedido, platoA).cantidad_anulada).toBe(0);
+    });
+
+    it('anular que deja el total bajo lo pagado', async () => {
+      const id = await nuevoPedido([{ producto: platoA, cantidad: 1 }, { producto: platoB, cantidad: 1 }]);
+      const dB = detalleDe(await ver(id), platoB);
+      expect((await parte(id, { modo: 'iguales', monto: 50, metodo_pago: 'efectivo', monto_recibido: 50 })).status).toBe(201);
+      const r = await anular(id, [{ detalle_pedido_id: dB.id, cantidad: 1 }]);
+      expect(r.status).toBe(409);
+      expect(r.body.mensaje).toBe(MSJ_PAGADO);
+      expect((await ver(id)).total).toBe('55.00');
+    });
+
+    it('anular un plato sin pagar baja lo que falta', async () => {
+      const id = await nuevoPedido([{ producto: platoA, cantidad: 1 }, { producto: platoB, cantidad: 1 }]);
+      const pedido = await ver(id);
+      const dA = detalleDe(pedido, platoA);
+      const dB = detalleDe(pedido, platoB);
+      expect((await parte(id, { modo: 'platos', items: [{ detalle_pedido_id: dA.id, cantidad: 1 }], metodo_pago: 'efectivo', monto_recibido: 30 })).status).toBe(201);
+      const r = await anular(id, [{ detalle_pedido_id: dB.id, cantidad: 1 }]);
+      expect(r.status).toBe(201);
+      const despues = await ver(id);
+      expect(despues.total).toBe('30.00');
+      expect(Number(despues.total) - Number(despues.pagado)).toBe(0);
+    });
+
+    it('cobrar la cuenta completa con pagos cobra solo lo que falta', async () => {
+      const id = await nuevoPedido([{ producto: platoA, cantidad: 1 }, { producto: platoB, cantidad: 1 }], { mesa: true });
+      expect((await parte(id, { modo: 'iguales', monto: 20, metodo_pago: 'efectivo', monto_recibido: 20 })).status).toBe(201);
+
+      const conDescuento = await cobrar(id, { metodo_pago: 'efectivo', monto_recibido: 35, descuento: 5 });
+      expect(conDescuento.status).toBe(400);
+      expect(conDescuento.body.mensaje).toBe('Con pagos hechos, cobra lo que falta sin descuentos');
+
+      const r = await cobrar(id, { metodo_pago: 'efectivo', monto_recibido: 50 });
+      expect(r.status).toBe(200);
+      expect(r.body.datos.id).toBe(id);
+      expect(r.body.datos.estado).toBe('completado');
+      expect(r.body.datos).toHaveProperty('datos_impresion');
+      expect(r.body.datos.pagado).toBe('55.00');
+      expect(r.body.datos.cambio).toBe('15.00');
+
+      const pagos = await PedidoPago.findAll({ where: { pedido_id: id }, order: [['id', 'ASC']] });
+      expect(pagos.map((p) => [p.modo, p.monto])).toEqual([['iguales', '20.00'], ['iguales', '35.00']]);
+      const asientos = await LibroCaja.findAll({ where: { referencia_id: id, tipo: 'ingreso' } });
+      expect(asientos.map((a) => a.monto)).toEqual(['20.00', '35.00']);
+    });
+
+    it('con un QR de parte pendiente no se cobra la cuenta completa ni se cancela', async () => {
+      const id = await nuevoPedido([{ producto: platoC, cantidad: 1 }]);
+      expect((await parte(id, { modo: 'iguales', monto: 40, metodo_pago: 'qr' })).status).toBe(201);
+
+      const r = await cobrar(id, { metodo_pago: 'efectivo', monto_recibido: 100 });
+      expect(r.status).toBe(409);
+      expect(r.body.mensaje).toBe('Hay un QR esperando confirmación');
+
+      const c = await cancelar(id);
+      expect(c.status).toBe(409);
+      expect(c.body.mensaje).toBe(MSJ_PAGADO);
+      const pedido = await ver(id);
+      expect(pedido.estado).toBe('pendiente');
+      expect(pedido.pagado).toBe('0.00');
+    });
+
+    it('no se baja la cantidad de un plato ya pagado', async () => {
+      const id = await nuevoPedido([{ producto: platoA, cantidad: 2 }, { producto: platoB, cantidad: 1 }]);
+      const dA = detalleDe(await ver(id), platoA);
+      expect((await parte(id, { modo: 'platos', items: [{ detalle_pedido_id: dA.id, cantidad: 2 }], metodo_pago: 'efectivo', monto_recibido: 60 })).status).toBe(201);
+      const r = await request(app).put(`/api/v1/ventas/${id}/items/${dA.id}`).set('Authorization', `Bearer ${token}`).send({ cantidad: 1 });
+      expect(r.status).toBe(409);
+      expect(r.body.mensaje).toBe(MSJ_PAGADO);
+      const pedido = await ver(id);
+      expect(detalleDe(pedido, platoA).cantidad).toBe(2);
+      expect(pedido.total).toBe('85.00');
     });
   });
 });
