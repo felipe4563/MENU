@@ -1,7 +1,7 @@
 const { Op } = require('sequelize');
 const {
   Pedido, DetallePedido, Mesa, Producto, Cliente, SesionCaja, Caja, LibroCaja, Configuracion, PagoQr, Opcion, Combo, ComboProducto, Promocion, Cupon,
-  RecetaInsumo, DetallePedidoOpcion, DetallePedidoComboOpcion, Devolucion, DevolucionItem, Usuario, CocinaTiempo, sequelize,
+  RecetaInsumo, DetallePedidoOpcion, DetallePedidoComboOpcion, Devolucion, DevolucionItem, Usuario, CocinaTiempo, PedidoPago, PedidoPagoItem, sequelize,
 } = require('../../models');
 const { emitir } = require('../../socket');
 const { ajustarStockSucursal } = require('../inventario/stock.service');
@@ -293,8 +293,19 @@ async function obtener(id, alcance) {
           { model: DevolucionItem, as: 'items' },
         ],
       },
+      // Partes cobradas de una cuenta dividida (con sus platos y quién cobró).
+      {
+        model: PedidoPago, as: 'pagos', required: false,
+        include: [
+          { model: PedidoPagoItem, as: 'items' },
+          { model: Usuario, as: 'usuario', attributes: ['id', 'nombre'] },
+        ],
+      },
     ],
-    order: [[{ model: Devolucion, as: 'devoluciones' }, 'creado_en', 'ASC']],
+    order: [
+      [{ model: Devolucion, as: 'devoluciones' }, 'creado_en', 'ASC'],
+      [{ model: PedidoPago, as: 'pagos' }, 'id', 'ASC'],
+    ],
   });
   if (!p) throw Object.assign(new Error('Pedido no encontrado'), { status: 404 });
   _verificarAlcance(p, alcance);

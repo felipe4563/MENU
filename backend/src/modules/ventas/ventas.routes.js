@@ -28,6 +28,7 @@ router.post('/:id/items', verificarPermiso('ventas', 'crear'), ctrl.agregarItem)
 router.put('/:id/items/:item_id', verificarPermiso('ventas', 'crear'), ctrl.actualizarItem);
 router.delete('/:id/items/:item_id', verificarPermiso('ventas', 'crear'), ctrl.eliminarItem);
 router.post('/:id/cobrar', verificarPermiso('ventas', 'cobrar'), requiereSucursalActiva, ctrl.cobrar);
+router.post('/:id/pagos', verificarPermiso('ventas', 'cobrar'), requiereSucursalActiva, ctrl.cobrarParte);
 router.get('/:id/pago-qr/estado', verificarPermiso('ventas', 'cobrar'), ctrl.estadoPagoQr);
 router.post('/:id/pago-qr/cancelar', verificarPermiso('ventas', 'cobrar'), ctrl.cancelarPagoQr);
 router.post('/:id/pago-qr/confirmar', verificarPermiso('ventas', 'cobrar'), ctrl.confirmarPagoQr);

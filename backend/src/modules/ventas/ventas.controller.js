@@ -1,4 +1,5 @@
 const svc = require('./ventas.service');
+const pagosParciales = require('./pagosParciales.service');
 
 function _alcance(req) {
   return { sucursal_id: req.usuario.sucursal_id, acceso_todas: req.usuario.acceso_todas };
@@ -70,6 +71,12 @@ async function cobrar(req, res, next) {
   } catch (err) { next(err); }
 }
 
+// Cobra una parte del pedido (cuenta dividida por platos o en partes iguales).
+async function cobrarParte(req, res, next) {
+  try { res.status(201).json({ ok: true, datos: await pagosParciales.cobrarParte(req.params.id, req.usuario.id, req.body, _alcance(req)) }); }
+  catch (err) { next(err); }
+}
+
 async function cancelar(req, res, next) {
   try { res.json({ ok: true, datos: await svc.cancelar(req.params.id, req.usuario.id, _alcance(req)) }); }
   catch (err) { next(err); }
@@ -110,4 +117,4 @@ async function pagosQrPorConfirmar(req, res, next) {
   catch (err) { next(err); }
 }
 
-module.exports = { listar, obtener, misVentasHoy, reimprimir, crear, crearCompleta, agregarItem, actualizarItem, eliminarItem, cobrar, cancelar, listarCocina, marcarListo, marcarEntregado, estadoPagoQr, cancelarPagoQr, confirmarPagoQr, pagosQrPorConfirmar };
+module.exports = { listar, obtener, misVentasHoy, reimprimir, crear, crearCompleta, agregarItem, actualizarItem, eliminarItem, cobrar, cobrarParte, cancelar, listarCocina, marcarListo, marcarEntregado, estadoPagoQr, cancelarPagoQr, confirmarPagoQr, pagosQrPorConfirmar };
