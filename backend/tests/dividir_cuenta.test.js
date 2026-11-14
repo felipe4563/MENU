@@ -135,7 +135,7 @@ describe('Dividir cuenta', () => {
     expect(juanita.body.datos.pago.monto).toBe('30.00');
     expect(juanita.body.datos.pago.cambio).toBe('20.00');
     expect(juanita.body.datos.pedido.pagado).toBe('30.00');
-    expect(juanita.body.datos.datos_impresion).toBeNull();
+    expect(juanita.body.datos.datos_impresion.caja.pago_parcial.persona).toBe('Juanita');
 
     const felipe = await parte(id, {
       modo: 'platos', persona: 'Felipe', items: [{ detalle_pedido_id: dA.id, cantidad: 1 }, { detalle_pedido_id: dB.id, cantidad: 1 }],
@@ -558,6 +558,104 @@ describe('Dividir cuenta', () => {
       expect(pedido.cupon_id).toBeNull();
       expect(await PagoQr.count({ where: { pedido_id: id } })).toBe(0);
       expect((await Cupon.findByPk(cupon.id)).usos_actuales).toBe(0);
+    });
+  });
+
+  describe('Comprobantes de cada parte', () => {
+    let flujoAntes;
+    beforeAll(async () => {
+      // Con cocina física, para comprobar que las partes no reimprimen la comanda.
+      flujoAntes = await Configuracion.findOne({ where: { clave: 'flujo_cocina' } });
+      await Configuracion.upsert({ clave: 'flujo_cocina', valor: 'fisico' });
+    });
+    afterAll(async () => {
+      if (flujoAntes) await Configuracion.upsert({ clave: 'flujo_cocina', valor: flujoAntes.valor });
+      else await Configuracion.destroy({ where: { clave: 'flujo_cocina' } });
+    });
+
+    const reimprimir = (id) => request(app).post(`/api/v1/ventas/${id}/reimprimir`).set('Authorization', `Bearer ${token}`);
+    const cobrarEntero = (id, body) => request(app).post(`/api/v1/ventas/${id}/cobrar`).set('Authorization', `Bearer ${token}`).send(body);
+
+    it('cada parte devuelve su comprobante con lo que falta', async () => {
+      const id = await nuevoPedido([{ producto: platoA, cantidad: 1 }, { producto: platoB, cantidad: 1 }], { mesa: true });
+      const dA = detalleDe(await ver(id), platoA);
+
+      const juan = await parte(id, {
+        modo: 'platos', persona: 'Juan', items: [{ detalle_pedido_id: dA.id, cantidad: 1 }], metodo_pago: 'efectivo', monto_recibido: 50,
+      });
+      expect(juan.status).toBe(201);
+      const { caja, cocina } = juan.body.datos.datos_impresion;
+      expect(cocina).toBeNull();
+      expect(caja.partes).toBeUndefined();
+      expect(caja.pago_parcial).toEqual({
+        pago_id: juan.body.datos.pago.id, numero: 1, persona: 'Juan', modo: 'platos', monto: 30, metodo_pago: 'efectivo',
+        monto_recibido: 50, cambio: 20, pagado: 30, falta: 25, partes_iguales_de: null,
+        items: [{ nombre: 'Plato A', cantidad: 1, subtotal: 30 }],
+      });
+      expect(caja.metodo_pago).toBe('efectivo');
+
+      const otra = await parte(id, { modo: 'iguales', monto: 10, metodo_pago: 'efectivo', monto_recibido: 10 });
+      expect(otra.status).toBe(201);
+      const pp = otra.body.datos.datos_impresion.caja.pago_parcial;
+      expect(pp).toMatchObject({ numero: 2, persona: null, modo: 'iguales', monto: 10, cambio: 0, pagado: 40, falta: 15, items: [] });
+      expect(otra.body.datos.datos_impresion.cocina).toBeNull();
+    });
+
+    it('el ticket final lista las partes', async () => {
+      const id = await nuevoPedido([{ producto: platoC, cantidad: 1 }], { mesa: true });
+      expect((await parte(id, { modo: 'iguales', persona: 'Ana', monto: 60, metodo_pago: 'efectivo', monto_recibido: 60 })).status).toBe(201);
+
+      const ultima = await parte(id, { modo: 'iguales', monto: 40, metodo_pago: 'efectivo', monto_recibido: 50 });
+      expect(ultima.status).toBe(201);
+      expect(ultima.body.datos.completado).toBe(true);
+      const { caja, cocina } = ultima.body.datos.datos_impresion;
+      expect(cocina).toBeNull();
+      expect(caja.pago_parcial).toBeUndefined();
+      expect(caja.partes.length).toBe(2);
+      expect(caja.partes).toEqual([
+        { numero: 1, persona: 'Ana', metodo_pago: 'efectivo', monto: 60 },
+        { numero: 2, persona: null, metodo_pago: 'efectivo', monto: 40 },
+      ]);
+
+      // Al reimprimir también salen las partes.
+      const re = await reimprimir(id);
+      expect(re.status).toBe(200);
+      expect(re.body.datos.caja.partes).toHaveLength(2);
+      expect(re.body.datos.caja.pago_parcial).toBeUndefined();
+    });
+
+    it('una parte por QR imprime su comprobante al confirmarse', async () => {
+      const id = await nuevoPedido([{ producto: platoC, cantidad: 1 }]);
+      const conQr = await parte(id, { modo: 'iguales', persona: 'Beto', monto: 40, metodo_pago: 'qr' });
+      expect(conQr.status).toBe(201);
+      expect(conQr.body.datos.datos_impresion).toBeNull(); // todavía no se pagó
+
+      const confirmar = await qr(id, 'confirmar');
+      expect(confirmar.status).toBe(200);
+      const { caja, cocina } = confirmar.body.datos.datos_impresion;
+      expect(cocina).toBeNull();
+      expect(caja.pago_parcial).toMatchObject({ numero: 1, persona: 'Beto', metodo_pago: 'qr', monto: 40, pagado: 40, falta: 60 });
+
+      // La última parte, por QR, cierra el pedido con el ticket final.
+      expect((await parte(id, { modo: 'iguales', monto: 60, metodo_pago: 'qr' })).status).toBe(201);
+      const cierre = await qr(id, 'confirmar');
+      expect(cierre.status).toBe(200);
+      expect(cierre.body.datos.estado).toBe('completado');
+      expect(cierre.body.datos.datos_impresion.cocina).toBeNull();
+      expect(cierre.body.datos.datos_impresion.caja.pago_parcial).toBeUndefined();
+      expect(cierre.body.datos.datos_impresion.caja.partes.map((p) => [p.numero, p.metodo_pago, p.monto])).toEqual([[1, 'qr', 40], [2, 'qr', 60]]);
+    });
+
+    it('cobrar la cuenta completa con partes imprime el ticket final con las partes', async () => {
+      const id = await nuevoPedido([{ producto: platoA, cantidad: 1 }, { producto: platoB, cantidad: 1 }], { mesa: true });
+      expect((await parte(id, { modo: 'iguales', monto: 20, metodo_pago: 'efectivo', monto_recibido: 20 })).status).toBe(201);
+
+      const r = await cobrarEntero(id, { metodo_pago: 'efectivo', monto_recibido: 50 });
+      expect(r.status).toBe(200);
+      const { caja, cocina } = r.body.datos.datos_impresion;
+      expect(cocina).toBeNull();
+      expect(caja.pago_parcial).toBeUndefined();
+      expect(caja.partes.map((p) => p.monto)).toEqual([20, 35]);
     });
   });
 

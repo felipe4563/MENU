@@ -5,6 +5,7 @@ const path             = require('path');
 const os               = require('os');
 const http             = require('http');
 const act              = require('./actualizacion');
+const ticketPartes     = require('./ticketPagoParcial');
 const VERSION          = require('./package.json').version;
 
 // En producción (pkg) lee config junto al .exe; en dev, junto al script
@@ -167,22 +168,29 @@ async function imprimirContando(impresora, buffer) {
 
 async function imprimirCaja(datos, origen, forzar) {
   var pid = datos.pedido ? datos.pedido.id : '?';
+  // El comprobante de una parte de la cuenta se deduplica por la parte
+  // ("caja-parte:<pago_id>"): con la clave del pedido taparía las otras
+  // partes y el ticket final.
+  var esParte = !!datos.pago_parcial;
+  var tipoDedup = esParte ? 'caja-parte' : 'caja';
+  var claveDedup = esParte ? datos.pago_parcial.pago_id : pid;
+  var etiqueta = esParte ? 'Parte ' + datos.pago_parcial.numero + ' del pedido #' + pid : 'Pedido #' + pid;
   var motivo = motivoNoPertenece(datos);
   if (motivo) {
-    console.log('[' + ts() + '] .. print:caja Pedido #' + pid + ' es de ' + motivo + ' (' + origen + ', omitido)');
+    console.log('[' + ts() + '] .. print:caja ' + etiqueta + ' es de ' + motivo + ' (' + origen + ', omitido)');
     return;
   }
-  if (!forzar && yaImpreso('caja', pid)) {
-    console.log('[' + ts() + '] .. print:caja Pedido #' + pid + ' ya impreso (' + origen + ', omitido)');
+  if (!forzar && yaImpreso(tipoDedup, claveDedup)) {
+    console.log('[' + ts() + '] .. print:caja ' + etiqueta + ' ya impreso (' + origen + ', omitido)');
     return;
   }
-  reservar('caja', pid);
-  console.log('[' + ts() + '] >> print:caja  Pedido #' + pid + ' (' + origen + (forzar ? ', forzado' : '') + ')');
+  reservar(tipoDedup, claveDedup);
+  console.log('[' + ts() + '] >> print:caja  ' + etiqueta + ' (' + origen + (forzar ? ', forzado' : '') + ')');
   try {
     await imprimirContando(config.impresora_caja, buildCaja(datos, COLS_CAJA));
     console.log('[' + ts() + '] OK Caja impreso');
   } catch (err) {
-    liberar('caja', pid);
+    liberar(tipoDedup, claveDedup);
     throw err;
   }
 }
@@ -857,6 +865,12 @@ function buildCaja(data, cols) {
   var t = new Esc(cols);
   t.init().charset();
 
+  // Parte de una cuenta dividida que no completa el pedido: comprobante corto.
+  if (data.pago_parcial) {
+    ticketPartes.pagoParcial(t, data);
+    return t.lf(3).cut().build();
+  }
+
   // ── Encabezado ────────────────────────────────────────────────────────────
   t.rule('=');
   t.center().bold(true).line(nombre.toUpperCase()).bold(false);
@@ -941,9 +955,12 @@ function buildCaja(data, cols) {
   t.rule('=');
 
   // ── Método de pago ────────────────────────────────────────────────────────
-  var METODO_PAGO_LABEL = { qr: 'QR / Transferencia', app_externa: 'Pagado en la app', diferido: 'Pendiente de cobro' };
+  var METODO_PAGO_LABEL = { qr: 'QR / Transferencia', app_externa: 'Pagado en la app', diferido: 'Pendiente de cobro', mixto: 'Mixto' };
   t.left().line('Forma de pago: ' + (METODO_PAGO_LABEL[metodo_pago] || 'Efectivo'));
   t.rule('-');
+
+  // ── Partes de una cuenta dividida ────────────────────────────────────────
+  if (data.partes && data.partes.length) ticketPartes.bloquePartes(t, data.partes, sym);
 
   // ── Cliente / puntos de fidelidad ────────────────────────────────────────
   if (pedido.cliente && (puntosGanados > 0 || pedido.cliente.puntos != null)) {

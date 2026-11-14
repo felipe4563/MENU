@@ -24,7 +24,91 @@ function _opcionesPorProducto(comboOpciones) {
   return mapa;
 }
 
+// Texto de usuario (persona, platos) dentro del HTML del ticket.
+const _esc = (v) => String(v ?? '').replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+const METODO_PARTE = { efectivo: 'Efectivo', qr: 'QR' };
+
+// Bloque PAGOS del ticket final de una cuenta dividida: una línea por parte.
+function _bloquePartes(partes, simbolo) {
+  if (!partes?.length) return '';
+  const filas = partes.map((p) => {
+    const etiqueta = [`Parte ${p.numero}`, p.persona && _esc(p.persona), METODO_PARTE[p.metodo_pago] ?? p.metodo_pago].filter(Boolean).join(' · ');
+    return `<div class="total-row"><span>${etiqueta}</span><span>${simbolo} ${Number(p.monto).toFixed(2)}</span></div>`;
+  }).join('');
+  return `<hr class="sdash"/><div class="sec-title">Pagos</div>${filas}`;
+}
+
+// Comprobante corto de una parte que no completa el pedido (ver
+// _emitirImpresion en el backend): quién pagó, sus platos, monto,
+// recibido/cambio y lo que FALTA. Mismo contenido que el ESC/POS.
+function _htmlPagoParcial(pedido, pp, config, numeroOrdenDiario) {
+  const nombre = config.nombre_negocio ?? 'Restaurante';
+  const simbolo = config.simbolo_moneda ?? 'Bs.';
+  const esLlevar = pedido.tipo === 'llevar';
+  const nOrden = String(numeroOrdenDiario != null ? numeroOrdenDiario : (esLlevar ? (pedido.numero_llevar ?? pedido.id) : pedido.id)).padStart(3, '0');
+  const ahora = new Date();
+  const fecha = ahora.toLocaleDateString('es-BO', { day: '2-digit', month: '2-digit', year: 'numeric' });
+  const hora = ahora.toLocaleTimeString('es-BO', { hour: '2-digit', minute: '2-digit' });
+  const donde = pedido.tipo === 'delivery'
+    ? `Delivery — ${_esc(pedido.nombre_cliente ?? 'Cliente')}`
+    : esLlevar ? `Para llevar — ${_esc(pedido.cliente?.numero_documento ?? pedido.nombre_cliente ?? 'Cliente')}` : _esc(pedido.mesa?.nombre ?? '—');
+  const m = (v) => `${simbolo} ${Number(v || 0).toFixed(2)}`;
+  const fila = (a, b, clase = '') => `<div class="fila ${clase}"><span>${a}</span><span>${b}</span></div>`;
+  const items = pp.items?.length
+    ? pp.items.map((it) => fila(`${it.cantidad} ${_esc(it.nombre)}`, Number(it.subtotal || 0).toFixed(2))).join('')
+    : `<div>${pp.partes_iguales_de ? `Parte de la cuenta (1 de ${pp.partes_iguales_de})` : 'Parte de la cuenta'}</div>`;
+
+  return `<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="utf-8">
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body { font-family: 'IBM Plex Mono', 'Courier New', Courier, monospace; font-size: 11px; line-height: 1.35; width: 248px; margin: 0 auto; padding: 4px 4px 16px; color: #000; background: #fff; }
+    .centro { text-align: center; }
+    .negocio { font-size: 13px; font-weight: 700; letter-spacing: 2px; text-transform: uppercase; }
+    .titulo { font-size: 16px; font-weight: 700; letter-spacing: 2px; margin: 3px 0; }
+    .sep { border: none; border-top: 1px solid #000; margin: 4px 0; }
+    .sdash { border: none; border-top: 1px dashed #666; margin: 4px 0; }
+    .fila { display: flex; justify-content: space-between; gap: 6px; }
+    .fuerte { font-weight: 700; }
+    .falta { font-size: 18px; font-weight: 700; margin-top: 2px; }
+    .pie { margin-top: 8px; text-align: center; font-size: 9px; color: #555; }
+    @media print { @page { size: 70mm auto; margin: 2mm 3mm; } body { width: 100%; padding: 0; } }
+  </style>
+</head>
+<body>
+  <div class="centro negocio">${_esc(nombre)}</div>
+  ${config.direccion ? `<div class="centro">${_esc(config.direccion)}</div>` : ''}
+  <hr class="sep"/>
+  <div class="centro titulo">PAGO PARCIAL</div>
+  <hr class="sep"/>
+  ${fila(`Pedido # ${nOrden}`, `${fecha} ${hora}`)}
+  <div class="fuerte">${donde}</div>
+  <div>Parte ${pp.numero}</div>
+  ${pp.persona ? `<div class="fuerte">Persona: ${_esc(pp.persona)}</div>` : ''}
+  <hr class="sdash"/>
+  ${items}
+  <hr class="sdash"/>
+  ${fila('Monto', m(pp.monto), 'fuerte')}
+  ${fila('Pago', METODO_PARTE[pp.metodo_pago] ?? pp.metodo_pago)}
+  ${pp.metodo_pago === 'efectivo' ? fila('Recibido', m(pp.monto_recibido)) + fila('Cambio', m(pp.cambio)) : ''}
+  <hr class="sdash"/>
+  ${fila('Pagado', m(pp.pagado))}
+  ${fila('FALTA', m(pp.falta), 'falta')}
+  <hr class="sep"/>
+  <div class="pie">¡Gracias por su visita!<br>${_esc(nombre)}</div>
+</body>
+</html>`;
+}
+
 export function imprimirTicketVenta(pedido, pago, config = {}, numeroOrdenDiario = null) {
+  // Parte de una cuenta dividida que no completa el pedido: comprobante corto.
+  if (pago.pago_parcial) {
+    imprimirHtml(_htmlPagoParcial(pedido, pago.pago_parcial, config, numeroOrdenDiario));
+    return;
+  }
+
   const nombre  = config.nombre_negocio  ?? 'Restaurante';
   const dir     = config.direccion       ?? '';
   const tel     = config.telefono        ?? '';
@@ -39,7 +123,7 @@ export function imprimirTicketVenta(pedido, pago, config = {}, numeroOrdenDiario
   const nOrden   = String(
     numeroOrdenDiario != null ? numeroOrdenDiario : (esLlevar ? (pedido.numero_llevar ?? pedido.id) : pedido.id)
   ).padStart(3, '0');
-  const METODO_PAGO_LABEL = { qr: 'QR / Transferencia', app_externa: 'Pagado en la app', diferido: 'Pendiente de cobro' };
+  const METODO_PAGO_LABEL = { qr: 'QR / Transferencia', app_externa: 'Pagado en la app', diferido: 'Pendiente de cobro', mixto: 'Mixto' };
   const metodoPagoLabel = METODO_PAGO_LABEL[pago.metodo_pago] ?? 'Efectivo';
 
   const detalles = pedido.detalles ?? [];
@@ -304,6 +388,7 @@ ${['', ''].map((_, i) => `
   </div>
 
   <div class="info-row"><span class="info-label">Forma de pago</span><span class="info-valor">${metodoPagoLabel}</span></div>
+  ${_bloquePartes(pago.partes, simbolo)}
 
   ${pedido.cliente && (puntosGanados > 0 || pedido.cliente.puntos != null) ? `
   <div class="puntos-bloque">

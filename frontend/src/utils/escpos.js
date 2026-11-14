@@ -140,6 +140,77 @@ class Esc {
   build() { return Uint8Array.from(this.b); }
 }
 
+// ── Cuenta dividida (mismo ticket que print-agent/ticketPagoParcial.js) ─────
+const METODO_PARTE = { efectivo: 'Efectivo', qr: 'QR' };
+const dineroParte = (sym, v) => sym + ' ' + Number(v || 0).toFixed(2);
+
+// Comprobante corto de una parte que no completa el pedido (`pago_parcial`,
+// ver _emitirImpresion en el backend): quién pagó, sus platos, monto,
+// recibido/cambio y lo que FALTA. Sin la lista completa ni el total.
+function _pagoParcial(t, data) {
+  const pp = data.pago_parcial;
+  const pedido = data.pedido || {};
+  const cfg = data.config || {};
+  const sym = cfg.simbolo_moneda || 'Bs.';
+  const nombre = cfg.nombre_negocio || 'RESTAURANTE';
+  const esLlevar = pedido.tipo === 'llevar';
+  const nLlevar = pedido.numero_llevar != null ? pedido.numero_llevar : pedido.id;
+  const nOrden = String(data.numero_orden_diario != null ? data.numero_orden_diario : (esLlevar ? nLlevar : pedido.id)).padStart(3, '0');
+  const ahora = new Date();
+  const fecha = ahora.toLocaleDateString('es-BO', { day: '2-digit', month: '2-digit', year: 'numeric' });
+  const hora = ahora.toLocaleTimeString('es-BO', { hour: '2-digit', minute: '2-digit' }).replace(/\s/g, ' ');
+
+  t.rule('=');
+  t.center().bold(true).line(nombre.toUpperCase()).bold(false);
+  const direccionTel = [cfg.direccion, cfg.telefono ? 'Tel: ' + cfg.telefono : null].filter(Boolean).join(' - ');
+  if (direccionTel) t.center().line(direccionTel);
+  t.rule('=');
+  t.center().bold(true).dblH().line('PAGO PARCIAL').normal().bold(false);
+  t.rule('-');
+
+  t.left().cols('Pedido Nro. ' + nOrden, hora);
+  t.left().line('Fecha: ' + fecha);
+  if (pedido.tipo === 'delivery') t.left().line('DELIVERY — ' + (pedido.nombre_cliente || 'Cliente'));
+  else if (esLlevar) t.left().line('PARA LLEVAR — ' + (pedido.cliente?.numero_documento || pedido.nombre_cliente || 'Cliente'));
+  else t.left().line((pedido.mesa?.nombre || '---').toUpperCase());
+  t.left().line('Parte ' + pp.numero);
+  if (pp.persona) t.left().bold(true).line('Persona: ' + pp.persona).bold(false);
+  t.rule('-');
+
+  const items = pp.items || [];
+  if (items.length) {
+    for (const it of items) t.left().cols(it.cantidad + ' ' + String(it.nombre || '').toUpperCase(), Number(it.subtotal || 0).toFixed(2));
+  } else {
+    t.left().line(pp.partes_iguales_de ? 'Parte de la cuenta (1 de ' + pp.partes_iguales_de + ')' : 'Parte de la cuenta');
+  }
+  t.rule('-');
+
+  t.left().bold(true).cols('Monto', dineroParte(sym, pp.monto)).bold(false);
+  t.left().line('Pago: ' + (METODO_PARTE[pp.metodo_pago] || pp.metodo_pago));
+  if (pp.metodo_pago === 'efectivo') {
+    t.left().cols('Recibido', dineroParte(sym, pp.monto_recibido));
+    t.left().cols('Cambio', dineroParte(sym, pp.cambio));
+  }
+  t.rule('-');
+  t.left().cols('Pagado', dineroParte(sym, pp.pagado));
+  t.left().bold(true).dblH().cols('FALTA', dineroParte(sym, pp.falta)).normal().bold(false);
+  t.rule('=');
+
+  t.lf(1).center().line('Gracias por su preferencia').center().line(nombre).lf(2);
+  return t;
+}
+
+// Bloque PAGOS del ticket final: "Parte N · Persona · Efectivo   Bs X".
+function _bloquePartes(t, partes, sym) {
+  t.center().bold(true).line('PAGOS').bold(false);
+  for (const p of partes) {
+    const etiqueta = ['Parte ' + p.numero, p.persona, METODO_PARTE[p.metodo_pago] || p.metodo_pago].filter(Boolean).join(' · ');
+    t.left().cols(etiqueta, dineroParte(sym, p.monto));
+  }
+  t.rule('-');
+  return t;
+}
+
 function buildCaja(data, logo) {
   const pedido = data.pedido;
   const metodo_pago = data.metodo_pago;
@@ -171,6 +242,9 @@ function buildCaja(data, logo) {
   t.init().charset();
 
   if (logo) t.center().imagen(logo.anchoBytes, logo.alto, logo.datos).lf();
+
+  // Parte de una cuenta dividida que no completa el pedido: comprobante corto.
+  if (data.pago_parcial) return _pagoParcial(t, data).build();
 
   t.rule('=');
   t.center().bold(true).line(nombre.toUpperCase()).bold(false);
@@ -245,9 +319,11 @@ function buildCaja(data, logo) {
   t.left().bold(true).cols('TOTAL ' + sym, total.toFixed(2)).bold(false);
   t.rule('=');
 
-  const METODO_PAGO_LABEL = { qr: 'QR / Transferencia', app_externa: 'Pagado en la app', diferido: 'Pendiente de cobro' };
+  const METODO_PAGO_LABEL = { qr: 'QR / Transferencia', app_externa: 'Pagado en la app', diferido: 'Pendiente de cobro', mixto: 'Mixto' };
   t.left().line('Pago: ' + (METODO_PAGO_LABEL[metodo_pago] || 'Efectivo'));
   t.rule('-');
+
+  if (data.partes?.length) _bloquePartes(t, data.partes, sym);
 
   if (pedido.cliente && (puntosGanados > 0 || pedido.cliente.puntos != null)) {
     if (pedido.cliente.numero_documento || pedido.cliente.nombre) t.left().line('Cliente: ' + (pedido.cliente.numero_documento || pedido.cliente.nombre));

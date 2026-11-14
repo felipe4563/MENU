@@ -104,8 +104,8 @@ export function reimprimirConFallback(datosImpresion) {
       imprimirBluetoothCaja(datosImpresion.caja);
     } else {
       postConTimeout(`${base}/imprimir/caja?forzar=1`, datosImpresion.caja).catch(() => {
-        const { pedido, metodo_pago, config, numero_orden_diario } = datosImpresion.caja;
-        imprimirTicketVenta(pedido, { total: pedido.total, metodo_pago }, config, numero_orden_diario);
+        const { pedido, metodo_pago, config, numero_orden_diario, pago_parcial, partes } = datosImpresion.caja;
+        imprimirTicketVenta(pedido, { total: pedido.total, metodo_pago, pago_parcial, partes }, config, numero_orden_diario);
       });
     }
   }

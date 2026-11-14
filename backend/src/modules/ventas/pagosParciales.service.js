@@ -162,6 +162,58 @@ function _montoPorPlatos(items, detalles, pagadas) {
 // Campos del cobro completo que no aplican a una parte.
 const _hayAjuste = (v) => (typeof v === 'string' ? v.trim() !== '' && Number(v) !== 0 : Boolean(v) && Number(v) !== 0);
 
+// Datos del comprobante de una parte (`pago_parcial` del ticket de caja).
+// `pedido` viene de ventasService.obtener (con detalles y pagos por id). Su
+// número es el que tenía al crearse: las partes vigentes hasta ella. El
+// "1 de N" de partes iguales no se guarda, así que va null.
+function _datosComprobante(pedido, pago_id) {
+  const vigentes = (pedido.pagos || []).filter((p) => ['pendiente', 'completado'].includes(p.estado));
+  const indice = vigentes.findIndex((p) => p.id === pago_id);
+  const pago = vigentes[indice];
+  const items = (pago.items || []).map((it) => {
+    const detalle = (pedido.detalles || []).find((d) => d.id === it.detalle_pedido_id);
+    const cantidad = Number(it.cantidad);
+    const nombre = !detalle ? '' : detalle.combo ? `Combo: ${detalle.combo.nombre}` : (detalle.producto?.nombre || '');
+    return { nombre, cantidad, subtotal: round2(cantidad * Number(detalle?.precio || 0)) };
+  });
+  return {
+    pago_id: pago.id,
+    numero: indice + 1,
+    persona: pago.persona || null,
+    modo: pago.modo,
+    monto: Number(pago.monto),
+    metodo_pago: pago.metodo_pago,
+    monto_recibido: Number(pago.monto_recibido ?? pago.monto),
+    cambio: Number(pago.cambio || 0),
+    pagado: Number(pedido.pagado),
+    falta: falta(pedido),
+    partes_iguales_de: null,
+    items,
+  };
+}
+
+// Imprime lo que corresponde a una parte ya cobrada: su comprobante, o el
+// ticket final con las partes si fue la que completó el pedido. Nunca la
+// comanda de cocina (ya salió al mandar el pedido). La parte ya está cobrada:
+// si la impresión falla se registra y se devuelve null, sin romper el cobro.
+async function imprimirParte(pedido, pago_id, completado) {
+  try {
+    const numero = await ventasService._numeroOrdenDiarioOriginal(pedido);
+    if (completado) {
+      return await ventasService._emitirImpresion(
+        pedido, pedido.metodo_pago, Number(pedido.cambio || 0), pedido.sucursal_id, numero, { suprimirCocina: true },
+      );
+    }
+    const pagoParcial = _datosComprobante(pedido, pago_id);
+    return await ventasService._emitirImpresion(
+      pedido, pagoParcial.metodo_pago, pagoParcial.cambio, pedido.sucursal_id, numero, { suprimirCocina: true, pagoParcial },
+    );
+  } catch (err) {
+    console.error(`[pagos parciales] No se pudo imprimir la parte ${pago_id} del pedido #${pedido.id}:`, err.message);
+    return null;
+  }
+}
+
 // Con `saldoCompleto` (cobro de la cuenta completa con pagos hechos) la parte
 // es exactamente lo que falta, leído con el pedido bloqueado.
 async function cobrarParte(pedido_id, usuario_id, { metodo_pago, monto_recibido, persona, modo, monto, items, descuento, cupon_codigo, puntos_canjear, propina } = {}, alcance, { saldoCompleto = false } = {}) {
@@ -240,13 +292,10 @@ async function cobrarParte(pedido_id, usuario_id, { metodo_pago, monto_recibido,
   emitir('restaurante:actualizar', { tipo: resultado.completado ? 'pedido_cobrado' : 'pedido_pago_parcial' }, resultado.sucursal_id);
 
   const pago = await PedidoPago.findByPk(resultado.pago_id, { include: [{ model: PedidoPagoItem, as: 'items' }] });
-  return {
-    pedido: await ventasService.obtener(pedido_id),
-    pago,
-    pago_qr,
-    completado: resultado.completado,
-    datos_impresion: null, // El comprobante de la parte se imprime en otra etapa.
-  };
+  const pedido = await ventasService.obtener(pedido_id);
+  // Un QR imprime su comprobante al confirmarse (ver _confirmarPagoQr).
+  const datos_impresion = esQr ? null : await imprimirParte(pedido, resultado.pago_id, resultado.completado);
+  return { pedido, pago, pago_qr, completado: resultado.completado, datos_impresion };
 }
 
 // Cobro de la cuenta completa (POST /ventas/:id/cobrar) sobre un pedido que
@@ -295,5 +344,5 @@ async function _anularParteQr(pagoQr, transaction) {
 }
 
 module.exports = {
-  cobrarParte, cobrarLoQueFalta, unidadesPagadas, falta, partesVigentes, verificarLoPagado, MSJ_YA_PAGADO, MSJ_QR_PENDIENTE, _sesionParaCobrar, _completarSiCorresponde, _confirmarParteQr, _anularParteQr,
+  cobrarParte, cobrarLoQueFalta, imprimirParte, unidadesPagadas, falta, partesVigentes, verificarLoPagado, MSJ_YA_PAGADO, MSJ_QR_PENDIENTE, _sesionParaCobrar, _completarSiCorresponde, _confirmarParteQr, _anularParteQr,
 };

@@ -16,6 +16,7 @@
     "scripts": [
       "agent.js",
       "actualizacion.js",
+      "ticketPagoParcial.js",
       "installer.js"
     ]
   },

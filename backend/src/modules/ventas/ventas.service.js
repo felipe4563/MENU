@@ -693,7 +693,18 @@ async function emitirAnulacionCocina(pedido_id, lineasAnuladas, { devolucion_id 
   return datosCocina;
 }
 
-async function _emitirImpresion(pedido, metodo_pago, cambio, sucursal_id, numeroOrdenDiarioOverride, { esReimpresion = false, suprimirCocina = false } = {}) {
+// Partes cobradas de una cuenta dividida, para el bloque PAGOS del ticket
+// final (también al reimprimir). Espera `pedido.pagos` ordenadas por id
+// (ver obtener); sin partes devuelve null.
+function _partesDelTicket(pedidoJSON) {
+  const hechas = (pedidoJSON.pagos || []).filter((p) => p.estado === 'completado');
+  if (!hechas.length) return null;
+  return hechas.map((p, i) => ({ numero: i + 1, persona: p.persona || null, metodo_pago: p.metodo_pago, monto: Number(p.monto) }));
+}
+
+// `pagoParcial` (ver pagosParciales._datosComprobante): el ticket de caja es
+// el comprobante corto de una parte que no completa el pedido.
+async function _emitirImpresion(pedido, metodo_pago, cambio, sucursal_id, numeroOrdenDiarioOverride, { esReimpresion = false, suprimirCocina = false, pagoParcial = null } = {}) {
   // Los llamadores normales (crearCompleta, cobrar, _confirmarPagoQr) no
   // pasan override: se recalcula en vivo, como siempre. `reimprimir` sí pasa
   // un valor explícito (el número que tenía el pedido el día que se vendió)
@@ -726,7 +737,14 @@ async function _emitirImpresion(pedido, metodo_pago, cambio, sucursal_id, numero
   // intencional: significa "cualquier agente de la sucursal debe imprimirlo".
   let datosCaja = null;
   if (imprimirTicketCliente || esReimpresion) {
-    datosCaja = { pedido: _detallesVigentes(pedido.toJSON()), metodo_pago, cambio, config: cfg, numero_orden_diario, modo_impresion, ancho_papel_bluetooth, conexion_bluetooth, imprimir_logo, caja_id };
+    const json = pedido.toJSON();
+    datosCaja = { pedido: _detallesVigentes(json), metodo_pago, cambio, config: cfg, numero_orden_diario, modo_impresion, ancho_papel_bluetooth, conexion_bluetooth, imprimir_logo, caja_id };
+    if (pagoParcial) {
+      datosCaja.pago_parcial = pagoParcial;
+    } else {
+      const partes = _partesDelTicket(json);
+      if (partes) datosCaja.partes = partes;
+    }
     emitir('print:caja', datosCaja, sucursal_id, caja_id);
   }
 
@@ -1014,7 +1032,7 @@ async function _confirmarPagoQr(pagoQrInicial, { confirmado_por = null } = {}) {
         { qr_tipo: QR_TIPO[pagoQr.proveedor] ?? 'codepay', qr_confirmado_por: confirmado_por },
         { where: { id: pagoQr.pedido_id }, transaction: t },
       );
-      parte = { completado };
+      parte = { completado, pedido_pago_id: pagoQr.pedido_pago_id };
       return pagoQr.pedido_id;
     }
 
@@ -1047,9 +1065,11 @@ async function _confirmarPagoQr(pagoQrInicial, { confirmado_por = null } = {}) {
 
   const completado = await obtener(pedidoId);
   if (parte) {
-    // El comprobante de una parte se imprime en otra etapa.
     emitir('restaurante:actualizar', { tipo: parte.completado ? 'pedido_cobrado' : 'pedido_pago_parcial' }, completado.sucursal_id);
-    return completado;
+    // Comprobante de la parte (o ticket final con las partes si la cerró).
+    // Se devuelve además para que el navegador lo imprima por su canal.
+    const datos_impresion = await require('./pagosParciales.service').imprimirParte(completado, parte.pedido_pago_id, parte.completado);
+    return { ...completado.toJSON(), datos_impresion };
   }
   emitir('restaurante:actualizar', { tipo: 'pedido_cobrado' }, completado.sucursal_id);
   if (completado.origen === 'autoservicio') {
@@ -1619,6 +1639,7 @@ async function marcarEntregado(pedido_id, alcance) {
 }
 
 module.exports = {
+  _emitirImpresion, _numeroOrdenDiarioOriginal,
   listar, listarCocina, obtener, misVentasHoy, reimprimir, crear, crearCompleta, agregarItem, actualizarItem, eliminarItem,
   cobrar, cancelar, marcarListo, marcarEntregado,
   consultarEstadoPagoQr, cancelarPagoQr, procesarWebhookPagoQr, revertirPagosQrVencidos,
