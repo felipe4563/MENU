@@ -2,6 +2,7 @@
 // partes iguales), en distintos momentos y por distintos cajeros. Cada parte
 // se asienta en el libro de caja de quien la cobra; el stock y la mesa se
 // resuelven una sola vez, cuando la suma de las partes cubre el total.
+const { Op } = require('sequelize');
 const { Pedido, DetallePedido, SesionCaja, PedidoPago, PedidoPagoItem, sequelize } = require('../../models');
 const { emitir } = require('../../socket');
 const { cantidadVigente, round2 } = require('../devoluciones/calculo');
@@ -9,6 +10,7 @@ const ventasService = require('./ventas.service');
 
 const ORIGENES_SIN_DIVIDIR = ['autoservicio', 'app_externa'];
 const MODOS = ['platos', 'iguales'];
+const METODOS = ['efectivo', 'qr'];
 
 const error = (mensaje, status) => Object.assign(new Error(mensaje), { status });
 
@@ -73,6 +75,20 @@ async function _completarSiCorresponde(pedido, usuario_id, transaction) {
   return true;
 }
 
+const _concepto = (pedido, numero, persona) => `Venta #${pedido.id} · parte ${numero}${persona ? ` (${persona})` : ''}`;
+
+// Asienta una parte ya pagada en el libro de la caja donde se cobró, la suma
+// a lo pagado del pedido y lo completa si ya se cubrió el total.
+async function _asentarParte(pedido, pago, numero, transaction) {
+  const monto = Number(pago.monto);
+  await ventasService._asentarIngreso({
+    pedido, monto, metodo_pago: pago.metodo_pago, usuario_id: pago.usuario_id, sesion_caja_id: pago.sesion_caja_id,
+    concepto: _concepto(pedido, numero, pago.persona),
+  }, transaction);
+  await pedido.update({ pagado: round2(Number(pedido.pagado) + monto) }, { transaction });
+  return _completarSiCorresponde(pedido, pago.usuario_id, transaction);
+}
+
 // Monto de una parte por platos: valida que cada unidad siga sin pagar.
 function _montoPorPlatos(items, detalles, pagadas) {
   if (!Array.isArray(items) || items.length === 0) throw error('Elige los platos que se pagan', 400);
@@ -106,10 +122,8 @@ async function cobrarParte(pedido_id, usuario_id, { metodo_pago, monto_recibido,
   if (_hayAjuste(descuento) || (cupon_codigo && String(cupon_codigo).trim() !== '') || _hayAjuste(puntos_canjear) || _hayAjuste(propina)) {
     throw error('Con pagos parciales no se aplican descuentos, cupones ni puntos', 400);
   }
-  if (metodo_pago !== 'efectivo') {
-    // El cobro de una parte por QR llega en otra etapa.
-    throw error('metodo_pago debe ser efectivo', 400);
-  }
+  if (!METODOS.includes(metodo_pago)) throw error("metodo_pago debe ser 'efectivo' o 'qr'", 400);
+  const esQr = metodo_pago === 'qr';
 
   const resultado = await sequelize.transaction(async (t) => {
     const pedido = await Pedido.findByPk(pedido_id, { transaction: t, lock: t.LOCK.UPDATE });
@@ -137,33 +151,44 @@ async function cobrarParte(pedido_id, usuario_id, { metodo_pago, monto_recibido,
     }
     if (montoParte > faltante + 0.005) throw error('Es más de lo que falta', 409);
 
-    const recibido = monto_recibido === undefined || monto_recibido === null || monto_recibido === ''
+    // Por QR se paga justo el monto de la parte: no hay recibido ni cambio.
+    const recibido = esQr || monto_recibido === undefined || monto_recibido === null || monto_recibido === ''
       ? montoParte
       : Number(monto_recibido);
     if (!Number.isFinite(recibido) || recibido < montoParte - 0.005) throw error('Monto recibido insuficiente', 400);
     const cambio = Math.max(0, round2(recibido - montoParte));
 
+    // También por QR: sin caja abierta no se genera el cobro. Al confirmarse
+    // se vuelve a resolver la caja (puede haber cambiado de turno).
     const sesion_caja_id = await _sesionParaCobrar(pedido, usuario_id, t);
     const numero = pagos.length + 1;
     const nombre = persona ? String(persona).trim().slice(0, 80) : null;
 
     const pago = await PedidoPago.create({
       pedido_id: pedido.id, usuario_id, sesion_caja_id, metodo_pago, monto: montoParte, monto_recibido: recibido, cambio,
-      persona: nombre || null, modo, estado: 'completado',
+      persona: nombre || null, modo, estado: esQr ? 'pendiente' : 'completado',
     }, { transaction: t });
+    // Las unidades de un QR pendiente quedan reservadas (ver unidadesPagadas).
     if (lineas.length) {
       await PedidoPagoItem.bulkCreate(lineas.map((l) => ({ ...l, pedido_pago_id: pago.id })), { transaction: t });
     }
 
-    await ventasService._asentarIngreso({
-      pedido, monto: montoParte, metodo_pago, usuario_id, sesion_caja_id,
-      concepto: `Venta #${pedido.id} · parte ${numero}${nombre ? ` (${nombre})` : ''}`,
-    }, t);
-
-    await pedido.update({ pagado: round2(Number(pedido.pagado) + montoParte) }, { transaction: t });
-    const completado = await _completarSiCorresponde(pedido, usuario_id, t);
-    return { pago_id: pago.id, completado, sucursal_id: pedido.sucursal_id };
+    const completado = esQr ? false : await _asentarParte(pedido, pago, numero, t);
+    return { pago_id: pago.id, monto: montoParte, completado, sucursal_id: pedido.sucursal_id };
   });
+
+  let pago_qr = null;
+  if (esQr) {
+    // El QR se pide fuera de la transacción del lock (como el cobro completo):
+    // el pago pendiente ya bloquea cualquier otra parte mientras tanto.
+    try {
+      const pedido = await Pedido.findByPk(pedido_id);
+      pago_qr = await ventasService.iniciarPagoQr(pedido, { parte: { pedido_pago_id: resultado.pago_id, monto: resultado.monto } });
+    } catch (err) {
+      await PedidoPago.update({ estado: 'anulado' }, { where: { id: resultado.pago_id, estado: 'pendiente' } });
+      throw err;
+    }
+  }
 
   emitir('restaurante:actualizar', { tipo: resultado.completado ? 'pedido_cobrado' : 'pedido_pago_parcial' }, resultado.sucursal_id);
 
@@ -171,9 +196,40 @@ async function cobrarParte(pedido_id, usuario_id, { metodo_pago, monto_recibido,
   return {
     pedido: await ventasService.obtener(pedido_id),
     pago,
+    pago_qr,
     completado: resultado.completado,
     datos_impresion: null, // El comprobante de la parte se imprime en otra etapa.
   };
 }
 
-module.exports = { cobrarParte, unidadesPagadas, falta, _sesionParaCobrar, _completarSiCorresponde };
+// Confirma el QR de una parte (webhook, consulta o confirmación manual):
+// la parte pasa a completada y se asienta como una en efectivo, en la caja de
+// quien la cobró. Corre dentro de la transacción de _confirmarPagoQr.
+async function _confirmarParteQr(pagoQr, transaction) {
+  const pedido = await Pedido.findByPk(pagoQr.pedido_id, { transaction, lock: transaction.LOCK.UPDATE });
+  const pago = await PedidoPago.findByPk(pagoQr.pedido_pago_id, { transaction, lock: transaction.LOCK.UPDATE });
+  if (!pedido || !pago || pago.estado !== 'pendiente') throw error('Ese pago ya no está esperando el QR', 409);
+
+  const sesion_caja_id = await _sesionParaCobrar(pedido, pago.usuario_id, transaction);
+  await pago.update({ estado: 'completado', sesion_caja_id }, { transaction });
+
+  // Su número es el que tenía al crearse: las partes vigentes hasta ella.
+  const numero = await PedidoPago.count({
+    where: { pedido_id: pedido.id, estado: ['pendiente', 'completado'], id: { [Op.lte]: pago.id } },
+    transaction,
+  });
+  return _asentarParte(pedido, pago, numero, transaction);
+}
+
+// Un QR de parte que venció, falló o se canceló: la parte se anula y sus
+// unidades vuelven a estar libres. El pedido no cambia.
+async function _anularParteQr(pagoQr, transaction) {
+  await PedidoPago.update(
+    { estado: 'anulado' },
+    { where: { id: pagoQr.pedido_pago_id, estado: 'pendiente' }, transaction },
+  );
+}
+
+module.exports = {
+  cobrarParte, unidadesPagadas, falta, _sesionParaCobrar, _completarSiCorresponde, _confirmarParteQr, _anularParteQr,
+};

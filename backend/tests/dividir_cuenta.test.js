@@ -4,14 +4,18 @@ const bcrypt = require('bcryptjs');
 const app = require('../src/app');
 const {
   Sucursal, Area, Mesa, Caja, SesionCaja, Usuario, Rol, Categoria, Producto, ProductoStockSucursal, RegistroInventario,
-  Pedido, DetallePedido, LibroCaja, PedidoPago, PedidoPagoItem,
+  Pedido, DetallePedido, LibroCaja, PedidoPago, PedidoPagoItem, PagoQr, Configuracion,
 } = require('../src/models');
+
+// Las partes por QR usan el QR propio del negocio (lo confirma el cajero).
+const CLAVES_QR = ['qr_proveedor', 'qr_propio_imagen'];
 
 describe('Dividir cuenta', () => {
   let sucursal, area, caja, caja2, caja3, rol, usuario, usuario2, usuario3, sesion, sesion2, categoria, platoA, platoB, platoC;
   let token, token2, token3;
   const mesas = [];
   const sesionesExtra = [];
+  let configQrAntes = [];
 
   const crearCajero = async (nombre, email) => {
     const hash = await bcrypt.hash('clave123', 10);
@@ -69,6 +73,10 @@ describe('Dividir cuenta', () => {
     platoC = await Producto.create({ categoria_id: categoria.id, nombre: 'Plato C', precio: 100 });
     await ProductoStockSucursal.create({ producto_id: platoA.id, sucursal_id: sucursal.id, stock: 50 });
     await ProductoStockSucursal.create({ producto_id: platoB.id, sucursal_id: sucursal.id, stock: 50 });
+
+    configQrAntes = await Configuracion.findAll({ where: { clave: CLAVES_QR } });
+    await Configuracion.upsert({ clave: 'qr_proveedor', valor: 'propio' });
+    await Configuracion.upsert({ clave: 'qr_propio_imagen', valor: '/uploads/qr-dividir-cuenta-test.png' });
   });
 
   afterAll(async () => {
@@ -76,6 +84,9 @@ describe('Dividir cuenta', () => {
     const pagos = (await PedidoPago.findAll({ where: { pedido_id: ids }, attributes: ['id'] })).map((p) => p.id);
     const sesiones = [sesion.id, sesion2.id, ...sesionesExtra.map((s) => s.id)];
     const productos = [platoA.id, platoB.id, platoC.id];
+    await Configuracion.destroy({ where: { clave: CLAVES_QR } });
+    for (const f of configQrAntes) await Configuracion.create({ clave: f.clave, valor: f.valor });
+    await PagoQr.destroy({ where: { pedido_id: ids } });
     await PedidoPagoItem.destroy({ where: { pedido_pago_id: pagos } });
     await PedidoPago.destroy({ where: { pedido_id: ids } });
     await LibroCaja.destroy({ where: { sesion_caja_id: sesiones } });
@@ -102,7 +113,7 @@ describe('Dividir cuenta', () => {
     expect(await PedidoPago.count({ where: { pedido_id: id } })).toBe(0);
   });
 
-  it('por platos: tres personas pagan sus platos y el pedido se completa mixto', async () => {
+  it('por platos: tres personas pagan sus platos y el pedido se completa', async () => {
     const stockA = await stockDe(platoA);
     const stockB = await stockDe(platoB);
     const id = await nuevoPedido([{ producto: platoA, cantidad: 2 }, { producto: platoB, cantidad: 2 }], { mesa: true });
@@ -280,5 +291,85 @@ describe('Dividir cuenta', () => {
     const ok = await parte(id, { ...base, descuento: 0, cupon_codigo: '', puntos_canjear: 0, propina: 0 });
     expect(ok.status).toBe(201);
     expect(await PedidoPago.count({ where: { pedido_id: id } })).toBe(1);
+  });
+
+  // Confirma o cancela a mano el QR propio pendiente del pedido.
+  const qr = (id, accion) => request(app).post(`/api/v1/ventas/${id}/pago-qr/${accion}`).set('Authorization', `Bearer ${token}`);
+
+  it('una parte por QR queda pendiente y al confirmarse completa el pedido', async () => {
+    const id = await nuevoPedido([{ producto: platoA, cantidad: 1 }, { producto: platoB, cantidad: 1 }], { mesa: true });
+    const pedido = await ver(id);
+    const dA = detalleDe(pedido, platoA);
+    const dB = detalleDe(pedido, platoB);
+
+    const efectivo = await parte(id, { modo: 'platos', persona: 'Ana', items: [{ detalle_pedido_id: dA.id, cantidad: 1 }], metodo_pago: 'efectivo', monto_recibido: 30 });
+    expect(efectivo.status).toBe(201);
+
+    const conQr = await parte(id, { modo: 'platos', persona: 'Beto', items: [{ detalle_pedido_id: dB.id, cantidad: 1 }], metodo_pago: 'qr' });
+    expect(conQr.status).toBe(201);
+    expect(conQr.body.datos.completado).toBe(false);
+    expect(conQr.body.datos.pago.estado).toBe('pendiente');
+    expect(conQr.body.datos.pago.items).toHaveLength(1);
+    expect(conQr.body.datos.pago_qr.proveedor).toBe('propio');
+    expect(Number(conQr.body.datos.pago_qr.monto_neto)).toBe(25);
+
+    const pagoQr = await PagoQr.findOne({ where: { pedido_id: id } });
+    expect(pagoQr.pedido_pago_id).toBe(conQr.body.datos.pago.id);
+    expect(pagoQr.order_id).toBe(`pedido_${id}_1`);
+
+    const enEspera = await ver(id);
+    expect(enEspera.estado).toBe('pendiente');
+    expect(enEspera.pagado).toBe('30.00');
+
+    const confirmar = await qr(id, 'confirmar');
+    expect(confirmar.status).toBe(200);
+
+    const final = await ver(id);
+    expect(final.estado).toBe('completado');
+    expect(final.metodo_pago).toBe('mixto');
+    expect(final.pagado).toBe('55.00');
+    expect(final.mesa.estado).toBe('disponible');
+    expect((await PedidoPago.findByPk(conQr.body.datos.pago.id)).estado).toBe('completado');
+    expect((await PagoQr.findByPk(pagoQr.id)).estado).toBe('completado');
+
+    const asientos = await LibroCaja.findAll({ where: { referencia_id: id, tipo: 'ingreso' }, order: [['id', 'ASC']] });
+    expect(asientos).toHaveLength(2);
+    expect(asientos.map((a) => a.concepto)).toEqual([`Venta #${id} · parte 1 (Ana)`, `Venta #${id} · parte 2 (Beto)`]);
+    expect(asientos.map((a) => a.metodo_pago)).toEqual(['efectivo', 'qr']);
+    expect(asientos[1].monto).toBe('25.00');
+    expect(asientos[1].sesion_caja_id).toBe(sesion.id);
+    expect(asientos[1].usuario_id).toBe(usuario.id);
+  });
+
+  it('mientras hay un QR pendiente no se cobra otra parte', async () => {
+    const id = await nuevoPedido([{ producto: platoC, cantidad: 1 }]);
+    const conQr = await parte(id, { modo: 'iguales', monto: 40, metodo_pago: 'qr' });
+    expect(conQr.status).toBe(201);
+
+    const otra = await parte(id, { modo: 'iguales', monto: 30, metodo_pago: 'efectivo', monto_recibido: 30 });
+    expect(otra.status).toBe(409);
+    expect(otra.body.mensaje).toBe('Hay un QR esperando confirmación');
+    expect(await PedidoPago.count({ where: { pedido_id: id } })).toBe(1);
+  });
+
+  it('si el QR de una parte se cancela, la parte se anula y el saldo vuelve', async () => {
+    const id = await nuevoPedido([{ producto: platoA, cantidad: 1 }, { producto: platoB, cantidad: 1 }]);
+    const dA = detalleDe(await ver(id), platoA);
+
+    const conQr = await parte(id, { modo: 'platos', items: [{ detalle_pedido_id: dA.id, cantidad: 1 }], metodo_pago: 'qr' });
+    expect(conQr.status).toBe(201);
+
+    const cancelar = await qr(id, 'cancelar');
+    expect(cancelar.status).toBe(200);
+
+    expect((await PedidoPago.findByPk(conQr.body.datos.pago.id)).estado).toBe('anulado');
+    const pedido = await ver(id);
+    expect(pedido.estado).toBe('pendiente');
+    expect(pedido.pagado).toBe('0.00');
+    expect(await LibroCaja.count({ where: { referencia_id: id, sesion_caja_id: [sesion.id, sesion2.id] } })).toBe(0);
+
+    // El plato vuelve a estar libre.
+    const otra = await parte(id, { modo: 'platos', items: [{ detalle_pedido_id: dA.id, cantidad: 1 }], metodo_pago: 'efectivo', monto_recibido: 30 });
+    expect(otra.status).toBe(201);
   });
 });

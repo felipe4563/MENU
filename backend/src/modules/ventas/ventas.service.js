@@ -786,7 +786,11 @@ async function qrConfirmaSolo() {
  * total ya calculado) y deja el pedido en 'pendiente_pago' hasta que se
  * confirme (ver consultarEstadoPagoQr / procesarWebhookPagoQr).
  */
-async function iniciarPagoQr(pedido, { descuento = 0, propina = 0, puntos_canjear = 0, cupon_codigo, items } = {}) {
+async function iniciarPagoQr(pedido, { descuento = 0, propina = 0, puntos_canjear = 0, cupon_codigo, items, parte } = {}) {
+  // QR de una parte de la cuenta dividida: se cobra solo el monto de la
+  // parte y el pedido sigue abierto (sin puntos, cupón ni pendiente_pago).
+  if (parte) return _generarPagoQr(pedido, { monto_neto: Number(parte.monto), pedido_pago_id: parte.pedido_pago_id });
+
   const cfgFidelidad = await _configFidelidad();
 
   // El monto que se le cobra al cliente por CodePay queda fijo desde que se
@@ -831,50 +835,59 @@ async function iniciarPagoQr(pedido, { descuento = 0, propina = 0, puntos_canjea
   }
 
   try {
-    const estadoPrevio = pedido.estado;
     const monto_neto = Math.max(0, parseFloat(pedido.total) - parseFloat(descuento) - descuentoPuntos - descuentoCupon + parseFloat(propina));
-    const intentosPrevios = await PagoQr.count({ where: { pedido_id: pedido.id } });
-    const order_id = `pedido_${pedido.id}_${intentosPrevios + 1}`;
-    const expires_at = new Date(Date.now() + 30 * 60 * 1000);
-
-    const cfg = await Configuracion.findOne({ where: { clave: 'nombre_negocio' } });
-    const description = ((cfg && cfg.valor) || 'Venta').replace(/[^a-zA-Z0-9]/g, '').slice(0, 20) || 'Venta';
-
-    const { proveedor, imagenPropia } = await _configQr();
-    let respuesta;
-    if (proveedor === 'propio') {
-      // QR fijo del negocio: no hay API que confirme, lo confirma el cajero.
-      if (!imagenPropia) throw Object.assign(new Error('Sube la imagen de tu QR en Ajustes › Cobro con QR antes de cobrar con QR'), { status: 409 });
-      respuesta = { tx_id: null, qr_code: imagenPropia, commission_amount: 0, amount: monto_neto };
-    } else if (proveedor === 'baneco') {
-      const qr = await banecoClient.generarQr({ transactionId: order_id, amount: monto_neto, description: `${description} pedido ${pedido.id}` });
-      respuesta = { tx_id: qr.qrId, qr_code: `data:image/png;base64,${qr.qrImage}`, commission_amount: 0, amount: monto_neto };
-    } else {
-      respuesta = await codepayClient.generarQr({
-        order_id, amount: monto_neto, description, expires_at: expires_at.toISOString(),
-      });
-    }
-
-    await sequelize.transaction(async (t) => {
-      await PagoQr.create({
-        pedido_id: pedido.id, sucursal_id: pedido.sucursal_id, proveedor, order_id,
-        tx_id: respuesta.tx_id, estado: 'pendiente', estado_previo: estadoPrevio,
-        monto_neto, comision: respuesta.commission_amount, monto_total: respuesta.amount,
-        qr_code: respuesta.qr_code, expires_at,
-      }, { transaction: t });
-
-      await pedido.update({ estado: 'pendiente_pago', metodo_pago: 'qr', descuento, propina }, { transaction: t });
-    });
-
-    return {
-      proveedor, qr_code: respuesta.qr_code, tx_id: respuesta.tx_id, expires_at,
-      monto_neto, comision: respuesta.commission_amount, monto_total: respuesta.amount,
-    };
+    return await _generarPagoQr(pedido, { monto_neto, descuento, propina });
   } catch (err) {
     if (puntosCanjeados > 0) await _devolverPuntosCanjeados(pedido, puntosCanjeados);
     if (cuponReservado) await _devolverCuponReservado(pedido, cuponReservado.id);
     throw err;
   }
+}
+
+// Pide el QR al proveedor y registra el PagoQr. Sin pedido_pago_id es el
+// cobro del pedido entero y lo deja en 'pendiente_pago'; con él, es una parte
+// y el pedido no se toca.
+async function _generarPagoQr(pedido, { monto_neto, descuento = 0, propina = 0, pedido_pago_id = null }) {
+  const estadoPrevio = pedido.estado;
+  const intentosPrevios = await PagoQr.count({ where: { pedido_id: pedido.id } });
+  const order_id = `pedido_${pedido.id}_${intentosPrevios + 1}`;
+  const expires_at = new Date(Date.now() + 30 * 60 * 1000);
+
+  const cfg = await Configuracion.findOne({ where: { clave: 'nombre_negocio' } });
+  const description = ((cfg && cfg.valor) || 'Venta').replace(/[^a-zA-Z0-9]/g, '').slice(0, 20) || 'Venta';
+
+  const { proveedor, imagenPropia } = await _configQr();
+  let respuesta;
+  if (proveedor === 'propio') {
+    // QR fijo del negocio: no hay API que confirme, lo confirma el cajero.
+    if (!imagenPropia) throw Object.assign(new Error('Sube la imagen de tu QR en Ajustes › Cobro con QR antes de cobrar con QR'), { status: 409 });
+    respuesta = { tx_id: null, qr_code: imagenPropia, commission_amount: 0, amount: monto_neto };
+  } else if (proveedor === 'baneco') {
+    const qr = await banecoClient.generarQr({ transactionId: order_id, amount: monto_neto, description: `${description} pedido ${pedido.id}` });
+    respuesta = { tx_id: qr.qrId, qr_code: `data:image/png;base64,${qr.qrImage}`, commission_amount: 0, amount: monto_neto };
+  } else {
+    respuesta = await codepayClient.generarQr({
+      order_id, amount: monto_neto, description, expires_at: expires_at.toISOString(),
+    });
+  }
+
+  await sequelize.transaction(async (t) => {
+    await PagoQr.create({
+      pedido_id: pedido.id, pedido_pago_id, sucursal_id: pedido.sucursal_id, proveedor, order_id,
+      tx_id: respuesta.tx_id, estado: 'pendiente', estado_previo: estadoPrevio,
+      monto_neto, comision: respuesta.commission_amount, monto_total: respuesta.amount,
+      qr_code: respuesta.qr_code, expires_at,
+    }, { transaction: t });
+
+    if (!pedido_pago_id) {
+      await pedido.update({ estado: 'pendiente_pago', metodo_pago: 'qr', descuento, propina }, { transaction: t });
+    }
+  });
+
+  return {
+    proveedor, qr_code: respuesta.qr_code, tx_id: respuesta.tx_id, expires_at,
+    monto_neto, comision: respuesta.commission_amount, monto_total: respuesta.amount,
+  };
 }
 
 // Devuelve al cliente los puntos reservados para un intento de pago QR que
@@ -904,6 +917,12 @@ async function _revertirPagoQr(pagoQrInicial, nuevoEstado) {
     const pagoQr = await PagoQr.findByPk(pagoQrInicial.id, { transaction: t, lock: t.LOCK.UPDATE });
     if (!pagoQr || pagoQr.estado !== 'pendiente') return; // ya resuelto por otra llamada concurrente
     await pagoQr.update({ estado: nuevoEstado }, { transaction: t });
+
+    // QR de una parte: solo se anula la parte, el pedido sigue igual.
+    if (pagoQr.pedido_pago_id) {
+      await require('./pagosParciales.service')._anularParteQr(pagoQr, t);
+      return;
+    }
 
     const pedido = await Pedido.findByPk(pagoQr.pedido_id, { transaction: t, lock: t.LOCK.UPDATE });
     if (pedido && pedido.puntos_canjeados > 0) {
@@ -963,9 +982,21 @@ async function revertirPagosQrVencidos() {
 }
 
 async function _confirmarPagoQr(pagoQrInicial, { confirmado_por = null } = {}) {
+  let parte = null; // { completado } si el QR era de una parte de la cuenta dividida
   const pedidoId = await sequelize.transaction(async (t) => {
     const pagoQr = await PagoQr.findByPk(pagoQrInicial.id, { transaction: t, lock: t.LOCK.UPDATE });
     if (!pagoQr || pagoQr.estado !== 'pendiente') return null; // ya resuelto por otra llamada concurrente
+
+    if (pagoQr.pedido_pago_id) {
+      const completado = await require('./pagosParciales.service')._confirmarParteQr(pagoQr, t);
+      await pagoQr.update({ estado: 'completado' }, { transaction: t });
+      await Pedido.update(
+        { qr_tipo: QR_TIPO[pagoQr.proveedor] ?? 'codepay', qr_confirmado_por: confirmado_por },
+        { where: { id: pagoQr.pedido_id }, transaction: t },
+      );
+      parte = { completado };
+      return pagoQr.pedido_id;
+    }
 
     const pedido = await Pedido.findByPk(pagoQr.pedido_id, { include: INCLUDE_PEDIDO_COMPLETO, transaction: t });
     const detalles = pedido.detalles.map((d) => ({ id: d.id, producto_id: d.producto_id, combo_id: d.combo_id, cantidad: d.cantidad, cantidad_anulada: d.cantidad_anulada }));
@@ -995,6 +1026,11 @@ async function _confirmarPagoQr(pagoQrInicial, { confirmado_por = null } = {}) {
   if (!pedidoId) return null;
 
   const completado = await obtener(pedidoId);
+  if (parte) {
+    // El comprobante de una parte se imprime en otra etapa.
+    emitir('restaurante:actualizar', { tipo: parte.completado ? 'pedido_cobrado' : 'pedido_pago_parcial' }, completado.sucursal_id);
+    return completado;
+  }
   emitir('restaurante:actualizar', { tipo: 'pedido_cobrado' }, completado.sucursal_id);
   if (completado.origen === 'autoservicio') {
     emitir('restaurante:autoservicio_confirmado', {
@@ -1514,6 +1550,6 @@ module.exports = {
   cobrar, cancelar, marcarListo, marcarEntregado,
   consultarEstadoPagoQr, cancelarPagoQr, procesarWebhookPagoQr, revertirPagosQrVencidos,
   procesarNotificacionBaneco, confirmarPagoQrManual, listarPagosQrPorConfirmar,
-  _asentarIngreso, _cerrarVenta,
+  _asentarIngreso, _cerrarVenta, iniciarPagoQr,
   recalcularTotal: _recalcularTotal, emitirAnulacionCocina, verificarAlcance: _verificarAlcance, qrConfirmaSolo,
 };
