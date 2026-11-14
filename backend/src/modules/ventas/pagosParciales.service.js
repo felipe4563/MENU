@@ -32,20 +32,36 @@ function falta(pedido) {
   return round2(Number(pedido.total || 0) - Number(pedido.pagado || 0));
 }
 
-// Caja donde se asienta la parte: la abierta de quien cobra en la sucursal del
-// pedido; si no tiene, la del pedido mientras siga abierta.
-async function _sesionParaCobrar(pedido, usuario_id, transaction) {
+// Caja abierta de un usuario en la sucursal del pedido (o null).
+async function _cajaAbiertaDe(pedido, usuario_id, transaction) {
   const propia = await SesionCaja.findOne({
     where: { usuario_id, sucursal_id: pedido.sucursal_id, estado: 'abierta' },
     order: [['id', 'DESC']],
     transaction,
   });
-  if (propia) return propia.id;
+  return propia ? propia.id : null;
+}
+
+// Caja donde se asienta la parte: la abierta de quien cobra en la sucursal del
+// pedido; si no tiene, la del pedido mientras siga abierta.
+async function _sesionParaCobrar(pedido, usuario_id, transaction) {
+  const propia = await _cajaAbiertaDe(pedido, usuario_id, transaction);
+  if (propia) return propia;
   if (pedido.sesion_caja_id) {
     const delPedido = await SesionCaja.findByPk(pedido.sesion_caja_id, { transaction });
     if (delPedido && delPedido.estado === 'abierta') return delPedido.id;
   }
   throw error('Abre tu caja para cobrar', 409);
+}
+
+// Caja donde se asienta un QR de parte al confirmarse. El banco ya cobró, así
+// que nunca falla: la caja abierta de quien la cobró, si no la del pedido si
+// sigue abierta, si no cualquier abierta de la sucursal y, en último caso, la
+// caja donde se generó el QR aunque ya esté cerrada (con aviso en el log).
+async function _sesionParaConfirmar(pedido, pago, transaction) {
+  const propia = await _cajaAbiertaDe(pedido, pago.usuario_id, transaction);
+  if (propia) return propia;
+  return ventasService._sesionCajaParaAsiento(pedido, transaction, { respaldo: pago.sesion_caja_id });
 }
 
 // Si las partes ya cubren el total, completa el pedido: método (el único usado
@@ -203,14 +219,14 @@ async function cobrarParte(pedido_id, usuario_id, { metodo_pago, monto_recibido,
 }
 
 // Confirma el QR de una parte (webhook, consulta o confirmación manual):
-// la parte pasa a completada y se asienta como una en efectivo, en la caja de
-// quien la cobró. Corre dentro de la transacción de _confirmarPagoQr.
+// la parte pasa a completada y se asienta como una en efectivo (caja según
+// _sesionParaConfirmar). Corre dentro de la transacción de _confirmarPagoQr.
 async function _confirmarParteQr(pagoQr, transaction) {
   const pedido = await Pedido.findByPk(pagoQr.pedido_id, { transaction, lock: transaction.LOCK.UPDATE });
   const pago = await PedidoPago.findByPk(pagoQr.pedido_pago_id, { transaction, lock: transaction.LOCK.UPDATE });
   if (!pedido || !pago || pago.estado !== 'pendiente') throw error('Ese pago ya no está esperando el QR', 409);
 
-  const sesion_caja_id = await _sesionParaCobrar(pedido, pago.usuario_id, transaction);
+  const sesion_caja_id = await _sesionParaConfirmar(pedido, pago, transaction);
   await pago.update({ estado: 'completado', sesion_caja_id }, { transaction });
 
   // Su número es el que tenía al crearse: las partes vigentes hasta ella.

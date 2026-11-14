@@ -457,11 +457,13 @@ async function crear({ mesa_id, tipo = 'mesa', usuario_id, cliente_id, sesion_ca
 // pedido.sesion_caja_id sin cambios. Sólo cuando esa sesión ya se cerró —un
 // pago QR que confirma tarde, hasta 30 min después de generarse— se busca la
 // sesión abierta actual de la sucursal para no ensuciar un arqueo ya cerrado.
-// Si no hay ninguna abierta, se cae de vuelta a la original (mejor que perder
-// la venta de los libros) y se deja un aviso en el log.
-async function _sesionCajaParaAsiento(pedido, transaction) {
-  const original = await SesionCaja.findByPk(pedido.sesion_caja_id, { transaction });
-  if (!original || original.estado === 'abierta') return pedido.sesion_caja_id;
+// Si no hay ninguna abierta, se cae de vuelta a `respaldo` (por defecto la
+// del pedido; en una parte de cuenta dividida, la caja donde se generó su QR)
+// —mejor que perder la venta de los libros— y se deja un aviso en el log.
+async function _sesionCajaParaAsiento(pedido, transaction, { respaldo = pedido.sesion_caja_id } = {}) {
+  const original = pedido.sesion_caja_id ? await SesionCaja.findByPk(pedido.sesion_caja_id, { transaction }) : null;
+  if (original && original.estado === 'abierta') return original.id;
+  if (!original && !respaldo) return pedido.sesion_caja_id;
 
   const abierta = await SesionCaja.findOne({
     where: { sucursal_id: pedido.sucursal_id, estado: 'abierta' },
@@ -472,9 +474,9 @@ async function _sesionCajaParaAsiento(pedido, transaction) {
   console.warn(
     `[ventas] Pago QR del pedido #${pedido.id} confirmó después de cerrarse su sesión de caja ` +
     `#${pedido.sesion_caja_id} y no hay ninguna caja abierta en la sucursal ${pedido.sucursal_id}: ` +
-    'el asiento se registra igual en la sesión cerrada.'
+    `el asiento se registra igual en la sesión cerrada #${respaldo}.`
   );
-  return pedido.sesion_caja_id;
+  return respaldo;
 }
 
 /**
@@ -1550,6 +1552,6 @@ module.exports = {
   cobrar, cancelar, marcarListo, marcarEntregado,
   consultarEstadoPagoQr, cancelarPagoQr, procesarWebhookPagoQr, revertirPagosQrVencidos,
   procesarNotificacionBaneco, confirmarPagoQrManual, listarPagosQrPorConfirmar,
-  _asentarIngreso, _cerrarVenta, iniciarPagoQr,
+  _asentarIngreso, _cerrarVenta, _sesionCajaParaAsiento, iniciarPagoQr,
   recalcularTotal: _recalcularTotal, emitirAnulacionCocina, verificarAlcance: _verificarAlcance, qrConfirmaSolo,
 };

@@ -372,4 +372,62 @@ describe('Dividir cuenta', () => {
     const otra = await parte(id, { modo: 'platos', items: [{ detalle_pedido_id: dA.id, cantidad: 1 }], metodo_pago: 'efectivo', monto_recibido: 30 });
     expect(otra.status).toBe(201);
   });
+
+  // El banco ya cobró: confirmar un QR de parte nunca falla por falta de caja.
+  describe('confirmar un QR de parte con las cajas cerradas', () => {
+    // Usuario3 abre caja, cobra una parte por QR y cierra su caja (que es
+    // también la del pedido) antes de que el QR se confirme.
+    const parteQrYCerrar = async () => {
+      const sesionQr = await SesionCaja.create({ usuario_id: usuario3.id, sucursal_id: sucursal.id, caja_id: caja3.id, monto_apertura: 0 });
+      sesionesExtra.push(sesionQr);
+      const id = await nuevoPedido([{ producto: platoC, cantidad: 1 }], { sesionId: sesionQr.id, tk: token3 });
+      const conQr = await parte(id, { modo: 'iguales', monto: 40, metodo_pago: 'qr' }, token3);
+      expect(conQr.status).toBe(201);
+      expect(conQr.body.datos.pago.sesion_caja_id).toBe(sesionQr.id);
+      await sesionQr.update({ estado: 'cerrada' });
+      return { id, sesionQr, pago_id: conQr.body.datos.pago.id };
+    };
+
+    // Cierra temporalmente otras cajas de la sucursal y las reabre al final.
+    const conCajasCerradas = async (sesiones, fn) => {
+      await SesionCaja.update({ estado: 'cerrada' }, { where: { id: sesiones.map((x) => x.id) } });
+      try { await fn(); } finally {
+        await SesionCaja.update({ estado: 'abierta' }, { where: { id: sesiones.map((x) => x.id) } });
+      }
+    };
+
+    it('sin ninguna caja abierta se asienta en la caja donde se generó el QR', async () => {
+      const { id, sesionQr, pago_id } = await parteQrYCerrar();
+      const warn = jest.spyOn(console, 'warn').mockImplementation(() => {});
+      try {
+        await conCajasCerradas([sesion, sesion2], async () => {
+          const confirmar = await qr(id, 'confirmar');
+          expect(confirmar.status).toBe(200);
+        });
+        expect(warn).toHaveBeenCalled();
+      } finally { warn.mockRestore(); }
+
+      const pago = await PedidoPago.findByPk(pago_id);
+      expect(pago.estado).toBe('completado');
+      expect(pago.sesion_caja_id).toBe(sesionQr.id);
+      const asientos = await LibroCaja.findAll({ where: { referencia_id: id, tipo: 'ingreso', sesion_caja_id: sesionQr.id } });
+      expect(asientos).toHaveLength(1);
+      expect(asientos[0].monto).toBe('40.00');
+      expect((await ver(id)).pagado).toBe('40.00');
+    });
+
+    it('si hay otra caja abierta en la sucursal se asienta ahí', async () => {
+      const { id, pago_id } = await parteQrYCerrar();
+      await conCajasCerradas([sesion], async () => {
+        const confirmar = await qr(id, 'confirmar');
+        expect(confirmar.status).toBe(200);
+      });
+
+      const pago = await PedidoPago.findByPk(pago_id);
+      expect(pago.estado).toBe('completado');
+      expect(pago.sesion_caja_id).toBe(sesion2.id);
+      const asientos = await LibroCaja.findAll({ where: { referencia_id: id, tipo: 'ingreso', sesion_caja_id: [sesion.id, sesion2.id, ...sesionesExtra.map((x) => x.id)] } });
+      expect(asientos.map((a) => a.sesion_caja_id)).toEqual([sesion2.id]);
+    });
+  });
 });
