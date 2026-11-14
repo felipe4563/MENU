@@ -873,18 +873,36 @@ async function _generarPagoQr(pedido, { monto_neto, descuento = 0, propina = 0, 
     });
   }
 
-  await sequelize.transaction(async (t) => {
-    await PagoQr.create({
-      pedido_id: pedido.id, pedido_pago_id, sucursal_id: pedido.sucursal_id, proveedor, order_id,
-      tx_id: respuesta.tx_id, estado: 'pendiente', estado_previo: estadoPrevio,
-      monto_neto, comision: respuesta.commission_amount, monto_total: respuesta.amount,
-      qr_code: respuesta.qr_code, expires_at,
-    }, { transaction: t });
+  try {
+    await sequelize.transaction(async (t) => {
+      if (!pedido_pago_id) {
+        // QR del pedido entero: mientras se pedía al proveedor otro cajero
+        // pudo cobrar una parte (o cerrar el pedido). Se relee bloqueado y,
+        // si cambió, no se deja un QR por el total.
+        const bloqueado = await Pedido.findByPk(pedido.id, { transaction: t, lock: t.LOCK.UPDATE });
+        const conPartes = await PedidoPago.count({ where: { pedido_id: pedido.id, estado: ['pendiente', 'completado'] }, transaction: t });
+        if (!bloqueado || !['pendiente', 'listo'].includes(bloqueado.estado) || conPartes > 0) {
+          throw Object.assign(new Error('El pedido cambió mientras se cobraba. Vuelve a intentarlo'), { status: 409 });
+        }
+      }
 
-    if (!pedido_pago_id) {
-      await pedido.update({ estado: 'pendiente_pago', metodo_pago: 'qr', descuento, propina }, { transaction: t });
-    }
-  });
+      await PagoQr.create({
+        pedido_id: pedido.id, pedido_pago_id, sucursal_id: pedido.sucursal_id, proveedor, order_id,
+        tx_id: respuesta.tx_id, estado: 'pendiente', estado_previo: estadoPrevio,
+        monto_neto, comision: respuesta.commission_amount, monto_total: respuesta.amount,
+        qr_code: respuesta.qr_code, expires_at,
+      }, { transaction: t });
+
+      if (!pedido_pago_id) {
+        await pedido.update({ estado: 'pendiente_pago', metodo_pago: 'qr', descuento, propina }, { transaction: t });
+      }
+    });
+  } catch (err) {
+    // El QR ya existe en el proveedor pero no quedó registrado: que no se
+    // pueda pagar (solo Banco Económico permite anularlo).
+    _anularEnBanco({ proveedor, tx_id: respuesta.tx_id });
+    throw err;
+  }
 
   return {
     proveedor, qr_code: respuesta.qr_code, tx_id: respuesta.tx_id, expires_at,

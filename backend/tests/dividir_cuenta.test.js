@@ -4,11 +4,12 @@ const bcrypt = require('bcryptjs');
 const app = require('../src/app');
 const {
   Sucursal, Area, Mesa, Caja, SesionCaja, Usuario, Rol, Categoria, Producto, ProductoStockSucursal, RegistroInventario,
-  Pedido, DetallePedido, LibroCaja, PedidoPago, PedidoPagoItem, PagoQr, Configuracion, Devolucion, DevolucionItem,
+  Pedido, DetallePedido, LibroCaja, PedidoPago, PedidoPagoItem, PagoQr, Configuracion, Devolucion, DevolucionItem, Cupon,
 } = require('../src/models');
 
 // Las partes por QR usan el QR propio del negocio (lo confirma el cajero).
 const CLAVES_QR = ['qr_proveedor', 'qr_propio_imagen'];
+const CODIGO_CUPON = `DIVCARRERA${Date.now()}`.slice(0, 30);
 
 describe('Dividir cuenta', () => {
   let sucursal, area, caja, caja2, caja3, rol, usuario, usuario2, usuario3, sesion, sesion2, categoria, platoA, platoB, platoC;
@@ -95,6 +96,7 @@ describe('Dividir cuenta', () => {
     await LibroCaja.destroy({ where: { sesion_caja_id: sesiones } });
     await DetallePedido.destroy({ where: { pedido_id: ids } });
     await Pedido.destroy({ where: { id: ids } });
+    await Cupon.destroy({ where: { codigo: CODIGO_CUPON } });
     await SesionCaja.destroy({ where: { id: sesiones } });
     await RegistroInventario.destroy({ where: { producto_id: productos } });
     await ProductoStockSucursal.destroy({ where: { producto_id: productos } });
@@ -533,6 +535,29 @@ describe('Dividir cuenta', () => {
       const pedido = await ver(id);
       expect(detalleDe(pedido, platoA).cantidad).toBe(2);
       expect(pedido.total).toBe('85.00');
+    });
+
+    it('el QR de la cuenta completa no se genera si se cobró una parte mientras tanto', async () => {
+      const id = await nuevoPedido([{ producto: platoC, cantidad: 1 }]);
+      const cupon = await Cupon.create({ codigo: CODIGO_CUPON, tipo: 'fijo', valor: 5, usos_maximos: 10 });
+      // Otro cajero cobra una parte en efectivo...
+      expect((await parte(id, { modo: 'iguales', monto: 40, metodo_pago: 'efectivo', monto_recibido: 40 }, token2)).status).toBe(201);
+
+      // ...justo después de que el cobro completo leyó las partes (sin bloqueo) y no vio ninguna.
+      const lectura = jest.spyOn(PedidoPago, 'findAll').mockResolvedValueOnce([]);
+      let r;
+      try {
+        r = await cobrar(id, { metodo_pago: 'qr', cupon_codigo: CODIGO_CUPON });
+      } finally { lectura.mockRestore(); }
+      expect(r.status).toBe(409);
+      expect(r.body.mensaje).toBe('El pedido cambió mientras se cobraba. Vuelve a intentarlo');
+
+      const pedido = await ver(id);
+      expect(pedido.estado).toBe('pendiente');
+      expect(pedido.pagado).toBe('40.00');
+      expect(pedido.cupon_id).toBeNull();
+      expect(await PagoQr.count({ where: { pedido_id: id } })).toBe(0);
+      expect((await Cupon.findByPk(cupon.id)).usos_actuales).toBe(0);
     });
   });
 });
