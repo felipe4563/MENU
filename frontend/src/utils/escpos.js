@@ -445,7 +445,7 @@ function buildCierre(reporte, cfg = {}, ancho = '80mm', logo = null) {
   const n = (v) => parseFloat(v || 0);
   const m = (v) => sym + ' ' + n(v).toFixed(2);
   const fh = (f) => (f ? new Date(f).toLocaleString('es-BO', { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' }) : '-');
-  const METODO = { efectivo: 'Efectivo', qr: 'QR', app_externa: 'App externa' };
+  const METODO = { efectivo: 'Efectivo', qr: 'QR', app_externa: 'App externa', mixto: 'Mixto' };
   const efectivo = n(metodos.find((x) => x.metodo_pago === 'efectivo')?.total);
   const totalVentas = metodos.reduce((a, x) => a + n(x.total), 0);
   const dif = n(sesion.diferencia);

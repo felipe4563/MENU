@@ -704,7 +704,7 @@ function _partesDelTicket(pedidoJSON) {
 
 // `pagoParcial` (ver pagosParciales._datosComprobante): el ticket de caja es
 // el comprobante corto de una parte que no completa el pedido.
-async function _emitirImpresion(pedido, metodo_pago, cambio, sucursal_id, numeroOrdenDiarioOverride, { esReimpresion = false, suprimirCocina = false, pagoParcial = null } = {}) {
+async function _emitirImpresion(pedido, metodo_pago, cambio, sucursal_id, numeroOrdenDiarioOverride, { esReimpresion = false, suprimirCocina = false, pagoParcial = null, sinEmitir = false } = {}) {
   // Los llamadores normales (crearCompleta, cobrar, _confirmarPagoQr) no
   // pasan override: se recalcula en vivo, como siempre. `reimprimir` sí pasa
   // un valor explícito (el número que tenía el pedido el día que se vendió)
@@ -745,14 +745,16 @@ async function _emitirImpresion(pedido, metodo_pago, cambio, sucursal_id, numero
       const partes = _partesDelTicket(json);
       if (partes) datosCaja.partes = partes;
     }
-    emitir('print:caja', datosCaja, sucursal_id, caja_id);
+    if (!sinEmitir) emitir('print:caja', datosCaja, sucursal_id, caja_id);
   }
 
   let datosCocina = null;
   if (cfg.flujo_cocina === 'fisico' && !suprimirCocina) {
     const cocinaPorCaja = cfg.cocina_destino === 'por_caja';
     datosCocina = { pedido: _detallesVigentes(pedido.toJSON()), config: cfg, numero_orden_diario, modo_impresion, ancho_papel_bluetooth, conexion_bluetooth, caja_id: cocinaPorCaja ? caja_id : null };
-    if (cocinaPorCaja) {
+    if (sinEmitir) {
+      // Solo se arman los datos (ya se imprimieron antes): no se emite.
+    } else if (cocinaPorCaja) {
       // Cada caja imprime su propio ticket de cocina junto con el de venta
       // — para negocios chicos sin una estación de cocina fija compartida.
       emitir('print:cocina', datosCocina, sucursal_id, caja_id);
@@ -1097,7 +1099,18 @@ async function consultarEstadoPagoQr(pedido_id, alcance) {
   // antes producía un 404 acá, dejando el modal de cobro esperando
   // indefinidamente aunque el pago ya estuviera confirmado).
   if (pagoQr.estado !== 'pendiente') {
-    return { estado: pagoQr.estado, pedido: await obtener(pedido_id) };
+    const actual = await obtener(pedido_id);
+    // QR de una parte ya confirmado (por el webhook): Bluetooth/RawBT solo
+    // imprime lo que trae la respuesta, así que se vuelve a armar su
+    // comprobante (o el ticket final si cerró el pedido) sin emitirlo otra
+    // vez por socket. El navegador deja de consultar al ver 'completado'.
+    if (pagoQr.pedido_pago_id && pagoQr.estado === 'completado') {
+      const datos_impresion = await require('./pagosParciales.service').imprimirParte(
+        actual, pagoQr.pedido_pago_id, actual.estado === 'completado', { sinEmitir: true },
+      );
+      return { estado: pagoQr.estado, pedido: actual, datos_impresion };
+    }
+    return { estado: pagoQr.estado, pedido: actual };
   }
 
   if (new Date() > pagoQr.expires_at) {
@@ -1433,7 +1446,9 @@ async function agregarItem(pedido_id, { producto_id, combo_id, cantidad = 1, not
   return item;
 }
 
-async function actualizarItem(pedido_id, item_id, { cantidad, nota, estado, peso }, alcance) {
+// Si el cambio deja lo cobrado en partes cubriendo el total, el pedido se
+// cierra y la respuesta trae además datos_impresion (ticket final).
+async function actualizarItem(pedido_id, item_id, { cantidad, nota, estado, peso }, alcance, usuario_id = null) {
   const pedido = await Pedido.findByPk(pedido_id);
   if (!pedido) throw Object.assign(new Error('Pedido no encontrado'), { status: 404 });
   _verificarAlcance(pedido, alcance);
@@ -1456,7 +1471,7 @@ async function actualizarItem(pedido_id, item_id, { cantidad, nota, estado, peso
   }
 
   const partes = require('./pagosParciales.service');
-  await _conPedidoBloqueado(pedido_id, 'Pedido no modificable', async (t) => {
+  const cerrado = await _conPedidoBloqueado(pedido_id, 'Pedido no modificable', async (t) => {
     const pagos = await partes.partesVigentes(pedido_id, t);
     // Una línea por peso ya pagada no cambia de precio.
     if (cambios.peso !== undefined && partes.unidadesPagadas({ pagos }).get(item.id)) {
@@ -1465,12 +1480,17 @@ async function actualizarItem(pedido_id, item_id, { cantidad, nota, estado, peso
     await item.update(cambios, { transaction: t });
     await _recalcularTotal(pedido_id, { transaction: t });
     await partes.verificarLoPagado(pedido_id, pagos, t);
+    return partes.cerrarSiYaEstaPagado(pedido_id, usuario_id ?? pedido.usuario_id, t);
   });
   emitir('restaurante:actualizar', { tipo: 'pedido_items' });
-  return item;
+  if (!cerrado) return item;
+  const { datos_impresion } = await partes.avisarCierre(pedido_id);
+  return { ...item.toJSON(), datos_impresion };
 }
 
-async function eliminarItem(pedido_id, item_id, alcance) {
+// Devuelve null, o { datos_impresion } si quitar la línea cerró el pedido
+// (lo cobrado en partes ya cubre el total).
+async function eliminarItem(pedido_id, item_id, alcance, usuario_id = null) {
   const pedido = await Pedido.findByPk(pedido_id);
   if (!pedido) throw Object.assign(new Error('Pedido no encontrado'), { status: 404 });
   _verificarAlcance(pedido, alcance);
@@ -1478,7 +1498,7 @@ async function eliminarItem(pedido_id, item_id, alcance) {
   const item = await DetallePedido.findOne({ where: { id: item_id, pedido_id } });
   if (!item) throw Object.assign(new Error('Item no encontrado'), { status: 404 });
   const partes = require('./pagosParciales.service');
-  await _conPedidoBloqueado(pedido_id, 'Pedido no modificable', async (t) => {
+  const cerrado = await _conPedidoBloqueado(pedido_id, 'Pedido no modificable', async (t) => {
     // Se leen antes de borrar: los platos pagados se borrarían en cascada.
     const pagos = await partes.partesVigentes(pedido_id, t);
     if (Number(item.cantidad_anulada || 0) > 0) {
@@ -1490,8 +1510,12 @@ async function eliminarItem(pedido_id, item_id, alcance) {
     }
     await _recalcularTotal(pedido_id, { transaction: t });
     await partes.verificarLoPagado(pedido_id, pagos, t);
+    return partes.cerrarSiYaEstaPagado(pedido_id, usuario_id ?? pedido.usuario_id, t);
   });
   emitir('restaurante:actualizar', { tipo: 'pedido_items' });
+  if (!cerrado) return null;
+  const { datos_impresion } = await partes.avisarCierre(pedido_id);
+  return { datos_impresion };
 }
 
 async function cobrar(pedido_id, usuario_id, { metodo_pago, monto_recibido, descuento = 0, propina = 0, cliente_id, puntos_canjear = 0, cupon_codigo }, alcance) {

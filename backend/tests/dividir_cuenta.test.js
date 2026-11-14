@@ -475,16 +475,18 @@ describe('Dividir cuenta', () => {
     });
 
     it('anular un plato sin pagar baja lo que falta', async () => {
-      const id = await nuevoPedido([{ producto: platoA, cantidad: 1 }, { producto: platoB, cantidad: 1 }]);
+      const id = await nuevoPedido([{ producto: platoA, cantidad: 1 }, { producto: platoB, cantidad: 2 }]);
       const pedido = await ver(id);
       const dA = detalleDe(pedido, platoA);
       const dB = detalleDe(pedido, platoB);
       expect((await parte(id, { modo: 'platos', items: [{ detalle_pedido_id: dA.id, cantidad: 1 }], metodo_pago: 'efectivo', monto_recibido: 30 })).status).toBe(201);
       const r = await anular(id, [{ detalle_pedido_id: dB.id, cantidad: 1 }]);
       expect(r.status).toBe(201);
+      expect(r.body.datos.datos_impresion).toBeNull();
       const despues = await ver(id);
-      expect(despues.total).toBe('30.00');
-      expect(Number(despues.total) - Number(despues.pagado)).toBe(0);
+      expect(despues.estado).toBe('pendiente');
+      expect(despues.total).toBe('55.00');
+      expect(Number(despues.total) - Number(despues.pagado)).toBe(25);
     });
 
     it('cobrar la cuenta completa con pagos cobra solo lo que falta', async () => {
@@ -661,10 +663,11 @@ describe('Dividir cuenta', () => {
         expect(estado.body.datos.pedido.pagado).toBe('40.00');
         expect(estado.body.datos.datos_impresion.caja.pago_parcial).toMatchObject({ numero: 1, persona: 'Ceci', metodo_pago: 'qr', monto: 40, falta: 60 });
 
-        // Una consulta posterior ya no lo confirma: no trae comprobante.
+        // Una consulta posterior (ya confirmado) vuelve a traer el comprobante,
+        // sin emitirlo otra vez por socket.
         const otra = await request(app).get(`/api/v1/ventas/${id}/pago-qr/estado`).set('Authorization', `Bearer ${token}`);
         expect(otra.body.datos.estado).toBe('completado');
-        expect(otra.body.datos.datos_impresion).toBeUndefined();
+        expect(otra.body.datos.datos_impresion.caja.pago_parcial).toMatchObject({ numero: 1, persona: 'Ceci', falta: 60 });
       } finally {
         espia.mockRestore();
       }
@@ -680,6 +683,158 @@ describe('Dividir cuenta', () => {
       expect(cocina).toBeNull();
       expect(caja.pago_parcial).toBeUndefined();
       expect(caja.partes.map((p) => p.monto)).toEqual([20, 35]);
+    });
+  });
+
+  describe('si bajar platos deja la cuenta pagada, el pedido se cierra', () => {
+    const anular = (id, items) => request(app).post(`/api/v1/ventas/${id}/anular`).set('Authorization', `Bearer ${token}`)
+      .send({ items, motivo: 'demora' });
+
+    // A 30 + B×n; Juanita paga A por platos.
+    const conAPagado = async (cantidadB) => {
+      const stockA = await stockDe(platoA);
+      const stockB = await stockDe(platoB);
+      const id = await nuevoPedido([{ producto: platoA, cantidad: 1 }, { producto: platoB, cantidad: cantidadB }], { mesa: true });
+      const pedido = await ver(id);
+      const dA = detalleDe(pedido, platoA);
+      const dB = detalleDe(pedido, platoB);
+      const r = await parte(id, { modo: 'platos', persona: 'Juanita', items: [{ detalle_pedido_id: dA.id, cantidad: 1 }], metodo_pago: 'efectivo', monto_recibido: 50 });
+      expect(r.status).toBe(201);
+      return { id, dA, dB, stockA, stockB };
+    };
+
+    const esperarCerrado = async (id, total, datosImpresion) => {
+      const final = await ver(id);
+      expect(final.estado).toBe('completado');
+      expect(final.total).toBe(total);
+      expect(final.pagado).toBe(total);
+      expect(final.metodo_pago).toBe('efectivo');
+      expect(final.estado_cocina).toBeNull();
+      expect(final.mesa.estado).toBe('disponible');
+      expect(datosImpresion.caja.partes.map((p) => [p.numero, p.persona, p.monto])).toEqual([[1, 'Juanita', 30]]);
+      expect(datosImpresion.caja.pago_parcial).toBeUndefined();
+      // Ningún ingreso nuevo: solo el de la parte.
+      expect(await LibroCaja.count({ where: { referencia_id: id, tipo: 'ingreso' } })).toBe(1);
+      return final;
+    };
+
+    it('anular lo que faltaba pagar cierra el pedido', async () => {
+      const { id, dB, stockA, stockB } = await conAPagado(1);
+      const r = await anular(id, [{ detalle_pedido_id: dB.id, cantidad: 1 }]);
+      expect(r.status).toBe(201);
+      expect(r.body.datos.pedido.estado).toBe('completado');
+      await esperarCerrado(id, '30.00', r.body.datos.datos_impresion);
+      expect(await stockDe(platoA)).toBe(stockA - 1);
+      expect(await stockDe(platoB)).toBe(stockB);
+    });
+
+    it('quitar la línea que faltaba pagar cierra el pedido', async () => {
+      const { id, dB, stockA, stockB } = await conAPagado(1);
+      const r = await request(app).delete(`/api/v1/ventas/${id}/items/${dB.id}`).set('Authorization', `Bearer ${token}`);
+      expect(r.status).toBe(200);
+      await esperarCerrado(id, '30.00', r.body.datos.datos_impresion);
+      expect(await stockDe(platoA)).toBe(stockA - 1);
+      expect(await stockDe(platoB)).toBe(stockB);
+    });
+
+    it('bajar la cantidad de lo que faltaba pagar cierra el pedido', async () => {
+      const { id, dB, stockA, stockB } = await conAPagado(2);
+      // Felipe paga uno de los dos B; el otro se quita bajando la cantidad.
+      expect((await parte(id, { modo: 'platos', persona: 'Felipe', items: [{ detalle_pedido_id: dB.id, cantidad: 1 }], metodo_pago: 'efectivo', monto_recibido: 25 })).status).toBe(201);
+      const r = await request(app).put(`/api/v1/ventas/${id}/items/${dB.id}`).set('Authorization', `Bearer ${token}`).send({ cantidad: 1 });
+      expect(r.status).toBe(200);
+      expect(r.body.datos.id).toBe(dB.id);
+      const final = await ver(id);
+      expect(final.estado).toBe('completado');
+      expect(final.total).toBe('55.00');
+      expect(final.pagado).toBe('55.00');
+      expect(final.mesa.estado).toBe('disponible');
+      expect(r.body.datos.datos_impresion.caja.partes.map((p) => p.monto)).toEqual([30, 25]);
+      expect(await stockDe(platoA)).toBe(stockA - 1);
+      expect(await stockDe(platoB)).toBe(stockB - 1);
+    });
+
+    it('un cambio que no cubre el total no cierra ni imprime', async () => {
+      const { id, dB } = await conAPagado(2);
+      const r = await request(app).put(`/api/v1/ventas/${id}/items/${dB.id}`).set('Authorization', `Bearer ${token}`).send({ cantidad: 1 });
+      expect(r.status).toBe(200);
+      expect(r.body.datos.datos_impresion).toBeUndefined();
+      expect((await ver(id)).estado).toBe('pendiente');
+    });
+
+    it('un pedido ya pagado que quedó abierto (datos viejos) se cierra con el cobro completo', async () => {
+      const { id, dB, stockA } = await conAPagado(1);
+      // Como quedaba antes del arreglo: B anulado y el pedido abierto con Falta 0.
+      await DetallePedido.update({ cantidad_anulada: 1 }, { where: { id: dB.id } });
+      await Pedido.update({ total: 30 }, { where: { id } });
+      expect((await ver(id)).estado).toBe('pendiente');
+
+      const r = await request(app).post(`/api/v1/ventas/${id}/cobrar`).set('Authorization', `Bearer ${token}`)
+        .send({ metodo_pago: 'efectivo', monto_recibido: 0 });
+      expect(r.status).toBe(200);
+      expect(r.body.datos.estado).toBe('completado');
+      await esperarCerrado(id, '30.00', r.body.datos.datos_impresion);
+      expect(await PedidoPago.count({ where: { pedido_id: id } })).toBe(1);
+      expect(await stockDe(platoA)).toBe(stockA - 1);
+    });
+  });
+
+  describe('QR de una parte resuelto fuera de la consulta', () => {
+    it('confirmado por el webhook: la consulta devuelve su comprobante', async () => {
+      const ventasService = require('../src/modules/ventas/ventas.service');
+      const id = await nuevoPedido([{ producto: platoC, cantidad: 1 }]);
+      const conQr = await parte(id, { modo: 'iguales', persona: 'Dani', monto: 40, metodo_pago: 'qr' });
+      expect(conQr.status).toBe(201);
+      const pagoQr = await PagoQr.findOne({ where: { pedido_id: id, estado: 'pendiente' } });
+      await ventasService.procesarWebhookPagoQr({ event: 'payment.completed', order_id: pagoQr.order_id });
+      expect((await PagoQr.findByPk(pagoQr.id)).estado).toBe('completado');
+
+      const espia = jest.spyOn(ventasService, '_emitirImpresion');
+      try {
+        const estado = await request(app).get(`/api/v1/ventas/${id}/pago-qr/estado`).set('Authorization', `Bearer ${token}`);
+        expect(estado.status).toBe(200);
+        expect(estado.body.datos.estado).toBe('completado');
+        expect(estado.body.datos.datos_impresion.caja.pago_parcial).toMatchObject({ numero: 1, persona: 'Dani', metodo_pago: 'qr', monto: 40, falta: 60 });
+        // Ya se emitió al confirmarse: la consulta no lo vuelve a mandar por socket.
+        expect(espia).toHaveBeenCalled();
+        expect(espia.mock.calls.every((args) => args[5]?.sinEmitir === true)).toBe(true);
+      } finally {
+        espia.mockRestore();
+      }
+
+      // La última parte, confirmada por el webhook: la consulta trae el ticket final.
+      expect((await parte(id, { modo: 'iguales', monto: 60, metodo_pago: 'qr' })).status).toBe(201);
+      const ultimo = await PagoQr.findOne({ where: { pedido_id: id, estado: 'pendiente' } });
+      await ventasService.procesarWebhookPagoQr({ event: 'payment.completed', order_id: ultimo.order_id });
+      const cierre = await request(app).get(`/api/v1/ventas/${id}/pago-qr/estado`).set('Authorization', `Bearer ${token}`);
+      expect(cierre.body.datos.estado).toBe('completado');
+      expect(cierre.body.datos.pedido.estado).toBe('completado');
+      expect(cierre.body.datos.datos_impresion.caja.pago_parcial).toBeUndefined();
+      expect(cierre.body.datos.datos_impresion.caja.partes.map((p) => p.monto)).toEqual([40, 60]);
+    });
+
+    it('QR de una parte vence: la parte se anula y el saldo vuelve a estar pendiente', async () => {
+      const ventasService = require('../src/modules/ventas/ventas.service');
+      const id = await nuevoPedido([{ producto: platoA, cantidad: 1 }, { producto: platoB, cantidad: 1 }]);
+      const dA = detalleDe(await ver(id), platoA);
+      expect((await parte(id, { modo: 'iguales', monto: 10, metodo_pago: 'efectivo', monto_recibido: 10 })).status).toBe(201);
+      const conQr = await parte(id, { modo: 'platos', items: [{ detalle_pedido_id: dA.id, cantidad: 1 }], metodo_pago: 'qr' });
+      expect(conQr.status).toBe(201);
+
+      await PagoQr.update({ expires_at: new Date(Date.now() - 60_000) }, { where: { pedido_id: id, estado: 'pendiente' } });
+      const { revertidos } = await ventasService.revertirPagosQrVencidos();
+      expect(revertidos).toBeGreaterThanOrEqual(1);
+
+      expect((await PedidoPago.findByPk(conQr.body.datos.pago.id)).estado).toBe('anulado');
+      expect((await PagoQr.findOne({ where: { pedido_id: id } })).estado).toBe('expirado');
+      const pedido = await ver(id);
+      expect(pedido.estado).toBe('pendiente');
+      expect(pedido.pagado).toBe('10.00');
+
+      // El plato vuelve a estar libre.
+      const otra = await parte(id, { modo: 'platos', items: [{ detalle_pedido_id: dA.id, cantidad: 1 }], metodo_pago: 'efectivo', monto_recibido: 30 });
+      expect(otra.status).toBe(201);
+      expect(otra.body.datos.pedido.pagado).toBe('40.00');
     });
   });
 

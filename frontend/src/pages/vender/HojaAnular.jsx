@@ -75,6 +75,8 @@ export default function HojaAnular({ pedido, onCerrar, onListo }) {
       qc.invalidateQueries({ queryKey: ['mis-ventas'] });
       qc.invalidateQueries({ queryKey: ['ventas'] });
       if (res.impresion?.cocina) imprimirLocal({ cocina: res.impresion.cocina });
+      // Lo anulado era lo único que faltaba pagar: el pedido se cerró (ticket final).
+      if (res.datos_impresion) imprimirLocal(res.datos_impresion);
       const dev = {
         ...res.devolucion,
         items: (res.devolucion?.items ?? []).map((it) => {

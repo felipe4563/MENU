@@ -13,7 +13,7 @@ import { cx, dinero, errorDe, fechaHora, hora } from '../../lib/util';
 import { etiquetaDestino } from '../vender/datosCatalogo';
 
 const n = (v) => parseFloat(v || 0);
-const METODO = { efectivo: 'Efectivo', qr: 'QR', app_externa: 'App externa' };
+const METODO = { efectivo: 'Efectivo', qr: 'QR', app_externa: 'App externa', mixto: 'Mixto' };
 
 function Linea({ t, v, fuerte, tono }) {
   return (

@@ -120,6 +120,29 @@ async function _completarSiCorresponde(pedido, usuario_id, transaction) {
   return true;
 }
 
+// Con el pedido bloqueado y el total ya recalculado: si bajar platos (anular,
+// quitar una línea o bajar su cantidad) dejó lo cobrado cubriendo el total,
+// el pedido se cierra ahí mismo. Si no, quedaría abierto con Falta 0 sin
+// forma de cobrarlo ni cancelarlo. Solo con partes cobradas y ninguna
+// esperando un QR. Devuelve true si lo cerró.
+async function cerrarSiYaEstaPagado(pedido_id, usuario_id, transaction) {
+  const pedido = await Pedido.findByPk(pedido_id, { transaction });
+  if (!pedido || !['pendiente', 'listo'].includes(pedido.estado)) return false;
+  const pagos = await PedidoPago.findAll({ where: { pedido_id, estado: ['pendiente', 'completado'] }, transaction });
+  if (!pagos.some((p) => p.estado === 'completado') || pagos.some((p) => p.estado === 'pendiente')) return false;
+  return _completarSiCorresponde(pedido, usuario_id, transaction);
+}
+
+// Ya confirmada la transacción que cerró el pedido sin cobrar otra parte:
+// avisa a las pantallas e imprime el ticket final con las partes, igual que
+// la última parte. Devuelve su `datos_impresion`.
+async function avisarCierre(pedido_id) {
+  const pedido = await ventasService.obtener(pedido_id);
+  emitir('restaurante:actualizar', { tipo: 'pedido_cobrado' }, pedido.sucursal_id);
+  const datos_impresion = await imprimirParte(pedido, null, true);
+  return { pedido, datos_impresion };
+}
+
 const _concepto = (pedido, numero, persona) => `Venta #${pedido.id} · parte ${numero}${persona ? ` (${persona})` : ''}`;
 
 // Asienta una parte ya pagada en el libro de la caja donde se cobró, la suma
@@ -196,17 +219,19 @@ function _datosComprobante(pedido, pago_id) {
 // ticket final con las partes si fue la que completó el pedido. Nunca la
 // comanda de cocina (ya salió al mandar el pedido). La parte ya está cobrada:
 // si la impresión falla se registra y se devuelve null, sin romper el cobro.
-async function imprimirParte(pedido, pago_id, completado) {
+// Con `sinEmitir` solo arma los datos (sin mandarlos por socket): para
+// devolverlos de nuevo cuando ya se imprimieron al confirmarse.
+async function imprimirParte(pedido, pago_id, completado, { sinEmitir = false } = {}) {
   try {
     const numero = await ventasService._numeroOrdenDiarioOriginal(pedido);
     if (completado) {
       return await ventasService._emitirImpresion(
-        pedido, pedido.metodo_pago, Number(pedido.cambio || 0), pedido.sucursal_id, numero, { suprimirCocina: true },
+        pedido, pedido.metodo_pago, Number(pedido.cambio || 0), pedido.sucursal_id, numero, { suprimirCocina: true, sinEmitir },
       );
     }
     const pagoParcial = _datosComprobante(pedido, pago_id);
     return await ventasService._emitirImpresion(
-      pedido, pagoParcial.metodo_pago, pagoParcial.cambio, pedido.sucursal_id, numero, { suprimirCocina: true, pagoParcial },
+      pedido, pagoParcial.metodo_pago, pagoParcial.cambio, pedido.sucursal_id, numero, { suprimirCocina: true, pagoParcial, sinEmitir },
     );
   } catch (err) {
     console.error(`[pagos parciales] No se pudo imprimir la parte ${pago_id} del pedido #${pedido.id}:`, err.message);
@@ -310,6 +335,19 @@ async function cobrarLoQueFalta(pedido, usuario_id, { metodo_pago, monto_recibid
     throw error('Con pagos hechos, cobra lo que falta sin descuentos', 400);
   }
 
+  // Ya no falta nada (datos de antes de cerrar al bajar platos): se cierra
+  // la cuenta sin cobrar otra parte.
+  if (falta(pedido) <= 0.005) {
+    const cerrado = await sequelize.transaction(async (t) => {
+      const bloqueado = await Pedido.findByPk(pedido.id, { transaction: t, lock: t.LOCK.UPDATE });
+      if (!bloqueado || falta(bloqueado) > 0.005) return false;
+      return cerrarSiYaEstaPagado(pedido.id, usuario_id, t);
+    });
+    if (!cerrado) throw error('El pedido cambió mientras se cobraba. Vuelve a intentarlo', 409);
+    const { pedido: completo, datos_impresion } = await avisarCierre(pedido.id);
+    return { ...completo.toJSON(), datos_impresion };
+  }
+
   const r = await cobrarParte(pedido.id, usuario_id, { metodo_pago, monto_recibido, modo: 'iguales' }, alcance, { saldoCompleto: true });
   if (r.pago_qr) return { pedido: r.pedido, pago_qr: r.pago_qr };
   return { ...r.pedido.toJSON(), datos_impresion: r.datos_impresion };
@@ -344,5 +382,5 @@ async function _anularParteQr(pagoQr, transaction) {
 }
 
 module.exports = {
-  cobrarParte, cobrarLoQueFalta, imprimirParte, unidadesPagadas, falta, partesVigentes, verificarLoPagado, MSJ_YA_PAGADO, MSJ_QR_PENDIENTE, _sesionParaCobrar, _completarSiCorresponde, _confirmarParteQr, _anularParteQr,
+  cobrarParte, cobrarLoQueFalta, imprimirParte, cerrarSiYaEstaPagado, avisarCierre, unidadesPagadas, falta, partesVigentes, verificarLoPagado, MSJ_YA_PAGADO, MSJ_QR_PENDIENTE, _sesionParaCobrar, _completarSiCorresponde, _confirmarParteQr, _anularParteQr,
 };

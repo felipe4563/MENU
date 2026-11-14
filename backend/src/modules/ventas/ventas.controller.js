@@ -54,12 +54,12 @@ async function agregarItem(req, res, next) {
 }
 
 async function actualizarItem(req, res, next) {
-  try { res.json({ ok: true, datos: await svc.actualizarItem(req.params.id, req.params.item_id, req.body, _alcance(req)) }); }
+  try { res.json({ ok: true, datos: await svc.actualizarItem(req.params.id, req.params.item_id, req.body, _alcance(req), req.usuario.id) }); }
   catch (err) { next(err); }
 }
 
 async function eliminarItem(req, res, next) {
-  try { await svc.eliminarItem(req.params.id, req.params.item_id, _alcance(req)); res.json({ ok: true, datos: null }); }
+  try { res.json({ ok: true, datos: await svc.eliminarItem(req.params.id, req.params.item_id, _alcance(req), req.usuario.id) }); }
   catch (err) { next(err); }
 }
 

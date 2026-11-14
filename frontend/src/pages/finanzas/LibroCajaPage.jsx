@@ -13,7 +13,7 @@ import { useRango, SelectorRango, exportarCsv, BotonCsv, BotonExportar, Paginado
 import { armarLibro } from './exportes';
 import { cx, dinero, errorDe, fechaHora } from '../../lib/util';
 
-const METODO = { efectivo: 'Efectivo', qr: 'QR', app_externa: 'App' };
+const METODO = { efectivo: 'Efectivo', qr: 'QR', app_externa: 'App', mixto: 'Mixto' };
 
 function HojaMovimiento({ onCerrar }) {
   const qc = useQueryClient();

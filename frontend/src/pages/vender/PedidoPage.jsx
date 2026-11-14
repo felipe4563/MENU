@@ -6,7 +6,7 @@ import { getVenta, agregarItem, actualizarItem, eliminarItem, cobrarVenta, cance
 import { usePermisos } from '../../hooks/usePermisos';
 import { useMoneda } from '../../hooks/useConfig';
 import { useSocket } from '../../hooks/useSocket';
-import { reimprimirConFallback } from '../../utils/impresionLocal';
+import { imprimirLocal, reimprimirConFallback } from '../../utils/impresionLocal';
 import { vigente, puedeAnularPedido } from '../../utils/devoluciones';
 import { faltaDe } from '../../lib/dividirCuenta';
 import { useCatalogo, etiquetaDestino, nombreDetalle, textoOpcionesDetalle } from './datosCatalogo';
@@ -41,8 +41,14 @@ export default function PedidoPage() {
     onSuccess: (_r, l) => { refrescar(); avisar.ok(`${l.nombre} agregado`); },
     onError: fallo,
   });
-  const cambiar = useMutation({ mutationFn: ({ d, cantidad }) => actualizarItem(id, d.id, { cantidad }), onSuccess: refrescar, onError: fallo });
-  const quitar = useMutation({ mutationFn: (d) => eliminarItem(id, d.id), onSuccess: refrescar, onError: fallo });
+  // Si al bajar platos lo cobrado en partes ya cubre el total, el pedido se
+  // cierra y la respuesta trae el ticket final.
+  const trasCambio = (r) => {
+    if (r?.datos_impresion) { imprimirLocal(r.datos_impresion); avisar.ok('La cuenta ya estaba pagada: pedido cerrado'); qc.invalidateQueries({ queryKey: ['mesas'] }); }
+    refrescar();
+  };
+  const cambiar = useMutation({ mutationFn: ({ d, cantidad }) => actualizarItem(id, d.id, { cantidad }), onSuccess: trasCambio, onError: fallo });
+  const quitar = useMutation({ mutationFn: (d) => eliminarItem(id, d.id), onSuccess: trasCambio, onError: fallo });
   const cancelar = useMutation({ mutationFn: () => cancelarVenta(id), onSuccess: () => { qc.invalidateQueries({ queryKey: ['ventas'] }); avisar.ok('Pedido cancelado'); navigate('/vender'); }, onError: fallo });
   const reimprimir = useMutation({ mutationFn: () => reimprimirVenta(id), onSuccess: reimprimirConFallback, onError: fallo });
 

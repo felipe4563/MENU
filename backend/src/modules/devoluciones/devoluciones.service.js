@@ -26,8 +26,12 @@ async function anular(pedido_id, usuario_id, { items, motivo, nota, forma }, alc
     throw _error(`No se pueden anular productos de un pedido ${pedido.estado === 'pendiente_pago' ? 'pendiente de pago' : pedido.estado}`, 409);
   });
 
-  const { estadoCocinaPrevio, ...respuesta } = resultado;
+  const { estadoCocinaPrevio, cerrado, ...respuesta } = resultado;
   emitir('restaurante:actualizar', { tipo: 'pedido_items' });
+  // Lo anulado era lo único que faltaba pagar: el pedido quedó cerrado y se
+  // imprime el ticket final con las partes.
+  let datos_impresion = null;
+  if (cerrado) ({ datos_impresion } = await pagosParciales.avisarCierre(pedido_id));
   // Ya con la transacción confirmada: avisar a cocina (best-effort).
   let cocina = null;
   try {
@@ -38,7 +42,7 @@ async function anular(pedido_id, usuario_id, { items, motivo, nota, forma }, alc
   } catch (e) {
     console.error('Error avisando anulación a cocina:', e.message);
   }
-  return { ...respuesta, impresion: { cocina } };
+  return { ...respuesta, impresion: { cocina }, datos_impresion };
 }
 
 // Si ya no queda nada vigente en el pedido, sale de la pantalla de cocina
@@ -101,10 +105,13 @@ async function _anularSinCobrar(pedido, usuario_id, { items, motivo, nota }, tra
   await pagosParciales.verificarLoPagado(pedido.id, pagos, transaction);
   await pedido.reload({ transaction });
   const estadoCocinaPrevio = await _limpiarCocinaSiVacio(pedido, transaction);
+  // Si lo cobrado en partes ya cubre el nuevo total, el pedido se cierra.
+  const cerrado = await pagosParciales.cerrarSiYaEstaPagado(pedido.id, usuario_id, transaction);
+  if (cerrado) await pedido.reload({ transaction });
   const dev = await Devolucion.findByPk(devolucion.id, {
     include: [{ model: DevolucionItem, as: 'items' }, { model: Usuario, as: 'usuario', attributes: ['id', 'nombre'] }], transaction,
   });
-  return { pedido, devolucion: dev, estadoCocinaPrevio };
+  return { pedido, devolucion: dev, estadoCocinaPrevio, cerrado };
 }
 
 const FORMAS_COBRADO = ['efectivo', 'transferencia', 'app'];

@@ -12,7 +12,7 @@ import { etiquetaDestino } from '../vender/datosCatalogo';
 import { PorHora, FormasPago } from '../hoy/graficos';
 import { cx, dinero, fechaHora, hoyISO } from '../../lib/util';
 
-const METODO = { efectivo: 'Efectivo', qr: 'QR', app_externa: 'App' };
+const METODO = { efectivo: 'Efectivo', qr: 'QR', app_externa: 'App', mixto: 'Mixto' };
 
 function Kpi({ etiqueta, valor, tono, nota }) {
   return (

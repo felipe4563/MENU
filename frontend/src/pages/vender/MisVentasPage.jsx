@@ -14,7 +14,7 @@ import HojaAnular, { HistorialDevoluciones } from './HojaAnular';
 import { etiquetaDestino, nombreDetalle, textoOpcionesDetalle } from './datosCatalogo';
 import { cx, dinero, errorDe, hora } from '../../lib/util';
 
-const METODO = { efectivo: 'Efectivo', qr: 'QR', app_externa: 'App' };
+const METODO = { efectivo: 'Efectivo', qr: 'QR', app_externa: 'App', mixto: 'Mixto' };
 
 function Detalle({ id, onCerrar }) {
   const moneda = useMoneda();

@@ -410,6 +410,10 @@ export default function HojaCobro({ total, subtitulo, items = [], clienteInicial
     onError: (e) => avisar.error(errorDe(e, 'No se pudo cancelar el QR.')),
   });
 
+  // Datos viejos: partes que ya cubren el total pero el pedido quedó abierto
+  // (antes no se cerraba al bajar platos). El cobro completo lo cierra.
+  const yaPagado = !!pedido && pagado > 0 && faltaDe({ total, pagado }) <= 0.005 && ['pendiente', 'listo'].includes(pedido.estado);
+
   const ancho = useAncho();
   const efectivoInsuficiente =metodo === 'efectivo' && recibido !== '' && recibidoNum < aPagar - 0.005;
   const ocupado = cobrar.isPending || despues.isPending;
@@ -450,6 +454,24 @@ export default function HojaCobro({ total, subtitulo, items = [], clienteInicial
           onPagado={(p) => { setQr(null); setExito({ pedidoId: p.id, metodo: 'qr', cobrado: qr.pagoQr.monto_total ?? qr.pagoQr.monto_neto, cambio: 0, pedido: p }); }}
           onCancelado={() => { setQr(null); onCerrar(); }}
         />
+      </Hoja>
+    );
+  }
+
+  if (yaPagado) {
+    return (
+      <Hoja onCerrar={onCerrar} bloquear={cobrar.isPending} titulo="Cerrar cuenta" subtitulo={subtitulo} ancho="max-w-sm">
+        <div className="text-center pt-4 pb-2 space-y-4">
+          <CheckCircle2 className="w-12 h-12 text-hierba mx-auto" />
+          <div>
+            <p className="font-display text-xl font-bold">La cuenta ya está pagada</p>
+            <p className="text-sm text-tenue mt-1">Las partes cobradas suman {dinero(pagado, moneda)}. Cierra la cuenta para liberar la mesa e imprimir el ticket.</p>
+          </div>
+          {error && <p className="text-sm text-locoto">{error}</p>}
+          <button data-principal className="btn-aji btn-lg w-full" disabled={cobrar.isPending} onClick={() => cobrar.mutate()}>
+            {cobrar.isPending ? <Loader2 className="w-5 h-5 animate-spin" /> : 'Cerrar cuenta'}
+          </button>
+        </div>
       </Hoja>
     );
   }
