@@ -467,57 +467,22 @@ async function _sesionCajaParaAsiento(pedido, transaction) {
 }
 
 /**
- * Completa una venta ya decidida (efectivo, o confirmación de un pago QR):
- * marca el pedido completado, descuenta stock, registra el ingreso en el
- * libro de caja y libera la mesa si corresponde. Debe correr dentro de una
- * transacción activa.
+ * Asienta un ingreso en el libro de caja y lo suma al total de ventas de la
+ * sesión. Compartido por el cobro completo y por los pagos parciales.
  */
-async function _finalizarVenta({ pedido, detalles, metodo_pago, monto_recibido, descuento = 0, propina = 0, usuario_id, puntos_canjear = 0, cupon_codigo, canjeYaReservado = false }, transaction) {
-  const cfgFidelidad = await _configFidelidad(transaction);
+async function _asentarIngreso({ pedido, monto, metodo_pago, usuario_id, sesion_caja_id, concepto }, transaction) {
+  await LibroCaja.create({
+    sesion_caja_id, usuario_id, tipo: 'ingreso', concepto, monto, metodo_pago, referencia_id: pedido.id,
+  }, { transaction });
 
-  let puntosCanjeados, descuentoPuntos, clienteBloqueado;
-  let cupon, descuentoCupon;
-  if (canjeYaReservado) {
-    // Pago QR: los puntos y el cupón ya se reservaron al generar el QR (ver
-    // iniciarPagoQr), porque el monto cobrado quedó fijo desde ese momento.
-    // Acá solo se usa lo que ya quedó persistido en el pedido — no se vuelve
-    // a tocar el saldo del cliente ni el contador de usos del cupón.
-    puntosCanjeados = pedido.puntos_canjeados || 0;
-    descuentoPuntos = puntosCanjeados * cfgFidelidad.valorPunto;
-    clienteBloqueado = null;
-    cupon = null;
-    descuentoCupon = parseFloat(pedido.descuento_cupon || 0);
-  } else {
-    ({ puntos: puntosCanjeados, descuento: descuentoPuntos, cliente: clienteBloqueado } =
-      await _resolverCanje(pedido.cliente_id, puntos_canjear, cfgFidelidad, transaction, metodo_pago));
-    ({ cupon, descuento: descuentoCupon } =
-      await _resolverCupon(cupon_codigo, parseFloat(pedido.total) - parseFloat(descuento), pedido.cliente_id, transaction, detalles));
-  }
+  await SesionCaja.increment('total_ventas', { by: monto, where: { id: sesion_caja_id }, transaction });
+}
 
-  const monto_neto = Math.max(0, parseFloat(pedido.total) - parseFloat(descuento) - descuentoPuntos - descuentoCupon + parseFloat(propina));
-  const cambio = metodo_pago === 'efectivo' ? parseFloat(monto_recibido) - monto_neto : 0;
-  const puntosGanados = (pedido.cliente_id && cfgFidelidad.activa) ? Math.floor(monto_neto * cfgFidelidad.puntosPorBs) : 0;
-
-  const datosPedido = {
-    estado: 'completado', metodo_pago, monto_recibido: monto_recibido || monto_neto, cambio, descuento, propina,
-    puntos_ganados: puntosGanados, puntos_canjeados: puntosCanjeados, descuento_cupon: descuentoCupon,
-  };
-  if (!canjeYaReservado) datosPedido.cupon_id = cupon ? cupon.id : null;
-  await pedido.update(datosPedido, { transaction });
-
-  if (cupon) await cupon.update({ usos_actuales: cupon.usos_actuales + 1, usado_en: new Date() }, { transaction });
-
-  // Si el canje ya se reservó (QR), el saldo solo se mueve para acreditar lo
-  // ganado. Si no (efectivo), falta descontar el canje además de acreditar.
-  const faltaDescontarCanje = !canjeYaReservado && puntosCanjeados > 0;
-  if (pedido.cliente_id && (puntosGanados > 0 || faltaDescontarCanje)) {
-    const cliente = clienteBloqueado ?? await Cliente.findByPk(pedido.cliente_id, { transaction, lock: transaction.LOCK.UPDATE });
-    if (cliente) {
-      const delta = puntosGanados - (faltaDescontarCanje ? puntosCanjeados : 0);
-      await cliente.update({ puntos: cliente.puntos + delta }, { transaction });
-    }
-  }
-
+/**
+ * Cierra la venta de un pedido ya pagado por completo: descuenta stock e
+ * insumos y libera la mesa si corresponde.
+ */
+async function _cerrarVenta({ pedido, detalles, usuario_id }, transaction) {
   if (pedido.tipo !== 'llevar' && pedido.mesa_id) {
     // 'listo' también cuenta como pedido activo sin cobrar todavía, y
     // 'pendiente_pago' cubre un cobro QR en curso en otro pedido de la
@@ -535,20 +500,6 @@ async function _finalizarVenta({ pedido, detalles, metodo_pago, monto_recibido, 
       await Mesa.update({ estado: 'disponible' }, { where: { id: pedido.mesa_id }, transaction });
     }
   }
-
-  // Un pago QR tiene hasta 30 minutos para confirmarse. Si el cajero cierra
-  // y arquea su turno dentro de esa ventana, escribir en pedido.sesion_caja_id
-  // (la sesión abierta cuando se CREÓ el pedido) corrompe a posteriori un
-  // turno ya conciliado. Se redirige el asiento a la sesión que esté abierta
-  // ahora en la misma sucursal. No se toca pedido.sesion_caja_id: otras
-  // lecturas (reportes, historial) siguen viendo el turno original.
-  const sesionDestinoId = await _sesionCajaParaAsiento(pedido, transaction);
-
-  await LibroCaja.create({
-    sesion_caja_id: sesionDestinoId, usuario_id, tipo: 'ingreso', concepto: `Venta #${pedido.id}`, monto: monto_neto, metodo_pago, referencia_id: pedido.id,
-  }, { transaction });
-
-  await SesionCaja.increment('total_ventas', { by: monto_neto, where: { id: sesionDestinoId }, transaction });
 
   for (const detalle of detalles) {
     // Línea totalmente anulada antes del cobro: no se vendió nada, no se
@@ -600,6 +551,69 @@ async function _finalizarVenta({ pedido, detalles, metodo_pago, monto_recibido, 
       });
     }
   }
+}
+
+/**
+ * Completa una venta ya decidida (efectivo, o confirmación de un pago QR):
+ * marca el pedido completado, descuenta stock, registra el ingreso en el
+ * libro de caja y libera la mesa si corresponde. Debe correr dentro de una
+ * transacción activa.
+ */
+async function _finalizarVenta({ pedido, detalles, metodo_pago, monto_recibido, descuento = 0, propina = 0, usuario_id, puntos_canjear = 0, cupon_codigo, canjeYaReservado = false }, transaction) {
+  const cfgFidelidad = await _configFidelidad(transaction);
+
+  let puntosCanjeados, descuentoPuntos, clienteBloqueado;
+  let cupon, descuentoCupon;
+  if (canjeYaReservado) {
+    // Pago QR: los puntos y el cupón ya se reservaron al generar el QR (ver
+    // iniciarPagoQr), porque el monto cobrado quedó fijo desde ese momento.
+    // Acá solo se usa lo que ya quedó persistido en el pedido — no se vuelve
+    // a tocar el saldo del cliente ni el contador de usos del cupón.
+    puntosCanjeados = pedido.puntos_canjeados || 0;
+    descuentoPuntos = puntosCanjeados * cfgFidelidad.valorPunto;
+    clienteBloqueado = null;
+    cupon = null;
+    descuentoCupon = parseFloat(pedido.descuento_cupon || 0);
+  } else {
+    ({ puntos: puntosCanjeados, descuento: descuentoPuntos, cliente: clienteBloqueado } =
+      await _resolverCanje(pedido.cliente_id, puntos_canjear, cfgFidelidad, transaction, metodo_pago));
+    ({ cupon, descuento: descuentoCupon } =
+      await _resolverCupon(cupon_codigo, parseFloat(pedido.total) - parseFloat(descuento), pedido.cliente_id, transaction, detalles));
+  }
+
+  const monto_neto = Math.max(0, parseFloat(pedido.total) - parseFloat(descuento) - descuentoPuntos - descuentoCupon + parseFloat(propina));
+  const cambio = metodo_pago === 'efectivo' ? parseFloat(monto_recibido) - monto_neto : 0;
+  const puntosGanados = (pedido.cliente_id && cfgFidelidad.activa) ? Math.floor(monto_neto * cfgFidelidad.puntosPorBs) : 0;
+
+  const datosPedido = {
+    estado: 'completado', metodo_pago, monto_recibido: monto_recibido || monto_neto, cambio, descuento, propina,
+    puntos_ganados: puntosGanados, puntos_canjeados: puntosCanjeados, descuento_cupon: descuentoCupon,
+  };
+  if (!canjeYaReservado) datosPedido.cupon_id = cupon ? cupon.id : null;
+  await pedido.update(datosPedido, { transaction });
+
+  if (cupon) await cupon.update({ usos_actuales: cupon.usos_actuales + 1, usado_en: new Date() }, { transaction });
+
+  // Si el canje ya se reservó (QR), el saldo solo se mueve para acreditar lo
+  // ganado. Si no (efectivo), falta descontar el canje además de acreditar.
+  const faltaDescontarCanje = !canjeYaReservado && puntosCanjeados > 0;
+  if (pedido.cliente_id && (puntosGanados > 0 || faltaDescontarCanje)) {
+    const cliente = clienteBloqueado ?? await Cliente.findByPk(pedido.cliente_id, { transaction, lock: transaction.LOCK.UPDATE });
+    if (cliente) {
+      const delta = puntosGanados - (faltaDescontarCanje ? puntosCanjeados : 0);
+      await cliente.update({ puntos: cliente.puntos + delta }, { transaction });
+    }
+  }
+
+  // Un pago QR tiene hasta 30 minutos para confirmarse. Si el cajero cierra
+  // y arquea su turno dentro de esa ventana, escribir en pedido.sesion_caja_id
+  // (la sesión abierta cuando se CREÓ el pedido) corrompe a posteriori un
+  // turno ya conciliado. Se redirige el asiento a la sesión que esté abierta
+  // ahora en la misma sucursal. No se toca pedido.sesion_caja_id: otras
+  // lecturas (reportes, historial) siguen viendo el turno original.
+  const sesionDestinoId = await _sesionCajaParaAsiento(pedido, transaction);
+  await _asentarIngreso({ pedido, monto: monto_neto, metodo_pago, usuario_id, sesion_caja_id: sesionDestinoId, concepto: `Venta #${pedido.id}` }, transaction);
+  await _cerrarVenta({ pedido, detalles, usuario_id }, transaction);
 
   return monto_neto;
 }
@@ -1489,5 +1503,6 @@ module.exports = {
   cobrar, cancelar, marcarListo, marcarEntregado,
   consultarEstadoPagoQr, cancelarPagoQr, procesarWebhookPagoQr, revertirPagosQrVencidos,
   procesarNotificacionBaneco, confirmarPagoQrManual, listarPagosQrPorConfirmar,
+  _asentarIngreso, _cerrarVenta,
   recalcularTotal: _recalcularTotal, emitirAnulacionCocina, verificarAlcance: _verificarAlcance, qrConfirmaSolo,
 };
