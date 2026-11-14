@@ -30,9 +30,13 @@ export default defineConfig(({ mode }) => {
               urlPattern: new RegExp(`^${origenApi}/uploads/`),
               handler: 'CacheFirst',
               options: {
-                cacheName: 'uploads',
+                // Sin copias opacas (status 0): si el logo se guardaba así al
+                // mostrarse como <img>, el fetch con CORS del ticket Bluetooth
+                // fallaba con "Failed to fetch". 'uploads-v2' deja atrás las
+                // que ya estaban guardadas.
+                cacheName: 'uploads-v2',
                 expiration: { maxEntries: 300, maxAgeSeconds: 60 * 60 * 24 * 30 },
-                cacheableResponse: { statuses: [0, 200] },
+                cacheableResponse: { statuses: [200] },
               },
             },
             {

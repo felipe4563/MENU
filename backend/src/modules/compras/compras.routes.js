@@ -9,7 +9,8 @@ router.use(auth);
 
 router.get('/', verificarPermiso('compras', 'ver'), ctrl.listarCompras);
 router.post('/', verificarPermiso('compras', 'crear'), requiereSucursalActiva, ctrl.crearCompra);
-router.get('/:id', verificarPermiso('compras', 'ver'), ctrl.obtenerCompra);
+router.get('/catalogo', verificarPermiso('compras', 'crear'), ctrl.catalogo);
+router.get('/:id',verificarPermiso('compras', 'ver'), ctrl.obtenerCompra);
 router.put('/:id', verificarPermiso('compras', 'editar'), ctrl.actualizarCompra);
 router.put('/:id/recibir', verificarPermiso('compras', 'recibir'), requiereSucursalActiva, ctrl.recibirCompra);
 

@@ -9,11 +9,24 @@
 // mostró en la página como <img> normal, Chrome puede reusar esa copia sin
 // permiso CORS y el canvas queda "contaminado" — el ticket salía sin logo y
 // sin avisar.
-async function cargarImagen(url) {
+async function descargar(url) {
   const res = await fetch(url, { mode: 'cors', cache: 'no-cache' });
   if (!res.ok) throw new Error(`No se pudo descargar el logo (${res.status}).`);
-  const img = await createImageBitmap(await res.blob());
-  return img;
+  return res.blob();
+}
+
+async function cargarImagen(url) {
+  let blob;
+  try {
+    blob = await descargar(url);
+  } catch (e) {
+    if (!(e instanceof TypeError)) throw e;
+    // "Failed to fetch": un service worker puede tener guardada una copia
+    // opaca del logo (de cuando se mostró como <img>) y el navegador no la
+    // entrega a un fetch con CORS. Con otra URL esa copia no aplica.
+    blob = await descargar(`${url}${url.includes('?') ? '&' : '?'}ticket=${Date.now()}`);
+  }
+  return createImageBitmap(blob);
 }
 
 // Encaja el logo dentro de un cuadro de `maxAnchoPx` x `maxAltoPx` sin

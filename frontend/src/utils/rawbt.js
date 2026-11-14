@@ -3,7 +3,7 @@
 // - 'directo': Web Bluetooth desde el navegador (ver bluetoothDirecto.js).
 // - 'rawbt': una URL `rawbt:` que Android le pasa a la app RawBT si está
 //   instalada — mismo mecanismo que "compartir" a otra app.
-import { Esc, buildCaja, buildCocina, buildCierre, LOGO_MAX_PX } from './escpos';
+import { Esc, buildCaja, buildCocina, buildCierre, LOGO_MAX_PX, CODIFICACIONES } from './escpos';
 import { emparejar, imprimirDirecto } from './bluetoothDirecto';
 import { avisar } from '../components/ui/Aviso';
 import { logoAEscPos } from './logoEscPos';
@@ -101,6 +101,52 @@ export async function imprimirPrueba({ config, ancho = '80mm', nombreImpresora, 
   t.lf().line('Si lees esto bien, la impresora').line('está lista para los tickets.').lf(3).cut();
   await imprimirDirecto(t.build());
   return { conLogo: Boolean(logo), errorLogo: conLogo ? error : null, bytesLogo: logo ? logo.datos.length : 0 };
+}
+
+export const FRASE_LETRAS = 'Ñandú, piña, año ¿Sí? ¡Olé! áéíóú ÁÉÍÓÚ ü 25°';
+
+// Mandar a la impresora de este dispositivo: Bluetooth directo, o la app RawBT.
+async function mandarPrueba(bytes, via) {
+  if (via === 'rawbt') { dispararRawBT(bytes); return; }
+  await imprimirDirecto(bytes);
+}
+
+// La misma frase con cada tabla de letras, con su letra al lado: la que salga
+// bien es la que hay que elegir para esta impresora.
+export async function imprimirMuestraLetras({ ancho = '80mm', via = 'directo' }) {
+  const t = new Esc(ancho, 'ascii').init().charset();
+  t.center().bold(true).line('PRUEBA DE LETRAS').bold(false).line('Elige la letra donde la frase sale bien').left().rule();
+  for (const c of CODIFICACIONES) {
+    t.charset(c.id).bold(true).text(`${c.letra}) `).bold(false).line(FRASE_LETRAS);
+  }
+  t.charset('ascii').rule().lf(3).cut();
+  await mandarPrueba(t.build(), via);
+}
+
+// Diagnóstico: los 128 caracteres "especiales" (bytes 0x80–0xFF) de una tabla,
+// 16 por fila con su número. Muestra qué letras tiene de verdad la impresora.
+export async function imprimirMapaCaracteres({ ancho = '80mm', via = 'directo', codificacion }) {
+  const t = new Esc(ancho, 'ascii').init().charset();
+  const c = CODIFICACIONES.find((x) => x.id === codificacion) ?? CODIFICACIONES[0];
+  t.center().bold(true).line(`MAPA ${c.letra}) ${c.nombre}`).bold(false).line(`ESC t ${c.escT}`).left().rule();
+  t.charset(c.id);
+  const sep = ancho === '58mm' ? [] : [0x20];
+  for (let fila = 0x8; fila <= 0xF; fila++) {
+    t.text(`${fila.toString(16).toUpperCase()}x `);
+    for (let col = 0; col < 16; col++) t.raw([(fila << 4) | col, ...sep]);
+    t.lf();
+  }
+  t.charset('ascii').rule().line('La n con tilde deberia estar en').line('F1 (opciones A/E) o A4 (B/C/D).').lf(3).cut();
+  await mandarPrueba(t.build(), via);
+}
+
+// Texto libre, con la tabla de letras elegida, para probar lo que sea.
+export async function imprimirTextoLibre({ texto, ancho = '80mm', via = 'directo', tamano = 'normal', codificacion }) {
+  const t = new Esc(ancho, codificacion).init().charset().left();
+  if (tamano === 'grande') t.dbl(); else if (tamano === 'alto') t.dblH();
+  for (const linea of String(texto).split('\n')) t.line(linea);
+  t.normal().lf(3).cut();
+  await mandarPrueba(t.build(), via);
 }
 
 // Cuando hay que imprimir también el de cocina, este NO se dispara solo

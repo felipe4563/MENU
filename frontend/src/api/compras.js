@@ -26,5 +26,9 @@ export const crearCompra = (datos) =>
 export const actualizarCompra = (id, datos) =>
   api.put(`/compras/${id}`, datos).then(r => r.data.datos);
 
-export const recibirCompra = (id) =>
-  api.put(`/compras/${id}/recibir`).then(r => r.data.datos);
+export const recibirCompra = (id, datos = {}) =>
+  api.put(`/compras/${id}/recibir`, datos).then(r => r.data.datos);
+
+// Proveedores, insumos y productos con stock, para armar una compra.
+export const getCatalogoCompras = () =>
+  api.get('/compras/catalogo').then(r => r.data.datos);

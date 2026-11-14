@@ -1,7 +1,7 @@
 import { useMemo } from 'react';
 import { Link } from 'react-router-dom';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { ShoppingBag, ChefHat, Wallet, Printer, ArrowUpRight, ArrowDownRight, PackageX } from 'lucide-react';
+import { Printer, ArrowUpRight, ArrowDownRight, PackageX } from 'lucide-react';
 import { getReporteVentasResumen, getReporteVentasProductos, getReporteFinanzasSerie, getReporteFinanzasResumen, getReporteVentas, getReporteMapaCalor, getPorAcabarse, getTiemposCocina, getSinVentas } from '../../api/reportes';
 import { PorHora, FormasPago, Tendencia, Canales, ResultadoMes, MapaCalor, TiempoCocina } from './graficos';
 import { getVentas } from '../../api/ventas';
@@ -9,7 +9,8 @@ import { getEstadoCajas } from '../../api/caja';
 import { getEstadoAgentes } from '../../api/impresion';
 import { useAuthStore } from '../../store/authStore';
 import { usePermisos } from '../../hooks/usePermisos';
-import { useMoneda } from '../../hooks/useConfig';
+import { useMoneda, useConfigPublica } from '../../hooks/useConfig';
+import { logoSrc } from '../../api/configuracion';
 import { useSocket } from '../../hooks/useSocket';
 import { Pagina, Vacio } from '../../components/ui/piezas';
 import { cx, dinero, hoyISO } from '../../lib/util';
@@ -38,6 +39,8 @@ export default function HoyPage() {
   const usuario = useAuthStore((s) => s.usuario);
   const { tiene } = usePermisos();
   const moneda = useMoneda();
+  const { data: cfg = {} } = useConfigPublica();
+  const logo = logoSrc(cfg.logo);
   const qc = useQueryClient();
   const hoy = hoyISO();
   const ayer = haceDias(1);
@@ -84,16 +87,12 @@ export default function HoyPage() {
 
   return (
     <Pagina>
-      <div className="mb-6">
-        <p className="text-tenue">{new Date().toLocaleDateString('es-BO', { weekday: 'long', day: 'numeric', month: 'long' })}</p>
-        <h1 className="text-[32px] sm:text-[40px] font-extrabold leading-tight">{saludo()}, {usuario?.nombre?.split(' ')[0]}</h1>
-      </div>
-
-      {/* Accesos rápidos */}
-      <div className="flex gap-2 overflow-x-auto sin-scroll -mx-4 px-4 mb-6">
-        {tiene('ventas', 'ver') && <Link to="/vender" className="btn-aji btn-lg shrink-0"><ShoppingBag className="w-5 h-5" /> Nueva venta</Link>}
-        {tiene('cocina', 'ver') && <Link to="/cocina" className="btn-borde btn-lg shrink-0"><ChefHat className="w-5 h-5" /> Cocina {enCocina > 0 && <span className="chip bg-aji text-sobre-aji num">{enCocina}</span>}</Link>}
-        {tiene('caja', 'ver') && <Link to="/caja" className="btn-borde btn-lg shrink-0"><Wallet className="w-5 h-5" /> Caja</Link>}
+      <div className="mb-6 flex items-center gap-4 sm:gap-5">
+        {logo && <img src={logo} alt={cfg.nombre_negocio || 'Logo'} className="w-16 h-16 sm:w-20 sm:h-20 rounded-2xl object-cover shrink-0 bg-hundido" />}
+        <div className="min-w-0">
+          <p className="text-tenue">{cfg.nombre_negocio ? `${cfg.nombre_negocio} · ` : ''}{new Date().toLocaleDateString('es-BO', { weekday: 'long', day: 'numeric', month: 'long' })}</p>
+          <h1 className="text-[32px] sm:text-[40px] font-extrabold leading-tight">{saludo()}, {usuario?.nombre?.split(' ')[0]}</h1>
+        </div>
       </div>
 
       {agentesCaidos.length > 0 && (
@@ -130,7 +129,7 @@ export default function HoyPage() {
       )}
 
       {!verReportes ? (
-        <Vacio titulo="Todo listo para tu turno" texto="Usa los accesos de arriba para empezar." />
+        <Vacio titulo="Todo listo para tu turno" texto="Usa el menú para vender, cobrar o ver la cocina." />
       ) : (
         <div className="grid lg:grid-cols-12 gap-4">
           <section className="lg:col-span-8 ficha p-5 sm:p-6">

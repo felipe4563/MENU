@@ -97,6 +97,7 @@ export const router = createBrowserRouter([
         ],
       },
       { path: '/perfil', element: l(() => import('../pages/perfil/PerfilPage')) },
+      { path: '/impresora', element: l(() => import('../pages/impresora/ProbarImpresoraPage')) },
       { path: '/mi-asistencia', element: l(() => import('../pages/perfil/MiAsistenciaPage')) },
 
       // Rutas del sistema anterior (accesos directos instalados, marcadores).

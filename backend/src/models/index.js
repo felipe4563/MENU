@@ -147,6 +147,7 @@ DetalleArqueo.belongsTo(SesionCaja, { foreignKey: 'sesion_caja_id' });
 SesionCaja.hasMany(Gasto, { foreignKey: 'sesion_caja_id', as: 'gastos' });
 Gasto.belongsTo(SesionCaja, { foreignKey: 'sesion_caja_id' });
 Gasto.belongsTo(Usuario, { foreignKey: 'usuario_id', as: 'usuario' });
+Gasto.belongsTo(Compra, { foreignKey: 'compra_id', as: 'compra' });
 
 SesionCaja.hasMany(LibroCaja, { foreignKey: 'sesion_caja_id', as: 'libro_caja' });
 LibroCaja.belongsTo(SesionCaja, { foreignKey: 'sesion_caja_id', as: 'sesion_caja' });

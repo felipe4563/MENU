@@ -843,6 +843,10 @@ function install(cfg) {
     if (srcExe !== dstExe) {
       copyFileSync(srcExe, dstExe);
     }
+    // copyFileSync copia también la marca "descargado de internet" del exe
+    // (si llegó por WhatsApp, Drive o el navegador). Con ella, las tareas
+    // programadas se traban al lanzarlo tras reiniciar: se quita aquí.
+    require('./actualizacion').quitarMarcaInternet(dstExe);
 
     // 3. Escribir config.json
     writeFileSync(

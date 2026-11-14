@@ -5,6 +5,7 @@
 // física): mismo protocolo, mismos datos de entrada (el payload que ya
 // arma el backend en `_emitirImpresion`), para que el ticket salga igual
 // sin importar el canal.
+import { MOTIVOS_DEVOLUCION, FORMAS_DEVOLUCION } from './ticketDevolucion';
 
 // Columnas de texto según el ancho de papel configurado en la caja (ver
 // ancho_papel_bluetooth en el modelo Caja) — 58mm imprime ~32 columnas con
@@ -15,22 +16,44 @@ const COLS_POR_ANCHO = { '58mm': 32, '80mm': 48 };
 // papel. Es el mismo para 58mm y 80mm: 30mm entra cómodo en ambos.
 export const LOGO_MAX_PX = 240;
 
-// print-agent/agent.js (impresora física) prueba cp850/cp1252/ascii según
-// config.json porque cada impresora/PC es distinta. Acá no hay ese control
-// por dispositivo todavía, así que se usa un único default para todas las
-// impresoras Bluetooth: cp850 falló en la práctica (la "ñ" corrompía el
-// resto de la línea en impresoras clon), así que se pasa a cp1252 — otra
-// tabla de códigos estándar de Windows, con bytes distintos para las
-// mismas letras, que muchas impresoras clon sí soportan.
-const CODEPAGE = 'cp1252';
-const TABLA_ESC_T = { cp850: 2, cp1252: 16, ascii: 0 };
-const MAPA_CP1252 = {
+// Cada impresora Bluetooth (sobre todo las clon) entiende una tabla de letras
+// distinta para la ñ y las tildes. Cada dispositivo elige la suya en
+// "Probar impresora" (/impresora), que imprime una muestra con todas; se
+// guarda en este navegador. Sin elegir, cp1252, que era el único que había.
+const LATIN_1 = { // cp1252 / ISO-8859-1
   'á':0xE1,'é':0xE9,'í':0xED,'ó':0xF3,'ú':0xFA,
   'Á':0xC1,'É':0xC9,'Í':0xCD,'Ó':0xD3,'Ú':0xDA,
   'ñ':0xF1,'Ñ':0xD1,'ü':0xFC,'Ü':0xDC,
   '¡':0xA1,'¿':0xBF,'°':0xB0,'·':0xB7,
-  '★':0x2A,'—':0x2D,
 };
+const DOS_850 = { // cp850 / cp858
+  'á':0xA0,'é':0x82,'í':0xA1,'ó':0xA2,'ú':0xA3,
+  'Á':0xB5,'É':0x90,'Í':0xD6,'Ó':0xE0,'Ú':0xE9,
+  'ñ':0xA4,'Ñ':0xA5,'ü':0x81,'Ü':0x9A,
+  '¡':0xAD,'¿':0xA8,'°':0xF8,'·':0xFA,
+};
+// cp437 no tiene las mayúsculas con tilde: salen sin tilde.
+const DOS_437 = { ...DOS_850, 'Á':0x41,'Í':0x49,'Ó':0x4F,'Ú':0x55 };
+
+// La letra es lo que se imprime al lado de cada muestra, para elegir.
+export const CODIFICACIONES = [
+  { id: 'cp1252', letra: 'A', nombre: 'Windows 1252', escT: 16, mapa: LATIN_1 },
+  { id: 'cp850', letra: 'B', nombre: 'PC850 (latino)', escT: 2, mapa: DOS_850 },
+  { id: 'cp858', letra: 'C', nombre: 'PC858 (latino con €)', escT: 19, mapa: DOS_850 },
+  { id: 'cp437', letra: 'D', nombre: 'PC437 (EE.UU.)', escT: 0, mapa: DOS_437 },
+  { id: 'iso8859-1', letra: 'E', nombre: 'ISO 8859-1', escT: 23, mapa: LATIN_1 },
+  { id: 'ascii', letra: 'F', nombre: 'Sin tildes (seguro)', escT: 0, mapa: null },
+];
+const CLAVE_CODIFICACION = 'rusoft-impresora-bt-letras';
+const POR_DEFECTO = 'cp1252';
+const buscarCodificacion = (id) => CODIFICACIONES.find((c) => c.id === id) ?? CODIFICACIONES.find((c) => c.id === POR_DEFECTO);
+export function codificacionGuardada() {
+  try { return buscarCodificacion(localStorage.getItem(CLAVE_CODIFICACION)).id; } catch { return POR_DEFECTO; }
+}
+export function guardarCodificacion(id) {
+  try { localStorage.setItem(CLAVE_CODIFICACION, buscarCodificacion(id).id); } catch { /* sin almacenamiento */ }
+}
+const SIMBOLOS = { '★':0x2A, '—':0x2D, '–':0x2D, '“':0x22, '”':0x22, '‘':0x27, '’':0x27, '…':0x2E };
 const REEMPLAZO_ASCII = {
   'á':'a','é':'e','í':'i','ó':'o','ú':'u',
   'Á':'A','É':'E','Í':'I','Ó':'O','Ú':'U',
@@ -59,13 +82,23 @@ function _opcionesPorProducto(comboOpciones) {
 }
 
 class Esc {
-  constructor(anchoPapel = '80mm') {
+  constructor(anchoPapel = '80mm', codificacion = codificacionGuardada()) {
     this.b = [];
     this.anchoCols = COLS_POR_ANCHO[anchoPapel] || COLS_POR_ANCHO['80mm'];
+    this.cod = buscarCodificacion(codificacion);
   }
   raw(bytes) { this.b.push(...bytes); return this; }
   init() { return this.raw([0x1B, 0x40]); }
-  charset() { return this.raw([0x1B, 0x74, TABLA_ESC_T[CODEPAGE]]); }
+  // Cambia la tabla de letras (sirve también a mitad del ticket: la muestra
+  // de /impresora imprime una línea con cada una).
+  charset(codificacion) {
+    if (codificacion) this.cod = buscarCodificacion(codificacion);
+    // FS . apaga el "modo chino" que traen de fábrica muchas impresoras clon
+    // (MTP-3, Xprinter…): en ese modo cada byte de ñ/tilde se junta con la
+    // letra siguiente como un carácter chino y el texto sale entrecortado.
+    // En las que no lo tienen, el comando no hace nada.
+    return this.raw([0x1C, 0x2E, 0x1B, 0x74, this.cod.escT]);
+  }
   cut() { return this.raw([0x1D, 0x56, 0x41, 0x05]); }
   lf(n = 1) { for (let i = 0; i < n; i++) this.b.push(0x0A); return this; }
   left() { return this.raw([0x1B, 0x61, 0x00]); }
@@ -78,12 +111,16 @@ class Esc {
   dblW() { return this.raw([0x1D, 0x21, 0x10]); }
   text(s) {
     let str = String(s != null ? s : '');
-    if (CODEPAGE === 'ascii') str = quitarAcentos(str);
-    for (let ci = 0; ci < str.length; ci++) {
-      const ch = str[ci];
+    const mapa = this.cod.mapa;
+    if (!mapa) str = quitarAcentos(str);
+    for (const ch of str) {
       const code = ch.charCodeAt(0);
-      const byte = CODEPAGE === 'cp1252' ? MAPA_CP1252[ch] : undefined;
-      this.b.push(byte != null ? byte : (code < 128 ? code : 0x3F));
+      const byte = mapa?.[ch] ?? SIMBOLOS[ch];
+      // Lo que la tabla no tiene sale sin tilde ("ç" no, pero "ñ" → "n") o "?".
+      const plano = byte == null && code >= 128 ? quitarAcentos(ch).normalize('NFD').replace(/[̀-ͯ]/g, '') : null;
+      if (byte != null) this.b.push(byte);
+      else if (code < 128) this.b.push(code);
+      else for (const p of plano || '?') this.b.push(p.charCodeAt(0) < 128 ? p.charCodeAt(0) : 0x3F);
     }
     return this;
   }
@@ -362,6 +399,15 @@ function buildCierre(reporte, cfg = {}, ancho = '80mm', logo = null) {
   if ((sesion.gastos || []).length) {
     t.rule('-').center().bold(true).line('GASTOS').bold(false).left();
     sesion.gastos.forEach((g) => t.cols(g.descripcion, n(g.monto).toFixed(2)));
+  }
+  const devoluciones = reporte.devoluciones || [];
+  if (devoluciones.length) {
+    t.rule('-').center().bold(true).line('DEVOLUCIONES (' + devoluciones.length + ')').bold(false).left();
+    devoluciones.forEach((d) => {
+      t.bold(true).cols('Venta #' + d.pedido_id + ' - ' + (FORMAS_DEVOLUCION[d.forma] || d.forma), n(d.monto).toFixed(2)).bold(false);
+      t.line('  ' + (MOTIVOS_DEVOLUCION[d.motivo] || d.motivo) + (d.nota ? ': ' + d.nota : ''));
+      (d.items || []).forEach((i) => t.line('  ' + n(i.cantidad) + 'x ' + (i.nombre || '-')));
+    });
   }
   if (productos.length) {
     t.rule('-').center().bold(true).line('PRODUCTOS VENDIDOS').bold(false).left();

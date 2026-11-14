@@ -4,12 +4,15 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Wallet, Lock, Plus, ArrowRightLeft, History, Receipt, Loader2, AlertTriangle, Calculator } from 'lucide-react';
 import { getEstadoCajas, getSesion, abrirCaja, cerrarCaja, registrarGasto, getGastos, getReporte } from '../../api/caja';
 import { getDevolucionesPendientes, marcarTransferida } from '../../api/ventas';
+import { getCompras, crearCompra, recibirCompra } from '../../api/compras';
+import LineasCompra from '../../components/compras/LineasCompra';
+import { lineaVacia, lineasValidas, totalLineas, itemsParaApi, useCatalogoCompras } from '../../lib/compras';
 import { useAuthStore } from '../../store/authStore';
 import { usePermisos } from '../../hooks/usePermisos';
 import { useConfig, useMoneda } from '../../hooks/useConfig';
 import { useSocket } from '../../hooks/useSocket';
 import Hoja from '../../components/ui/Hoja';
-import { Cargando, Encabezado, Pagina, SinPermiso, Tarjeta, Vacio, Segmentado, Insignia } from '../../components/ui/piezas';
+import { Cargando, Campo, Encabezado, Pagina, SinPermiso, Tarjeta, Vacio, Segmentado, Insignia } from '../../components/ui/piezas';
 import { avisar } from '../../components/ui/Aviso';
 import { imprimirCierreLocal } from '../../utils/impresionLocal';
 import { cx, dinero, errorDe, hora } from '../../lib/util';
@@ -39,22 +42,107 @@ function HojaAbrir({ caja, onCerrar }) {
   );
 }
 
+// Sacar plata de la caja. Si es para comprar insumos, se anota como compra:
+// sube el stock y queda un solo egreso en el libro de caja (no hay que
+// registrarlo otra vez en Compras).
 function HojaGasto({ sesionId, onCerrar }) {
   const qc = useQueryClient();
+  const moneda = useMoneda();
+  const { tiene } = usePermisos();
+  const puedeComprar = tiene('compras', 'crear') && tiene('compras', 'recibir');
+  const [modo, setModo] = useState('gasto'); // gasto | compra
   const [f, setF] = useState({ descripcion: '', monto: '' });
+  // Compra: una que ya estaba anotada en Compras, o una nueva (al paso).
+  const [elegida, setElegida] = useState(null);
+  const [proveedor, setProveedor] = useState('');
+  const [detalle, setDetalle] = useState('');
+  const [items, setItems] = useState([lineaVacia()]);
+  const catalogo = useCatalogoCompras(modo === 'compra');
+  const pendientesQ = useQuery({ queryKey: ['compras'], queryFn: getCompras, enabled: modo === 'compra' && tiene('compras', 'ver') });
+  const pendientes = (pendientesQ.data ?? []).filter((c) => c.estado === 'pendiente');
+
+  const listo = (texto) => {
+    for (const k of [['sesion', sesionId], ['gastos', sesionId], ['compras'], ['insumos'], ['productos']]) qc.invalidateQueries({ queryKey: k });
+    avisar.ok(texto);
+    onCerrar();
+  };
   const guardar = useMutation({
     mutationFn: () => registrarGasto(sesionId, { descripcion: f.descripcion.trim(), monto: n(f.monto) }),
-    onSuccess: () => { qc.invalidateQueries({ queryKey: ['sesion', sesionId] }); qc.invalidateQueries({ queryKey: ['gastos', sesionId] }); avisar.ok('Gasto registrado'); onCerrar(); },
+    onSuccess: () => listo('Gasto registrado'),
     onError: (e) => avisar.error(errorDe(e)),
   });
-  const valido = f.descripcion.trim() && n(f.monto) > 0;
+  const comprar = useMutation({
+    mutationFn: () => (elegida
+      ? recibirCompra(elegida.id, { sesion_caja_id: sesionId })
+      : crearCompra({ proveedor_id: proveedor ? Number(proveedor) : undefined, notas: detalle.trim() || undefined, items: itemsParaApi(items), sesion_caja_id: sesionId })),
+    onSuccess: () => listo('Compra pagada: el stock ya se sumó'),
+    onError: (e) => avisar.error(errorDe(e)),
+  });
+
+  const totalCompra = elegida ? n(elegida.total) : totalLineas(items);
+  const validoGasto = f.descripcion.trim() && n(f.monto) > 0;
+  const validoCompra = totalCompra > 0 && (elegida || lineasValidas(items).length > 0);
+  const pie = modo === 'gasto'
+    ? <button data-principal className="btn-aji w-full" disabled={!validoGasto || guardar.isPending} onClick={() => guardar.mutate()}>Registrar gasto</button>
+    : <button data-principal className="btn-aji w-full" disabled={!validoCompra || comprar.isPending} onClick={() => comprar.mutate()}>{comprar.isPending ? <Loader2 className="w-4 h-4 animate-spin" /> : `Pagar ${dinero(totalCompra, moneda)} con la caja`}</button>;
+
   return (
-    <Hoja onCerrar={onCerrar} titulo="Sacar dinero de la caja" subtitulo="Compras chicas, pagos, adelantos" ancho="max-w-sm"
-      pie={<button data-principal className="btn-aji w-full" disabled={!valido || guardar.isPending} onClick={() => guardar.mutate()}>Registrar gasto</button>}>
-      <div className="space-y-3">
-        <div><label className="etiqueta">¿En qué se gastó?</label><input autoFocus className="campo" value={f.descripcion} onChange={(e) => setF({ ...f, descripcion: e.target.value })} placeholder="Gas, verduras, taxi…" /></div>
-        <div><label className="etiqueta">Monto</label><input inputMode="decimal" className="campo num text-lg" value={f.monto} onChange={(e) => setF({ ...f, monto: e.target.value.replace(',', '.').replace(/[^\d.]/g, '') })} /></div>
-      </div>
+    <Hoja onCerrar={onCerrar} bloquear={comprar.isPending} titulo="Sacar dinero de la caja" subtitulo={modo === 'gasto' ? 'Pagos, adelantos, taxi' : 'Lo comprado se suma al inventario'} ancho={modo === 'compra' ? 'max-w-lg' : 'max-w-sm'} pie={pie}>
+      {puedeComprar && (
+        <Segmentado className="w-full mb-4" valor={modo} onCambio={setModo} opciones={[
+          { valor: 'gasto', etiqueta: 'Gasto' },
+          { valor: 'compra', etiqueta: 'Compra de insumos' },
+        ]} />
+      )}
+      {modo === 'gasto' ? (
+        <div className="space-y-3">
+          <div><label className="etiqueta">¿En qué se gastó?</label><input autoFocus className="campo" value={f.descripcion} onChange={(e) => setF({ ...f, descripcion: e.target.value })} placeholder={puedeComprar ? 'Gas, taxi, adelanto…' : 'Gas, verduras, taxi…'} /></div>
+          <div><label className="etiqueta">Monto</label><input inputMode="decimal" className="campo num text-lg" value={f.monto} onChange={(e) => setF({ ...f, monto: e.target.value.replace(',', '.').replace(/[^\d.]/g, '') })} /></div>
+        </div>
+      ) : elegida ? (
+        <div>
+          <div className="rounded-xl bg-hundido p-3">
+            <div className="flex items-baseline gap-2">
+              <p className="font-semibold flex-1 min-w-0 truncate">{elegida.proveedor?.nombre ?? 'Compra al paso'}</p>
+              <span className="text-xs text-tenue">#{elegida.id}</span>
+            </div>
+            <ul className="text-sm mt-2 space-y-1">
+              {(elegida.detalles ?? []).map((d) => <li key={d.id} className="flex gap-2"><span className="num font-semibold">{Number(d.cantidad)}</span><span className="flex-1 truncate">{d.insumo?.nombre ?? d.producto?.nombre}</span><span className="num text-tenue">{dinero(d.subtotal, moneda)}</span></li>)}
+            </ul>
+          </div>
+          <button type="button" className="btn-fantasma mt-2" onClick={() => setElegida(null)}>Elegir otra</button>
+        </div>
+      ) : (
+        <div className="space-y-4">
+          {pendientes.length > 0 && (
+            <div>
+              <p className="etiqueta">Anotadas en Compras, por pagar</p>
+              <ul className="grid gap-1.5">
+                {pendientes.map((c) => (
+                  <li key={c.id}>
+                    <button type="button" onClick={() => setElegida(c)} className="w-full flex items-center gap-3 rounded-xl border border-linea px-3 py-2.5 text-left hover:bg-hundido">
+                      <span className="flex-1 min-w-0">
+                        <span className="block font-semibold truncate">{c.proveedor?.nombre ?? 'Compra al paso'}</span>
+                        <span className="block text-xs text-tenue truncate">#{c.id} · {(c.detalles ?? []).map((d) => d.insumo?.nombre ?? d.producto?.nombre).join(', ')}</span>
+                      </span>
+                      <span className="num font-bold">{dinero(c.total, moneda)}</span>
+                    </button>
+                  </li>
+                ))}
+              </ul>
+              <p className="text-sm text-tenue mt-4">O anota lo que compraron:</p>
+            </div>
+          )}
+          <Campo etiqueta="¿A quién?">
+            <select className="campo" value={proveedor} onChange={(e) => setProveedor(e.target.value)}>
+              <option value="">Sin proveedor (mercado, tienda)</option>
+              {(catalogo.data?.proveedores ?? []).map((p) => <option key={p.id} value={p.id}>{p.nombre}</option>)}
+            </select>
+          </Campo>
+          {catalogo.isLoading ? <Cargando /> : <LineasCompra items={items} onCambio={setItems} catalogo={catalogo.data} />}
+          <Campo etiqueta="Detalle (opcional)"><input className="campo" value={detalle} onChange={(e) => setDetalle(e.target.value)} placeholder="Mercado Rodríguez, nota de venta 123…" /></Campo>
+        </div>
+      )}
     </Hoja>
   );
 }

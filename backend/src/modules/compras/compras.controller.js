@@ -38,9 +38,13 @@ async function obtenerCompra(req, res, next) {
 
 async function crearCompra(req, res, next) {
   try {
-    const { proveedor_id, items } = req.body;
-    if (!proveedor_id || !items || !items.length) {
-      return res.status(400).json({ ok: false, mensaje: 'proveedor_id e items son requeridos' });
+    const { items, sesion_caja_id } = req.body;
+    if (!Array.isArray(items) || !items.length) {
+      return res.status(400).json({ ok: false, mensaje: 'Agrega al menos una línea' });
+    }
+    // Pagar con la caja deja la compra recibida: hace falta también ese permiso.
+    if (sesion_caja_id && !req.usuario.permisos.includes('compras.recibir')) {
+      return res.status(403).json({ ok: false, mensaje: 'Sin permiso: compras.recibir' });
     }
     res.status(201).json({ ok: true, datos: await svc.crearCompra(req.usuario.id, req.usuario.sucursal_id, req.body) });
   } catch (err) { next(err); }
@@ -52,8 +56,15 @@ async function actualizarCompra(req, res, next) {
 }
 
 async function recibirCompra(req, res, next) {
-  try { res.json({ ok: true, datos: await svc.recibirCompra(req.params.id, req.usuario.id, _alcance(req)) }); }
+  try {
+    const sesion_caja_id = req.body?.sesion_caja_id ? Number(req.body.sesion_caja_id) : null;
+    res.json({ ok: true, datos: await svc.recibirCompra(req.params.id, req.usuario.id, _alcance(req), { sesion_caja_id }) });
+  } catch (err) { next(err); }
+}
+
+async function catalogo(req, res, next) {
+  try { res.json({ ok: true, datos: await svc.catalogo() }); }
   catch (err) { next(err); }
 }
 
-module.exports = { listarProveedores, crearProveedor, actualizarProveedor, desactivarProveedor, listarCompras, obtenerCompra, crearCompra, actualizarCompra, recibirCompra };
+module.exports = { listarProveedores, crearProveedor, actualizarProveedor, desactivarProveedor, listarCompras, obtenerCompra, crearCompra, actualizarCompra, recibirCompra, catalogo };

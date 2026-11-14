@@ -590,3 +590,26 @@ test('esImagenDeAgente: el exe, el anterior y el propio cuentan; otro programa n
   assert.equal(act.esImagenDeAgente('svchost.exe'), false);
   assert.equal(act.esImagenDeAgente('agente-impresion.nuevo.exe'), false);
 });
+
+// Marca "descargado de internet" (Zone.Identifier): con ella, el lanzador
+// start-agent.vbs (WshShell.Run) muestra un aviso de seguridad invisible en
+// la sesión 0 y la tarea programada queda trabada para siempre.
+test('quitarMarcaInternet borra el Zone.Identifier y deja intacto el archivo', () => {
+  const dir = dirTemp();
+  const exe = path.join(dir, 'agente-impresion.exe');
+  fs.writeFileSync(exe, 'contenido-del-exe');
+  fs.writeFileSync(exe + ':Zone.Identifier', '[ZoneTransfer]\r\nZoneId=3\r\n');
+  assert.equal(fs.existsSync(exe + ':Zone.Identifier'), true);
+
+  assert.equal(act.quitarMarcaInternet(exe), true);
+  assert.equal(fs.existsSync(exe + ':Zone.Identifier'), false);
+  assert.equal(fs.readFileSync(exe, 'utf8'), 'contenido-del-exe');
+});
+
+test('quitarMarcaInternet sin marca o sin archivo devuelve false y no lanza', () => {
+  const dir = dirTemp();
+  const exe = path.join(dir, 'agente-impresion.exe');
+  fs.writeFileSync(exe, 'x');
+  assert.equal(act.quitarMarcaInternet(exe), false);
+  assert.equal(act.quitarMarcaInternet(path.join(dir, 'no-existe.exe')), false);
+});

@@ -1,6 +1,7 @@
 import { useParams, useNavigate } from 'react-router-dom';
 import { useMutation, useQuery } from '@tanstack/react-query';
-import { ArrowLeft, Bluetooth, Printer } from 'lucide-react';
+import { ArrowLeft, Bluetooth, Printer, Undo2 } from 'lucide-react';
+import { MOTIVOS_DEVOLUCION, FORMAS_DEVOLUCION } from '../../utils/ticketDevolucion';
 import { getReporte } from '../../api/caja';
 import { reimprimirVenta } from '../../api/ventas';
 import { useConfig, useMoneda } from '../../hooks/useConfig';
@@ -37,7 +38,7 @@ export default function ReporteCierrePage() {
   if (q.isLoading) return <Cargando />;
   if (!q.data) return <Vacio titulo="No encontramos ese turno" />;
 
-  const { sesion: s, ventas_por_metodo: metodos = [], pedidos = [], productos_vendidos: productos = [], efectivo_esperado: esperado } = q.data;
+  const { sesion: s, ventas_por_metodo: metodos = [], pedidos = [], productos_vendidos: productos = [], efectivo_esperado: esperado, devoluciones = [] } = q.data;
   const totalVentas = metodos.reduce((a, m) => a + n(m.total), 0);
   const dif = n(s.diferencia);
   const tol = n(s.sucursal?.tolerancia_cierre_caja);
@@ -123,6 +124,24 @@ export default function ReporteCierrePage() {
 
         <div className="space-y-5 min-w-0">
           <div className="hidden 2xl:block">{masVendido}</div>
+          {devoluciones.length > 0 && (
+            <section className="ficha min-w-0">
+              <h2 className="px-5 pt-4 font-display font-semibold text-lg flex items-center gap-2"><Undo2 className="w-5 h-5 text-locoto" /> Devoluciones <span className="text-tenue font-normal text-sm">· {devoluciones.length}</span></h2>
+              <ul className="px-5 py-3">
+                {devoluciones.map((d) => (
+                  <li key={d.id} className="py-2.5 border-b border-linea last:border-0 text-sm">
+                    <div className="flex items-baseline gap-3">
+                      <span className="num text-tenue w-12">{hora(d.creado_en)}</span>
+                      <span className="flex-1 min-w-0 font-semibold truncate">Venta #{d.pedido_id} <span className="text-tenue font-normal">· {FORMAS_DEVOLUCION[d.forma] ?? d.forma}</span></span>
+                      <span className="num font-semibold text-locoto">−{dinero(d.monto, moneda)}</span>
+                    </div>
+                    <p className="pl-[60px] text-tenue">{MOTIVOS_DEVOLUCION[d.motivo] ?? d.motivo}{d.nota ? `: ${d.nota}` : ''}{d.usuario ? ` · ${d.usuario}` : ''}</p>
+                    {(d.items ?? []).length > 0 && <p className="pl-[60px]">{d.items.map((i) => `${n(i.cantidad)}× ${i.nombre}`).join(', ')}</p>}
+                  </li>
+                ))}
+              </ul>
+            </section>
+          )}
           <section className="ficha min-w-0">
             <h2 className="px-5 pt-4 font-display font-semibold text-lg">Pedidos del turno <span className="text-tenue font-normal text-sm">· {pedidos.length}</span></h2>
             {pedidos.length === 0 && <p className="px-5 py-6 text-sm text-tenue">No hubo pedidos en este turno.</p>}

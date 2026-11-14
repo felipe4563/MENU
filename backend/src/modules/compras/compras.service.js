@@ -1,4 +1,5 @@
-const { Proveedor, Compra, DetalleCompra, Producto, Insumo, LibroCaja, sequelize } = require('../../models');
+const { Op } = require('sequelize');
+const { Proveedor, Compra, DetalleCompra, Producto, Insumo, LibroCaja, Gasto, SesionCaja, sequelize } = require('../../models');
 const { ajustarStockSucursal } = require('../inventario/stock.service');
 const { ajustarStockInsumoSucursal } = require('../insumos/insumos.service');
 const { emitir } = require('../../socket');
@@ -53,33 +54,98 @@ async function obtenerCompra(id, alcance) {
   return c;
 }
 
-async function crearCompra(usuario_id, sucursal_id, { proveedor_id, notas, items = [] }) {
-  const proveedor = await Proveedor.findByPk(proveedor_id);
-  if (!proveedor) throw Object.assign(new Error('Proveedor no encontrado'), { status: 404 });
+// Sesión de caja de la que sale la plata: abierta, de la misma sucursal que
+// la compra y abierta por quien paga (igual que "Sacar dinero de la caja").
+async function _sesionParaPagar(sesion_caja_id, usuario_id, sucursal_id, t) {
+  const sesion = await SesionCaja.findByPk(sesion_caja_id, { transaction: t, lock: t.LOCK.UPDATE });
+  if (!sesion || sesion.sucursal_id !== sucursal_id) throw Object.assign(new Error('Caja no encontrada'), { status: 404 });
+  if (sesion.estado !== 'abierta') throw Object.assign(new Error('Esa caja ya está cerrada'), { status: 409 });
+  if (sesion.usuario_id !== usuario_id) throw Object.assign(new Error('Solo el cajero que abrió la caja puede sacar plata de ella'), { status: 403 });
+  return sesion;
+}
+
+// Suma el stock, marca la compra como recibida y anota el pago: un solo
+// egreso en el libro de caja. Si se pagó con la caja abierta, además queda
+// como gasto del turno (resta del efectivo esperado al cerrar).
+async function _recibir(compra, usuario_id, sesion, t) {
+  for (const detalle of compra.detalles) {
+    const datos = {
+      sucursal_id: compra.sucursal_id, tipo: 'compra', cantidad: detalle.cantidad,
+      usuario_id, nota: `Compra #${compra.id}`, transaction: t,
+    };
+    if (detalle.insumo_id) await ajustarStockInsumoSucursal({ insumo_id: detalle.insumo_id, ...datos });
+    else await ajustarStockSucursal({ producto_id: detalle.producto_id, ...datos });
+  }
+  await compra.update({ estado: 'recibido', sesion_caja_id: sesion ? sesion.id : null }, { transaction: t });
+
+  const monto = parseFloat(compra.total);
+  const concepto = `Compra #${compra.id} - ${compra.proveedor?.nombre || compra.notas || 'compra al paso'}`.slice(0, 255);
+  let gasto = null;
+  if (sesion) {
+    if (!(monto > 0)) throw Object.assign(new Error('La compra no tiene monto para pagar con la caja'), { status: 400 });
+    gasto = await Gasto.create({ sesion_caja_id: sesion.id, usuario_id, descripcion: concepto, monto, compra_id: compra.id }, { transaction: t });
+    await SesionCaja.increment('total_gastos', { by: monto, where: { id: sesion.id }, transaction: t });
+  }
+  // compra_id marca el egreso como compra: Finanzas lo cuenta en "compras" y
+  // no otra vez en "gastos operativos".
+  await LibroCaja.create({
+    sesion_caja_id: sesion ? sesion.id : null,
+    usuario_id,
+    tipo: 'egreso',
+    concepto,
+    monto,
+    metodo_pago: 'efectivo',
+    referencia_id: gasto ? gasto.id : null,
+    compra_id: compra.id,
+  }, { transaction: t });
+}
+
+// Con `sesion_caja_id` la compra se paga en el momento con la plata de esa
+// caja y queda recibida (compra al paso: mandan a alguien al mercado).
+async function crearCompra(usuario_id, sucursal_id, { proveedor_id, notas, items = [], sesion_caja_id }) {
+  if (proveedor_id) {
+    const proveedor = await Proveedor.findByPk(proveedor_id);
+    if (!proveedor) throw Object.assign(new Error('Proveedor no encontrado'), { status: 404 });
+  } else if (!sesion_caja_id) {
+    throw Object.assign(new Error('Elige el proveedor'), { status: 400 });
+  }
+  if (!items.length) throw Object.assign(new Error('Agrega al menos una línea'), { status: 400 });
 
   // Cada línea es de producto O de insumo, nunca ambos ni ninguno.
   for (const i of items) {
     if (!!i.producto_id === !!i.insumo_id) {
       throw Object.assign(new Error('Cada ítem debe tener producto_id o insumo_id (uno solo)'), { status: 400 });
     }
+    if (!(parseFloat(i.cantidad) > 0) || !(parseFloat(i.costo_unitario) >= 0)) {
+      throw Object.assign(new Error('Revisa la cantidad y el costo de cada línea'), { status: 400 });
+    }
   }
 
   const total = items.reduce((sum, i) => sum + (parseFloat(i.costo_unitario) * parseFloat(i.cantidad)), 0);
 
-  const compra = await Compra.create({ proveedor_id, usuario_id, sucursal_id, total, notas });
+  const id = await sequelize.transaction(async (t) => {
+    const sesion = sesion_caja_id ? await _sesionParaPagar(sesion_caja_id, usuario_id, sucursal_id, t) : null;
+    const compra = await Compra.create({ proveedor_id: proveedor_id || null, usuario_id, sucursal_id, total, notas }, { transaction: t });
+    await DetalleCompra.bulkCreate(
+      items.map(i => ({
+        compra_id: compra.id,
+        producto_id: i.producto_id || null,
+        insumo_id: i.insumo_id || null,
+        cantidad: i.cantidad,
+        costo_unitario: i.costo_unitario,
+        subtotal: parseFloat(i.costo_unitario) * parseFloat(i.cantidad),
+      })),
+      { transaction: t },
+    );
+    if (sesion) {
+      const completa = await Compra.findByPk(compra.id, { include: INCLUDE_COMPRA, transaction: t });
+      await _recibir(completa, usuario_id, sesion, t);
+    }
+    return compra.id;
+  });
 
-  await DetalleCompra.bulkCreate(
-    items.map(i => ({
-      compra_id: compra.id,
-      producto_id: i.producto_id || null,
-      insumo_id: i.insumo_id || null,
-      cantidad: i.cantidad,
-      costo_unitario: i.costo_unitario,
-      subtotal: parseFloat(i.costo_unitario) * parseFloat(i.cantidad),
-    }))
-  );
-
-  return obtenerCompra(compra.id);
+  if (sesion_caja_id) emitir('restaurante:actualizar', { tipo: 'gasto_nuevo' }, sucursal_id);
+  return obtenerCompra(id);
 }
 
 async function actualizarCompra(id, { notas }, alcance) {
@@ -89,45 +155,37 @@ async function actualizarCompra(id, { notas }, alcance) {
   return obtenerCompra(id, alcance);
 }
 
-async function recibirCompra(id, usuario_id, alcance) {
-  const compra = await obtenerCompra(id, alcance);
-  if (compra.estado !== 'pendiente') throw Object.assign(new Error('La compra ya fue recibida'), { status: 409 });
-
+// `sesion_caja_id`: se pagó con la plata de esa caja abierta. Sin ella, se
+// pagó por fuera de la caja (transferencia, plata del dueño).
+async function recibirCompra(id, usuario_id, alcance, { sesion_caja_id } = {}) {
   await sequelize.transaction(async (t) => {
-    for (const detalle of compra.detalles) {
-      if (detalle.insumo_id) {
-        await ajustarStockInsumoSucursal({
-          insumo_id: detalle.insumo_id, sucursal_id: compra.sucursal_id, tipo: 'compra', cantidad: detalle.cantidad,
-          usuario_id, nota: `Compra #${compra.id}`, transaction: t,
-        });
-      } else {
-        await ajustarStockSucursal({
-          producto_id: detalle.producto_id, sucursal_id: compra.sucursal_id, tipo: 'compra', cantidad: detalle.cantidad,
-          usuario_id, nota: `Compra #${compra.id}`, transaction: t,
-        });
-      }
+    // Se bloquea la fila: dos "Recibir" a la vez sumarían el stock dos veces.
+    const bloqueo = await Compra.findByPk(id, { transaction: t, lock: t.LOCK.UPDATE });
+    if (!bloqueo || (alcance && !alcance.acceso_todas && bloqueo.sucursal_id !== alcance.sucursal_id)) {
+      throw Object.assign(new Error('Compra no encontrada'), { status: 404 });
     }
-    await compra.update({ estado: 'recibido' }, { transaction: t });
-
-    // Toda compra recibida es plata que sale del negocio, así que se anota
-    // como egreso en el libro de caja igual que cualquier otro gasto — sin
-    // sesión de caja, porque una compra a proveedor no pasa por una caja
-    // registradora abierta.
-    await LibroCaja.create({
-      sesion_caja_id: null,
-      usuario_id,
-      tipo: 'egreso',
-      concepto: `Compra #${compra.id} - ${compra.proveedor?.nombre || 'proveedor'}`,
-      monto: compra.total,
-      metodo_pago: 'efectivo',
-    }, { transaction: t });
+    if (bloqueo.estado !== 'pendiente') throw Object.assign(new Error('La compra ya fue recibida'), { status: 409 });
+    const compra = await Compra.findByPk(id, { include: INCLUDE_COMPRA, transaction: t });
+    const sesion = sesion_caja_id ? await _sesionParaPagar(sesion_caja_id, usuario_id, compra.sucursal_id, t) : null;
+    await _recibir(compra, usuario_id, sesion, t);
   });
 
+  const compra = await obtenerCompra(id, alcance);
   // Avisa a pantallas abiertas (ej. Dashboard) para que refresquen sin
   // esperar al polling — mismo patrón que ventas.service.js usa para ventas.
   emitir('restaurante:actualizar', { tipo: 'gasto_nuevo' }, compra.sucursal_id);
-
-  return obtenerCompra(id, alcance);
+  return compra;
 }
 
-module.exports = { listarProveedores, crearProveedor, actualizarProveedor, desactivarProveedor, listarCompras, obtenerCompra, crearCompra, actualizarCompra, recibirCompra };
+// Lo mínimo para armar una compra desde la caja, sin exigir los permisos de
+// insumos, productos y proveedores.
+async function catalogo() {
+  const [proveedores, insumos, productos] = await Promise.all([
+    Proveedor.findAll({ where: { activo: 1 }, attributes: ['id', 'nombre'], order: [['nombre', 'ASC']] }),
+    Insumo.findAll({ where: { activo: 1 }, attributes: ['id', 'nombre', 'unidad_medida'], order: [['nombre', 'ASC']] }),
+    Producto.findAll({ where: { activo: 1, stock: { [Op.ne]: null } }, attributes: ['id', 'nombre'], order: [['nombre', 'ASC']] }),
+  ]);
+  return { proveedores, insumos, productos };
+}
+
+module.exports = { listarProveedores, crearProveedor, actualizarProveedor, desactivarProveedor, listarCompras, obtenerCompra, crearCompra, actualizarCompra, recibirCompra, catalogo };

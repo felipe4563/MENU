@@ -7,6 +7,7 @@ const Gasto = sequelize.define('Gasto', {
   usuario_id: { type: DataTypes.INTEGER.UNSIGNED, allowNull: false },
   descripcion: { type: DataTypes.STRING(255), allowNull: false },
   monto: { type: DataTypes.DECIMAL(10, 2), allowNull: false },
+  compra_id: { type: DataTypes.INTEGER.UNSIGNED }, // el gasto es el pago de esta compra
 }, { tableName: 'gastos', createdAt: 'creado_en', updatedAt: 'actualizado_en' });
 
 module.exports = Gasto;

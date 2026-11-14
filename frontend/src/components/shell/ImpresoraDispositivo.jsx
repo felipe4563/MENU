@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react';
+import { Link, useLocation } from 'react-router-dom';
 import { Bluetooth, BluetoothOff, Loader2, Printer, Unlink, CheckCircle2 } from 'lucide-react';
 import { emparejar, impresoraGuardada, olvidar, soportaBluetooth } from '../../utils/bluetoothDirecto';
 import { imprimirPrueba } from '../../utils/rawbt';
@@ -24,6 +25,7 @@ function useImpresora() {
 // recuerda el permiso por dispositivo: cada aparato que vende lo hace una vez.
 export default function ImpresoraDispositivo({ compacto = false }) {
   const impresora = useImpresora();
+  const enPruebas = useLocation().pathname === '/impresora';
   const { data: cfg = {} } = useConfigPublica();
   const [ocupado, setOcupado] = useState(null); // 'conectar' | 'prueba' | null
   const [ancho, setAncho] = useState(leerAncho);
@@ -119,6 +121,7 @@ export default function ImpresoraDispositivo({ compacto = false }) {
         </p>
       )}
       <p className="text-[12px] text-tenue">Funciona con impresoras térmicas Bluetooth BLE. Si la tuya no aparece en la lista, usa la conexión con la app RawBT.</p>
+      {!enPruebas && <Link to="/impresora" className="text-[13px] font-semibold text-aji hover:underline inline-block">¿Sale mal la ñ o las tildes? Probar impresora</Link>}
     </div>
   );
 }

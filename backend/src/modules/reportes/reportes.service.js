@@ -589,15 +589,16 @@ async function arqueosResumen(filtros = {}, alcance) {
 // Resultado neto del período: ingresos de ventas menos gastos operativos
 // (Libro Caja) menos costo de compras recibidas. Las compras recibidas ya
 // generan su propio registro de egreso en Libro Caja (compras.service.js),
-// así que acá se excluyen esos egresos (sesion_caja_id null) del lado de
-// "gastos operativos" para no contar el mismo gasto dos veces — compras se
+// marcado con compra_id, así que acá se excluyen esos egresos del lado de
+// "gastos operativos" para no contar el mismo gasto dos veces — también los
+// de compras pagadas con la caja abierta, que sí tienen sesión. Compras se
 // suma aparte, con su propio total y su propio filtro de sucursal directo
 // (Compra.sucursal_id), que es más confiable que el de Libro Caja para
 // egresos sin sesión de caja asociada.
 function _wheresFinanzas(filtros, alcance) {
   return {
     whereVentas: _whereVentas(filtros, alcance),
-    whereGastos: { tipo: 'egreso', sesion_caja_id: { [Op.ne]: null }, ...filtroFecha(filtros.desde, filtros.hasta) },
+    whereGastos: { tipo: 'egreso', sesion_caja_id: { [Op.ne]: null }, compra_id: null, ...filtroFecha(filtros.desde, filtros.hasta) },
     whereCompras: _whereCompras({ ...filtros, estado: 'recibido' }, alcance),
   };
 }

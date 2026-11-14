@@ -10,6 +10,7 @@ const LibroCaja = sequelize.define('LibroCaja', {
   monto: { type: DataTypes.DECIMAL(10, 2), allowNull: false },
   metodo_pago: { type: DataTypes.ENUM('efectivo', 'qr', 'app_externa'), defaultValue: 'efectivo' },
   referencia_id: { type: DataTypes.INTEGER.UNSIGNED },
+  compra_id: { type: DataTypes.INTEGER.UNSIGNED }, // egreso que paga una compra (Finanzas lo cuenta como compra)
 }, { tableName: 'libro_caja', createdAt: 'creado_en', updatedAt: 'actualizado_en' });
 
 module.exports = LibroCaja;

@@ -214,6 +214,32 @@ async function reporte(sesion_id, alcance) {
     { replacements: [sesion_id], type: sequelize.QueryTypes.SELECT }
   );
 
+  // Devoluciones del turno: las de efectivo salen del cajón (sesion_caja_id);
+  // las de transferencia/app o anuladas antes de cobrar no tienen sesión, se
+  // toman por el turno en que se vendió el pedido.
+  const devoluciones = await sequelize.query(
+    `SELECT d.id, d.pedido_id, d.monto, d.forma, d.motivo, d.nota, d.creado_en, u.nombre AS usuario
+     FROM devoluciones d
+     JOIN pedidos pe ON pe.id = d.pedido_id
+     LEFT JOIN usuarios u ON u.id = d.usuario_id
+     WHERE d.sesion_caja_id = ? OR (d.sesion_caja_id IS NULL AND pe.sesion_caja_id = ?)
+     ORDER BY d.creado_en`,
+    { replacements: [sesion_id, sesion_id], type: sequelize.QueryTypes.SELECT }
+  );
+  if (devoluciones.length) {
+    const items = await sequelize.query(
+      `SELECT di.devolucion_id, di.cantidad, di.monto, COALESCE(pr.nombre, co.nombre) AS nombre
+       FROM devolucion_items di
+       JOIN detalle_pedidos dp ON dp.id = di.detalle_pedido_id
+       LEFT JOIN productos pr ON pr.id = dp.producto_id
+       LEFT JOIN combos co ON co.id = dp.combo_id
+       WHERE di.devolucion_id IN (?)
+       ORDER BY di.id`,
+      { replacements: [devoluciones.map((d) => d.id)], type: sequelize.QueryTypes.SELECT }
+    );
+    for (const d of devoluciones) d.items = items.filter((i) => i.devolucion_id === d.id);
+  }
+
   const efectivoEsperado =
     parseFloat(sesion.monto_apertura) +
     parseFloat(ventasPorMetodoArr.find(v => v.metodo_pago === 'efectivo')?.total ?? 0) -
@@ -226,6 +252,7 @@ async function reporte(sesion_id, alcance) {
     pedidos,
     efectivo_esperado: efectivoEsperado,
     productos_vendidos: productosVendidos,
+    devoluciones,
   };
 }
 

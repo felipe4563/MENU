@@ -1,4 +1,6 @@
 import { imprimirHtml } from './imprimirHtml';
+import { MOTIVOS_DEVOLUCION, FORMAS_DEVOLUCION } from './ticketDevolucion';
+const _esc = (s) => String(s ?? '').replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
 // Ver misma función en ticketVenta.js: achica el font-size del nombre si no
 // entra en una sola línea a su tamaño normal, con el ancho real de columna
 // de cada tabla de este ticket (productos: col-prod 56%; gastos: col-gasto-desc 70%).
@@ -43,6 +45,14 @@ export function imprimirTicketCierreCaja(reporte, config = {}) {
       <td class="col-gasto-desc"><span class="prod-nombre" style="font-size:${_fsNombre(g.descripcion, 174, 11)}px">${g.descripcion}</span></td>
       <td class="col-gasto-monto">${parseFloat(g.monto).toFixed(2)}</td>
     </tr>`).join('');
+
+  const devoluciones = reporte.devoluciones ?? [];
+  const bloquesDev = devoluciones.map(d => `
+    <div class="dev">
+      <div class="resumen-row" style="font-weight:700"><span>Venta #${d.pedido_id} · ${_esc(FORMAS_DEVOLUCION[d.forma] ?? d.forma)}</span><span>${parseFloat(d.monto).toFixed(2)}</span></div>
+      <div class="dev-det">${_esc(MOTIVOS_DEVOLUCION[d.motivo] ?? d.motivo)}${d.nota ? ': ' + _esc(d.nota) : ''}</div>
+      ${(d.items ?? []).map(i => `<div class="dev-det">${parseFloat(i.cantidad)}x ${_esc(i.nombre)}</div>`).join('')}
+    </div>`).join('');
 
   const difColor = Math.abs(diferencia) < 0.01 ? '#16a34a' : diferencia > 0 ? '#2563eb' : '#dc2626';
 
@@ -126,6 +136,9 @@ export function imprimirTicketCierreCaja(reporte, config = {}) {
       white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
     }
 
+    .dev { padding: 2px 0; border-bottom: 1px dashed #bbb; page-break-inside: avoid; }
+    .dev-det { font-size: 9px; color: #333; padding-left: 6px; }
+
     .resumen-bloque { margin-top: 4px; }
     .resumen-row {
       display: flex; justify-content: space-between;
@@ -207,6 +220,11 @@ export function imprimirTicketCierreCaja(reporte, config = {}) {
     <span>Total gastos</span>
     <span>${simbolo} ${totalGastos.toFixed(2)}</span>
   </div>` : ''}
+
+  ${devoluciones.length > 0 ? `
+  <hr class="sep"/>
+  <div class="sec-title">Devoluciones (${devoluciones.length})</div>
+  ${bloquesDev}` : ''}
 
   <div class="resumen-bloque">
     ${totalEfectivo ? `

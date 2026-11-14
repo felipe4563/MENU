@@ -78,6 +78,7 @@ export const EXTRAS = [
   { to: '/cocina/bluetooth', etiqueta: 'Pantalla de impresión de cocina', Icono: Printer, ver: ['cocina.ver'] },
   { to: '/mi-asistencia', etiqueta: 'Marcar asistencia', Icono: Clock, ver: [] },
   { to: '/perfil', etiqueta: 'Mi perfil', Icono: Cake, ver: [] },
+  { to: '/impresora', etiqueta: 'Probar impresora Bluetooth (ñ, tildes, logo)', Icono: Printer, ver: [] },
 ];
 
 export const puedeVer = (item, permisos) => !item.ver?.length || item.ver.some((p) => permisos.includes(p));

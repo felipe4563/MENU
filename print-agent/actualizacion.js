@@ -522,7 +522,25 @@ async function revisarYDescargar(opts) {
   }
 }
 
+// Quita la marca "descargado de internet" (flujo alternativo NTFS
+// Zone.Identifier) de un archivo. Si el .exe llegó a la PC por WhatsApp,
+// Drive o el navegador, Windows lo marca, y copyFileSync la copia junto con
+// el exe. Con esa marca, el lanzador start-agent.vbs (WshShell.Run) abre el
+// aviso "No se puede comprobar el editor" — en la sesión 0 de SYSTEM nadie lo
+// ve ni lo cierra, wscript.exe queda esperando para siempre y las tareas
+// programadas quedan "En ejecución": tras reiniciar, el agente nunca arranca.
+// Devuelve true si había marca y se quitó; false si no había (o no se pudo).
+function quitarMarcaInternet(ruta) {
+  try {
+    fs.unlinkSync(ruta + ':Zone.Identifier');
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 module.exports = {
+  quitarMarcaInternet,
   compararVersiones, esArranqueDePC, esVueltaDeHibernacion, urlPermitida,
   rutas, sha256Archivo, verificarArchivo, leerFallidas, marcarFallida,
   leerPendiente, esAgenteVivo, esImagenDeAgente, revisarYDescargar,
