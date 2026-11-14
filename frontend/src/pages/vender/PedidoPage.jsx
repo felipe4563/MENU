@@ -8,6 +8,7 @@ import { useMoneda } from '../../hooks/useConfig';
 import { useSocket } from '../../hooks/useSocket';
 import { reimprimirConFallback } from '../../utils/impresionLocal';
 import { vigente, puedeAnularPedido } from '../../utils/devoluciones';
+import { faltaDe } from '../../lib/dividirCuenta';
 import { useCatalogo, etiquetaDestino, nombreDetalle, textoOpcionesDetalle } from './datosCatalogo';
 import { useAgregar } from './useAgregar';
 import Catalogo from './Catalogo';
@@ -101,12 +102,12 @@ export default function PedidoPage() {
             <div className="py-3"><HistorialDevoluciones pedido={p} /></div>
           </div>
           <div className="p-4 space-y-3 border-t border-dashed border-linea">
-            <TotalComanda total={total - Number(p.total_devuelto || 0)} items={items} />
+            <TotalComanda total={total - Number(p.total_devuelto || 0)} items={items} pedido={p} />
             <div className="flex gap-2">
               {editable && <button className="btn-borde flex-1 lg:hidden" onClick={() => setHoja('agregar')}><Plus className="w-4 h-4" /> Agregar</button>}
               {abierto && tiene('ventas', 'cobrar') && (
                 <button className="btn-aji btn-lg flex-[2]" disabled={!detalles.length} onClick={() => setHoja('cobrar')}>
-                  Cobrar <span className="num">· {pagado > 0 ? `Falta ${dinero(total - pagado, moneda)}` : dinero(total, moneda)}</span>
+                  Cobrar <span className="num">· {pagado > 0 ? `Falta ${dinero(faltaDe(p), moneda)}` : dinero(total, moneda)}</span>
                 </button>
               )}
             </div>

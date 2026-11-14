@@ -1,6 +1,7 @@
 import { Minus, Plus, Trash2, Armchair, ShoppingBag, Bike, ChevronDown } from 'lucide-react';
 import { cx, dinero } from '../../lib/util';
 import { useMoneda } from '../../hooks/useConfig';
+import { faltaDe } from '../../lib/dividirCuenta';
 
 // El ticket que se va armando. Visualmente es una comanda de papel térmico.
 export function DestinoChips({ destino, onMesa, onLlevar, onDelivery }) {
@@ -49,12 +50,20 @@ export function LineaComanda({ linea, onMas, onMenos, onQuitar, deshabilitado })
   );
 }
 
-export function TotalComanda({ total, items }) {
+export function TotalComanda({ total, items, pedido }) {
   const moneda = useMoneda();
+  const conPagos = Number(pedido?.pagado) > 0;
   return (
     <div className="flex items-end justify-between">
       <span className="text-sm text-tenue">{items} {items === 1 ? 'producto' : 'productos'}</span>
-      <span className="num text-[30px] leading-none font-extrabold">{dinero(total, moneda)}</span>
+      {conPagos ? (
+        <div className="text-right">
+          <span className="num text-[30px] leading-none font-extrabold block">Falta {dinero(faltaDe(pedido), moneda)}</span>
+          <span className="num text-xs text-tenue">Pagado {dinero(pedido.pagado, moneda)}</span>
+        </div>
+      ) : (
+        <span className="num text-[30px] leading-none font-extrabold">{dinero(total, moneda)}</span>
+      )}
     </div>
   );
 }

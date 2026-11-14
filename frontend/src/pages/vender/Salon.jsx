@@ -4,10 +4,22 @@ import { cx, dinero, haceMinutos } from '../../lib/util';
 import { useMoneda } from '../../hooks/useConfig';
 import { Vacio } from '../../components/ui/piezas';
 import { etiquetaDestino } from './datosCatalogo';
+import { faltaDe } from '../../lib/dividirCuenta';
 
 function Tiempo({ desde }) {
   const m = haceMinutos(desde);
   return <span className={cx('num', m >= 30 && 'text-locoto font-semibold')}>{m < 60 ? `${m} min` : `${Math.floor(m / 60)} h ${m % 60} min`}</span>;
+}
+
+// Total del pedido abierto; con pagos parciales muestra lo que falta.
+function Monto({ pedido, moneda, className }) {
+  if (!(Number(pedido.pagado) > 0)) return <span className={cx('num font-bold', className)}>{dinero(pedido.total, moneda)}</span>;
+  return (
+    <span className={cx('block', className)}>
+      <span className="num font-bold block">Falta <span className="whitespace-nowrap">{dinero(faltaDe(pedido), moneda)}</span></span>
+      <span className="num text-[11px] opacity-75 block">Pagado <span className="whitespace-nowrap">{dinero(pedido.pagado, moneda)}</span></span>
+    </span>
+  );
 }
 
 function EstadoCocina({ pedido }) {
@@ -54,7 +66,7 @@ export default function Salon({ mesas, pedidos, onMesaLibre, onPedido, onMesaSin
                 <p className="font-display font-bold text-xl mt-1">{etiquetaDestino(p)}</p>
                 <p className="text-sm opacity-75 truncate">{p.nombre_cliente}</p>
                 <div className="flex items-center justify-between mt-3">
-                  <span className="num font-bold">{dinero(p.total, moneda)}</span>
+                  <Monto pedido={p} moneda={moneda} />
                   <EstadoCocina pedido={p} />
                 </div>
               </button>
@@ -78,7 +90,7 @@ export default function Salon({ mesas, pedidos, onMesaLibre, onPedido, onMesaSin
                     <p className="font-display font-extrabold text-2xl leading-none mt-1">{m.nombre}</p>
                     <div className="mt-auto space-y-1">
                       <EstadoCocina pedido={p} />
-                      <p className="num font-bold">{dinero(p.total, moneda)}</p>
+                      <Monto pedido={p} moneda={moneda} />
                     </div>
                   </button>
                 );
