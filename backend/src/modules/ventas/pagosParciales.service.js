@@ -98,8 +98,14 @@ function _montoPorPlatos(items, detalles, pagadas) {
   return { monto: round2(monto), lineas };
 }
 
-async function cobrarParte(pedido_id, usuario_id, { metodo_pago, monto_recibido, persona, modo, monto, items } = {}, alcance) {
+// Campos del cobro completo que no aplican a una parte.
+const _hayAjuste = (v) => (typeof v === 'string' ? v.trim() !== '' && Number(v) !== 0 : Boolean(v) && Number(v) !== 0);
+
+async function cobrarParte(pedido_id, usuario_id, { metodo_pago, monto_recibido, persona, modo, monto, items, descuento, cupon_codigo, puntos_canjear, propina } = {}, alcance) {
   if (!MODOS.includes(modo)) throw error("modo debe ser 'platos' o 'iguales'", 400);
+  if (_hayAjuste(descuento) || (cupon_codigo && String(cupon_codigo).trim() !== '') || _hayAjuste(puntos_canjear) || _hayAjuste(propina)) {
+    throw error('Con pagos parciales no se aplican descuentos, cupones ni puntos', 400);
+  }
   if (metodo_pago !== 'efectivo') {
     // El cobro de una parte por QR llega en otra etapa.
     throw error('metodo_pago debe ser efectivo', 400);
@@ -110,7 +116,7 @@ async function cobrarParte(pedido_id, usuario_id, { metodo_pago, monto_recibido,
     if (!pedido) throw error('Pedido no encontrado', 404);
     ventasService.verificarAlcance(pedido, alcance);
     if (!['pendiente', 'listo'].includes(pedido.estado)) throw error('El pedido no puede cobrarse', 409);
-    if (ORIGENES_SIN_DIVIDIR.includes(pedido.origen)) throw error('Este pedido se cobra completo, no en partes', 409);
+    if (ORIGENES_SIN_DIVIDIR.includes(pedido.origen)) throw error('Este pedido se cobra completo', 409);
 
     const pagos = await PedidoPago.findAll({
       where: { pedido_id: pedido.id, estado: ['pendiente', 'completado'] },

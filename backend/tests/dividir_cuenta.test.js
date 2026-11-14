@@ -265,5 +265,20 @@ describe('Dividir cuenta', () => {
     await Pedido.update({ origen: 'autoservicio' }, { where: { id } });
     const autoservicio = await parte(id, { modo: 'iguales', monto: 10, metodo_pago: 'efectivo', monto_recibido: 10 });
     expect(autoservicio.status).toBe(409);
+    expect(autoservicio.body.mensaje).toBe('Este pedido se cobra completo');
+  });
+
+  it('una parte no acepta descuentos, cupones, puntos ni propina', async () => {
+    const id = await nuevoPedido([{ producto: platoC, cantidad: 1 }]);
+    const base = { modo: 'iguales', monto: 50, metodo_pago: 'efectivo', monto_recibido: 50 };
+    for (const extra of [{ descuento: 5 }, { cupon_codigo: 'PROMO' }, { puntos_canjear: 10 }, { propina: 2 }]) {
+      const r = await parte(id, { ...base, ...extra });
+      expect(r.status).toBe(400);
+      expect(r.body.mensaje).toBe('Con pagos parciales no se aplican descuentos, cupones ni puntos');
+    }
+    // En cero o vacíos no molestan.
+    const ok = await parte(id, { ...base, descuento: 0, cupon_codigo: '', puntos_canjear: 0, propina: 0 });
+    expect(ok.status).toBe(201);
+    expect(await PedidoPago.count({ where: { pedido_id: id } })).toBe(1);
   });
 });
