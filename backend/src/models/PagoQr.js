@@ -4,6 +4,7 @@ const sequelize = require('../config/database');
 const PagoQr = sequelize.define('PagoQr', {
   id: { type: DataTypes.INTEGER.UNSIGNED, primaryKey: true, autoIncrement: true },
   pedido_id: { type: DataTypes.INTEGER.UNSIGNED, allowNull: false },
+  pedido_pago_id: { type: DataTypes.INTEGER.UNSIGNED },
   sucursal_id: { type: DataTypes.INTEGER.UNSIGNED, allowNull: false },
   proveedor: { type: DataTypes.ENUM('codepay', 'baneco', 'propio'), allowNull: false, defaultValue: 'codepay' },
   order_id: { type: DataTypes.STRING(25), allowNull: false, unique: true },

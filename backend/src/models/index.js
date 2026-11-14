@@ -42,6 +42,8 @@ const Gasto = require('./Gasto');
 const LibroCaja = require('./LibroCaja');
 const Devolucion = require('./Devolucion');
 const DevolucionItem = require('./DevolucionItem');
+const PedidoPago = require('./PedidoPago');
+const PedidoPagoItem = require('./PedidoPagoItem');
 const Proveedor = require('./Proveedor');
 const Compra = require('./Compra');
 const DetalleCompra = require('./DetalleCompra');
@@ -241,6 +243,14 @@ Devolucion.hasMany(DevolucionItem, { foreignKey: 'devolucion_id', as: 'items' })
 DevolucionItem.belongsTo(Devolucion, { foreignKey: 'devolucion_id' });
 DevolucionItem.belongsTo(DetallePedido, { foreignKey: 'detalle_pedido_id', as: 'detalle' });
 
+// Dividir cuenta: cobros parciales de un pedido
+Pedido.hasMany(PedidoPago, { as: 'pagos', foreignKey: 'pedido_id' });
+PedidoPago.belongsTo(Pedido, { as: 'pedido', foreignKey: 'pedido_id' });
+PedidoPago.hasMany(PedidoPagoItem, { as: 'items', foreignKey: 'pedido_pago_id' });
+PedidoPagoItem.belongsTo(DetallePedido, { as: 'detalle', foreignKey: 'detalle_pedido_id' });
+PedidoPago.belongsTo(Usuario, { as: 'usuario', foreignKey: 'usuario_id' });
+PagoQr.belongsTo(PedidoPago, { as: 'pedido_pago', foreignKey: 'pedido_pago_id' });
+
 module.exports = {
   sequelize,
   Rol, Permiso, Usuario,
@@ -249,7 +259,7 @@ module.exports = {
   GrupoOpciones, Opcion, ProductoGrupoOpciones,
   Cliente, ClientePinVerificacion,
   SesionCaja, Pedido, DetallePedido,
-  DetalleArqueo, Gasto, LibroCaja, Devolucion, DevolucionItem,
+  DetalleArqueo, Gasto, LibroCaja, Devolucion, DevolucionItem, PedidoPago, PedidoPagoItem,
   Proveedor, Compra, DetalleCompra,
   RegistroInventario,
   Configuracion,

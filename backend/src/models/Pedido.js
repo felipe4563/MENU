@@ -24,13 +24,14 @@ const Pedido = sequelize.define('Pedido', {
   telefono_cliente: { type: DataTypes.STRING(50), allowNull: true },
   total: { type: DataTypes.DECIMAL(10,2), defaultValue: 0 },
   total_devuelto: { type: DataTypes.DECIMAL(10,2), allowNull: false, defaultValue: 0 },
+  pagado: { type: DataTypes.DECIMAL(10,2), allowNull: false, defaultValue: 0 },
   descuento: { type: DataTypes.DECIMAL(10,2), defaultValue: 0 },
   cupon_id: { type: DataTypes.INTEGER.UNSIGNED },
   descuento_cupon: { type: DataTypes.DECIMAL(10,2), defaultValue: 0 },
   propina: { type: DataTypes.DECIMAL(10,2), defaultValue: 0 },
   puntos_ganados: { type: DataTypes.INTEGER, defaultValue: 0 },
   puntos_canjeados: { type: DataTypes.INTEGER, defaultValue: 0 },
-  metodo_pago: { type: DataTypes.ENUM('efectivo','qr','app_externa'), defaultValue: 'efectivo' },
+  metodo_pago: { type: DataTypes.ENUM('efectivo','qr','app_externa','mixto'), defaultValue: 'efectivo' },
   // Cómo se confirmó un cobro QR: por CodePay, por Banco Económico, o a mano
   // por el cajero (QR propio del negocio) — en ese caso, quién lo confirmó.
   qr_tipo: { type: DataTypes.ENUM('codepay', 'manual', 'baneco'), allowNull: true },
