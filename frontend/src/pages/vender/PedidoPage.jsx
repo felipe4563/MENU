@@ -55,6 +55,7 @@ export default function PedidoPage() {
   const editable = abierto && tiene('ventas', 'crear');
   const detalles = (p.detalles ?? []).filter((d) => vigente(d) > 0);
   const total = Number(p.total);
+  const pagado = Number(p.pagado || 0); // partes ya cobradas de una cuenta dividida
   const items = detalles.reduce((s, d) => s + vigente(d), 0);
 
   const menos = async (d) => {
@@ -104,7 +105,9 @@ export default function PedidoPage() {
             <div className="flex gap-2">
               {editable && <button className="btn-borde flex-1 lg:hidden" onClick={() => setHoja('agregar')}><Plus className="w-4 h-4" /> Agregar</button>}
               {abierto && tiene('ventas', 'cobrar') && (
-                <button className="btn-aji btn-lg flex-[2]" disabled={!detalles.length} onClick={() => setHoja('cobrar')}>Cobrar <span className="num">· {dinero(total, moneda)}</span></button>
+                <button className="btn-aji btn-lg flex-[2]" disabled={!detalles.length} onClick={() => setHoja('cobrar')}>
+                  Cobrar <span className="num">· {pagado > 0 ? `Falta ${dinero(total - pagado, moneda)}` : dinero(total, moneda)}</span>
+                </button>
               )}
             </div>
             <div className="flex gap-1 flex-wrap">
@@ -141,6 +144,7 @@ export default function PedidoPage() {
           total={total}
           subtitulo={etiquetaDestino(p)}
           clienteInicial={p.cliente}
+          pedido={p}
           items={detalles.map((d) => ({ producto_id: d.producto_id, combo_id: d.combo_id, cantidad: vigente(d), precio: Number(d.precio) }))}
           onConfirmar={(datos) => cobrarVenta(id, datos)}
           onTerminado={() => { qc.invalidateQueries({ queryKey: ['ventas'] }); qc.invalidateQueries({ queryKey: ['mesas'] }); navigate('/vender'); }}

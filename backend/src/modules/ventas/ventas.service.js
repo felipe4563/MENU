@@ -1110,16 +1110,18 @@ async function consultarEstadoPagoQr(pedido_id, alcance) {
   // cajero lo confirme (confirmarPagoQrManual).
   if (pagoQr.proveedor === 'propio') return { estado: 'pendiente', proveedor: 'propio', pedido: await obtener(pedido_id) };
 
+  // Si esta consulta es la que confirma el QR de una parte, devuelve también
+  // su comprobante (datos_impresion) para que el navegador lo imprima.
   if (pagoQr.proveedor === 'baneco') {
     const r = await _verificarPagoBaneco(pagoQr);
-    return { estado: r, pedido: await obtener(pedido_id) };
+    return { estado: r.estado, pedido: await obtener(pedido_id), datos_impresion: r.datos_impresion };
   }
 
   const estadoCodepay = await codepayClient.consultarEstado(pagoQr.tx_id);
 
   if (estadoCodepay.status === 'completed') {
-    await _confirmarPagoQr(pagoQr);
-    return { estado: 'completado', pedido: await obtener(pedido_id) };
+    const confirmado = await _confirmarPagoQr(pagoQr);
+    return { estado: 'completado', pedido: await obtener(pedido_id), datos_impresion: confirmado?.datos_impresion ?? null };
   }
   if (estadoCodepay.status === 'failed') {
     await _revertirPagoQr(pagoQr, 'fallido');
@@ -1150,17 +1152,17 @@ async function _verificarPagoBaneco(pagoQr) {
     const pagado = Number(pago?.amount ?? pagoQr.monto_neto);
     if (pagado + 0.005 < Number(pagoQr.monto_neto)) {
       console.error(`Banco Económico: QR ${pagoQr.tx_id} pagado por ${pagado}, se esperaba ${pagoQr.monto_neto}`);
-      return 'pendiente';
+      return { estado: 'pendiente', datos_impresion: null };
     }
     await PagoQr.update({ datos_webhook: pago }, { where: { id: pagoQr.id } });
-    await _confirmarPagoQr(pagoQr);
-    return 'completado';
+    const confirmado = await _confirmarPagoQr(pagoQr);
+    return { estado: 'completado', datos_impresion: confirmado?.datos_impresion ?? null };
   }
   if (codigo === 9) {
     await _revertirPagoQr(pagoQr, 'cancelado');
-    return 'cancelado';
+    return { estado: 'cancelado', datos_impresion: null };
   }
-  return 'pendiente';
+  return { estado: 'pendiente', datos_impresion: null };
 }
 
 // Anula en el banco un QR que el sistema ya dio por cancelado/vencido, para

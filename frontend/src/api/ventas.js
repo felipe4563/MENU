@@ -50,3 +50,7 @@ export const getDevolucionesPendientes = () =>
 
 export const marcarTransferida = (id) =>
   api.patch(`/devoluciones/${id}/transferida`).then((r) => r.data.datos);
+
+// Cobra una parte de la cuenta (por platos o en partes iguales).
+export const cobrarParte = (pedido_id, datos) =>
+  api.post(`/ventas/${pedido_id}/pagos`, datos).then((r) => r.data.datos);

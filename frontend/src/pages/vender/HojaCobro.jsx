@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { Banknote, QrCode, CheckCircle2, Printer, UserRound, UserPlus, Ticket, X, Loader2, Star, Clock, Disc3 } from 'lucide-react';
+import { Banknote, QrCode, CheckCircle2, Printer, UserRound, UserPlus, Ticket, X, Loader2, Star, Clock, Disc3, Split, Info } from 'lucide-react';
 import Hoja from '../../components/ui/Hoja';
 import { Segmentado } from '../../components/ui/piezas';
 import { getClientes, crearCliente } from '../../api/clientes';
@@ -8,12 +8,14 @@ import { avisar } from '../../components/ui/Aviso';
 import { validarCupon } from '../../api/cupones';
 import { consultarEstadoPagoQr, cancelarPagoQr, confirmarPagoQr } from '../../api/pagosQr';
 import { srcQr } from '../../components/ui/formulario';
-import { reimprimirVenta } from '../../api/ventas';
+import { reimprimirVenta, cobrarParte } from '../../api/ventas';
 import { imprimirLocal, reimprimirConFallback } from '../../utils/impresionLocal';
 import { useConfig, useMoneda } from '../../hooks/useConfig';
 import { usePermisos } from '../../hooks/usePermisos';
 import { cx, dinero, errorDe } from '../../lib/util';
 import { CuponesCliente, HojaGiroCobro, useRuletaDisponible } from '../../components/ruleta/GiroEnCobro';
+import { ORIGENES_SIN_DIVIDIR, faltaDe } from '../../lib/dividirCuenta';
+import DividirCuenta from './DividirCuenta';
 
 const BILLETES = [10, 20, 50, 100, 200];
 
@@ -126,6 +128,15 @@ function NuevoCliente({ inicial, onCreado, onCancelar }) {
   );
 }
 
+// Imprime lo que corresponde a un QR confirmado: el comprobante que trae la
+// respuesta (una parte de la cuenta, o el ticket final con sus partes) o, si
+// no trae, el ticket de la venta ya cobrada. Una parte que no cierra el
+// pedido no se puede reimprimir como venta.
+function imprimirPago(datosImpresion, pedido) {
+  if (datosImpresion) imprimirLocal(datosImpresion);
+  else if (pedido?.estado === 'completado') reimprimirVenta(pedido.id).then(imprimirLocal).catch(() => {});
+}
+
 function PanelQr({ pedidoId, pagoQr, moneda, onPagado, onCancelado }) {
   const [restante, setRestante] = useState(() => Math.max(0, new Date(pagoQr.expires_at) - Date.now()));
   const estadoQ = useQuery({
@@ -137,7 +148,7 @@ function PanelQr({ pedidoId, pagoQr, moneda, onPagado, onCancelado }) {
   const propio = pagoQr.proveedor === 'propio';
   const confirmar = useMutation({
     mutationFn: () => confirmarPagoQr(pedidoId),
-    onSuccess: (p) => { reimprimirVenta(p.id).then(imprimirLocal).catch(() => {}); onPagado(p); },
+    onSuccess: (p) => { imprimirPago(p.datos_impresion, p); onPagado(p); },
     onError: (e) => avisar.error(errorDe(e, 'No se pudo confirmar el pago.')),
   });
   const estado = estadoQ.data?.estado ?? 'pendiente';
@@ -149,7 +160,7 @@ function PanelQr({ pedidoId, pagoQr, moneda, onPagado, onCancelado }) {
 
   useEffect(() => {
     if (estado === 'completado' && estadoQ.data?.pedido) {
-      reimprimirVenta(estadoQ.data.pedido.id).then(imprimirLocal).catch(() => {});
+      imprimirPago(estadoQ.data.datos_impresion, estadoQ.data.pedido);
       onPagado(estadoQ.data.pedido);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -191,14 +202,138 @@ function PanelQr({ pedidoId, pagoQr, moneda, onPagado, onCancelado }) {
   );
 }
 
+// "A pagar" con el cambio, efectivo/QR, recibido y botones rápidos. Lo usan
+// el cobro de la cuenta completa y el de cada parte de una cuenta dividida.
+function BloquePago({ aPagar, etiqueta = 'A pagar', metodo, onMetodo, recibido, onRecibido, moneda, puedeCobrar = true, descuentos }) {
+  const recibidoNum = parseFloat(recibido) || 0;
+  const cambio = recibidoNum - aPagar;
+  const sugeridos = useMemo(() => sugerencias(aPagar), [aPagar]);
+  return (
+    <>
+      <div className="rounded-2xl bg-pizarra text-sobre-pizarra p-4">
+      <div className="flex items-end justify-between gap-3">
+        <div className="min-w-0">
+          <p className="text-sm opacity-70 truncate">{etiqueta}</p>
+          <p className="num text-[40px] leading-none font-extrabold mt-1">{dinero(aPagar, moneda)}</p>
+        </div>
+        {descuentos}
+      </div>
+      {puedeCobrar && metodo === 'efectivo' && recibido !== '' && (
+        <div className="mt-3 pt-3 border-t border-white/15 flex items-baseline justify-between">
+          <span className="text-sm opacity-70">{cambio < -0.005 ? 'Faltan' : 'Cambio'}</span>
+          <span className={cx('num text-2xl font-extrabold', cambio < -0.005 ? 'text-red-300' : 'text-sobre-pizarra')}>{dinero(Math.abs(cambio), moneda)}</span>
+        </div>
+      )}
+    </div>
+
+    {puedeCobrar && <Segmentado
+      className="w-full"
+      valor={metodo}
+      onCambio={onMetodo}
+      opciones={[{ valor: 'efectivo', etiqueta: 'Efectivo', Icono: Banknote }, { valor: 'qr', etiqueta: 'QR', Icono: QrCode }]}
+    />}
+
+    {puedeCobrar && metodo === 'efectivo' && (
+      <div>
+        <label className="etiqueta" htmlFor="recibido">Recibido</label>
+        <input
+          id="recibido"
+          inputMode="decimal"
+          className="campo h-14 text-2xl num font-bold"
+          placeholder={aPagar.toFixed(2)}
+          value={recibido}
+          onChange={(e) => onRecibido(e.target.value.replace(',', '.').replace(/[^\d.]/g, ''))}
+        />
+        <div className="flex gap-2 mt-2 flex-wrap">
+          {sugeridos.map((v) => (
+            <button key={v} onClick={() => onRecibido(String(v))} className={cx('btn-suave h-9 num', recibidoNum === v && 'bg-tinta text-fondo hover:bg-tinta')}>
+              {v === Math.ceil(aPagar) && v === aPagar ? 'Exacto' : v}
+            </button>
+          ))}
+        </div>
+      </div>
+    )}
+    </>
+  );
+}
+
+// Cobro de una parte de la cuenta dividida: efectivo o QR, recibido y cambio.
+// onListo({ pedido, completado, metodo, monto, cambio }) cuando quedó cobrada.
+function CobroDeParte({ pedidoId, parte, moneda, onListo, onVolver, onEsperandoQr }) {
+  const { config } = useConfig();
+  const [metodo, setMetodo] = useState('efectivo');
+  const [recibido, setRecibido] = useState('');
+  const [error, setError] = useState('');
+  const [pagoQr, setPagoQr] = useState(null);
+  const recibidoNum = parseFloat(recibido) || 0;
+  const insuficiente = metodo === 'efectivo' && recibido !== '' && recibidoNum < parte.monto - 0.005;
+
+  const cobrar = useMutation({
+    mutationFn: () => cobrarParte(pedidoId, {
+      modo: parte.modo,
+      persona: parte.persona || undefined,
+      monto: parte.modo === 'iguales' ? parte.monto : undefined,
+      items: parte.modo === 'platos' ? parte.items : undefined,
+      metodo_pago: metodo,
+      monto_recibido: metodo === 'efectivo' ? (recibidoNum || parte.monto) : undefined,
+    }),
+    onSuccess: (r) => {
+      if (r.pago_qr) { setPagoQr(r.pago_qr); onEsperandoQr(true); return; }
+      imprimirLocal(r.datos_impresion);
+      onListo({ pedido: r.pedido, completado: r.completado, metodo, monto: parte.monto, cambio: Number(r.pago?.cambio || 0) });
+    },
+    onError: (e) => setError(errorDe(e, 'No se pudo cobrar.')),
+  });
+
+  if (pagoQr) {
+    return (
+      <PanelQr
+        pedidoId={pedidoId}
+        pagoQr={pagoQr}
+        moneda={moneda}
+        onPagado={(p) => { onEsperandoQr(false); onListo({ pedido: p, completado: p.estado === 'completado', metodo: 'qr', monto: parte.monto, cambio: 0 }); }}
+        onCancelado={() => { onEsperandoQr(false); onVolver(); }}
+      />
+    );
+  }
+
+  return (
+    <div className="max-w-md mx-auto space-y-4">
+      <BloquePago
+        aPagar={parte.monto}
+        etiqueta={`Paga ${parte.etiqueta}`}
+        metodo={metodo}
+        onMetodo={(v) => { setMetodo(v); setError(''); }}
+        recibido={recibido}
+        onRecibido={setRecibido}
+        moneda={moneda}
+      />
+      {error && <p className="text-sm text-locoto">{error}</p>}
+      <div className="flex gap-2">
+        <button type="button" className="btn-borde btn-lg flex-1 px-3" disabled={cobrar.isPending} onClick={onVolver}>Volver</button>
+        <button type="button" data-principal className="btn-aji btn-lg flex-[1.6] px-3" disabled={cobrar.isPending || insuficiente} onClick={() => cobrar.mutate()}>
+          {cobrar.isPending ? <Loader2 className="w-5 h-5 animate-spin" /> : metodo === 'qr' ? (config.qr_proveedor === 'propio' ? 'Mostrar QR' : 'Generar QR') : `Cobrar ${dinero(parte.monto, moneda)}`}
+        </button>
+      </div>
+    </div>
+  );
+}
+
 /**
  * Cobro de un pedido (nuevo o existente).
  * - onConfirmar(params) -> Promise<resultado del backend>
  * - permitirDespues: muestra "Cobrar después" (enviar a cocina sin cobrar).
+ * - pedido: el pedido existente (con `pagado` y `pagos`). Permite dividir la
+ *   cuenta y, si ya tiene partes pagadas, abre directo en modo dividido.
  */
-export default function HojaCobro({ total, subtitulo, items = [], clienteInicial = null, permitirDespues, puedeCobrar = true, onConfirmar, onDespues, onCreado, onTerminado, onCerrar }) {
+export default function HojaCobro({ total, subtitulo, items = [], clienteInicial = null, pedido = null, permitirDespues, puedeCobrar = true, onConfirmar, onDespues, onCreado, onTerminado, onCerrar }) {
   const moneda = useMoneda();
   const { config } = useConfig();
+  const qc = useQueryClient();
+  const pagado = Number(pedido?.pagado || 0);
+  const puedeDividir = !!pedido && puedeCobrar && !ORIGENES_SIN_DIVIDIR.includes(pedido.origen);
+  const [dividir, setDividir] = useState(() => puedeDividir && pagado > 0);
+  const [esperandoQr, setEsperandoQr] = useState(false);
   const [metodo, setMetodo] = useState('efectivo');
   const [recibido, setRecibido] = useState('');
   const [cliente, setCliente] = useState(clienteInicial);
@@ -215,16 +350,16 @@ export default function HojaCobro({ total, subtitulo, items = [], clienteInicial
   const fidelidad = config.fidelidad_activa === 'true';
   const valorPunto = parseFloat(config.valor_punto_bs || 0);
   const puedeCanjear = fidelidad && valorPunto > 0 && !!cliente && (metodo === 'qr' ? config.fidelidad_canje_qr === 'true' : config.fidelidad_canje_efectivo !== 'false');
-  const maxPuntos = cliente ? Math.min(cliente.puntos ?? 0, Math.floor(total / (valorPunto || 1))) : 0;
+  // Con partes ya pagadas se cobra solo lo que falta.
+  const base = pedido ? Math.max(0, faltaDe({ total, pagado })) : total;
+  const maxPuntos = cliente ? Math.min(cliente.puntos ?? 0, Math.floor(base / (valorPunto || 1))) : 0;
   const descPuntos = puedeCanjear ? puntos * valorPunto : 0;
   const descCupon = cupon?.descuento ?? 0;
-  const aPagar = Math.max(0, total - descPuntos - descCupon);
+  const aPagar = Math.max(0, base - descPuntos - descCupon);
   const recibidoNum = parseFloat(recibido) || 0;
-  const cambio = recibidoNum - aPagar;
-  const sugeridos = useMemo(() => sugerencias(aPagar), [aPagar]);
 
   const aplicarCupon = useMutation({
-    mutationFn: ({ codigo }) => validarCupon(codigo, total, cliente?.id, items),
+    mutationFn: ({ codigo }) => validarCupon(codigo, base, cliente?.id, items),
     onSuccess: (r, { nombre }) => { setCupon({ ...r, nombre }); setCuponTxt(''); setError(''); },
     onError: (e) => setError(errorDe(e, 'Ese cupón no es válido.')),
   });
@@ -260,6 +395,19 @@ export default function HojaCobro({ total, subtitulo, items = [], clienteInicial
   const reimprimir = useMutation({
     mutationFn: () => reimprimirVenta(exito.pedidoId),
     onSuccess: reimprimirConFallback,
+  });
+
+  // Tras cada parte: el pedido de la pantalla se pone al día con la respuesta.
+  const refrescarPedido = (p) => {
+    if (p) qc.setQueryData(['venta', String(p.id)], p);
+    qc.invalidateQueries({ queryKey: ['venta'] });
+    qc.invalidateQueries({ queryKey: ['ventas'] });
+    qc.invalidateQueries({ queryKey: ['mesas'] });
+  };
+  const cancelarQrPendiente = useMutation({
+    mutationFn: () => cancelarPagoQr(pedido.id),
+    onSuccess: (p) => refrescarPedido(p),
+    onError: (e) => avisar.error(errorDe(e, 'No se pudo cancelar el QR.')),
   });
 
   const ancho = useAncho();
@@ -306,6 +454,39 @@ export default function HojaCobro({ total, subtitulo, items = [], clienteInicial
     );
   }
 
+  if (dividir) {
+    return (
+      <Hoja onCerrar={onCerrar} bloquear={esperandoQr} titulo="Dividir cuenta" subtitulo={subtitulo} ancho="max-w-md md:max-w-3xl">
+        <div className="space-y-4">
+          <p className="flex items-start gap-2 text-[13px] text-tenue"><Info className="w-4 h-4 shrink-0 mt-px" /> Puntos, cupones y descuentos se usan cobrando la cuenta completa.</p>
+          <DividirCuenta
+            pedido={pedido}
+            moneda={moneda}
+            cancelandoQr={cancelarQrPendiente.isPending}
+            onCancelarQr={() => cancelarQrPendiente.mutate()}
+            renderCobro={(parte, { onListo, onVolver }) => (
+              <CobroDeParte
+                pedidoId={pedido.id}
+                parte={parte}
+                moneda={moneda}
+                onEsperandoQr={setEsperandoQr}
+                onVolver={() => { refrescarPedido(); onVolver(); }}
+                onListo={(r) => {
+                  refrescarPedido(r.pedido);
+                  if (r.completado) setExito({ pedidoId: r.pedido.id, metodo: r.metodo, cobrado: r.monto, cambio: r.cambio, pedido: r.pedido });
+                  else onListo(r);
+                }}
+              />
+            )}
+          />
+          {pagado === 0 && (
+            <button type="button" className="btn-fantasma w-full" onClick={() => setDividir(false)}>Cobrar la cuenta completa</button>
+          )}
+        </div>
+      </Hoja>
+    );
+  }
+
   return (
     <Hoja
       onCerrar={onCerrar}
@@ -333,54 +514,26 @@ export default function HojaCobro({ total, subtitulo, items = [], clienteInicial
     >
       <div className="grid md:grid-cols-2 gap-x-6 gap-y-4 items-start">
       <div className="space-y-4">
-        <div className="rounded-2xl bg-pizarra text-sobre-pizarra p-4">
-          <div className="flex items-end justify-between gap-3">
-            <div>
-              <p className="text-sm opacity-70">A pagar</p>
-              <p className="num text-[40px] leading-none font-extrabold mt-1">{dinero(aPagar, moneda)}</p>
-            </div>
-            {(descPuntos > 0 || descCupon > 0) && (
-              <div className="text-right text-xs opacity-80 num">
-                <p className="line-through">{dinero(total, moneda)}</p>
-                {descCupon > 0 && <p>Cupón −{descCupon.toFixed(2)}</p>}
-                {descPuntos > 0 && <p>Puntos −{descPuntos.toFixed(2)}</p>}
-              </div>
-            )}
-          </div>
-          {puedeCobrar && metodo === 'efectivo' && recibido !== '' && (
-            <div className="mt-3 pt-3 border-t border-white/15 flex items-baseline justify-between">
-              <span className="text-sm opacity-70">{cambio < -0.005 ? 'Faltan' : 'Cambio'}</span>
-              <span className={cx('num text-2xl font-extrabold', cambio < -0.005 ? 'text-red-300' : 'text-sobre-pizarra')}>{dinero(Math.abs(cambio), moneda)}</span>
+        <BloquePago
+          aPagar={aPagar}
+          metodo={metodo}
+          onMetodo={(v) => { setMetodo(v); setError(''); }}
+          recibido={recibido}
+          onRecibido={setRecibido}
+          moneda={moneda}
+          puedeCobrar={puedeCobrar}
+          descuentos={(descPuntos > 0 || descCupon > 0) && (
+            <div className="text-right text-xs opacity-80 num">
+              <p className="line-through">{dinero(base, moneda)}</p>
+              {descCupon > 0 && <p>Cupón −{descCupon.toFixed(2)}</p>}
+              {descPuntos > 0 && <p>Puntos −{descPuntos.toFixed(2)}</p>}
             </div>
           )}
-        </div>
-
-        {puedeCobrar && <Segmentado
-          className="w-full"
-          valor={metodo}
-          onCambio={(v) => { setMetodo(v); setError(''); }}
-          opciones={[{ valor: 'efectivo', etiqueta: 'Efectivo', Icono: Banknote }, { valor: 'qr', etiqueta: 'QR', Icono: QrCode }]}
-        />}
-
-        {puedeCobrar && metodo === 'efectivo' && (
-          <div>
-            <label className="etiqueta" htmlFor="recibido">Recibido</label>
-            <input
-              id="recibido"
-              inputMode="decimal"
-              className="campo h-14 text-2xl num font-bold"
-              placeholder={aPagar.toFixed(2)}
-              value={recibido}
-              onChange={(e) => setRecibido(e.target.value.replace(',', '.').replace(/[^\d.]/g, ''))}
-            />
-            <div className="flex gap-2 mt-2 flex-wrap">
-              {sugeridos.map((v) => (
-                <button key={v} onClick={() => setRecibido(String(v))} className={cx('btn-suave h-9 num', recibidoNum === v && 'bg-tinta text-fondo hover:bg-tinta')}>
-                  {v === Math.ceil(aPagar) && v === aPagar ? 'Exacto' : v}
-                </button>
-              ))}
-            </div>
-          </div>
+        />
+        {puedeDividir && (
+          <button type="button" className="btn-borde w-full" onClick={() => { setDividir(true); setError(''); }}>
+            <Split className="w-4 h-4" /> Dividir cuenta
+          </button>
         )}
       </div>
 

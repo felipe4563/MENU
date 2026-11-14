@@ -646,6 +646,30 @@ describe('Dividir cuenta', () => {
       expect(cierre.body.datos.datos_impresion.caja.partes.map((p) => [p.numero, p.metodo_pago, p.monto])).toEqual([[1, 'qr', 40], [2, 'qr', 60]]);
     });
 
+    it('si la consulta del estado confirma el QR de una parte, devuelve su comprobante', async () => {
+      const codepay = require('../src/integrations/codepay/codepay.client');
+      const id = await nuevoPedido([{ producto: platoC, cantidad: 1 }]);
+      const conQr = await parte(id, { modo: 'iguales', persona: 'Ceci', monto: 40, metodo_pago: 'qr' });
+      expect(conQr.status).toBe(201);
+      // Como si lo hubiera generado CodePay: el banco avisa al consultar.
+      await PagoQr.update({ proveedor: 'codepay', tx_id: `tx-dividir-${id}` }, { where: { pedido_id: id, estado: 'pendiente' } });
+      const espia = jest.spyOn(codepay, 'consultarEstado').mockResolvedValue({ status: 'completed' });
+      try {
+        const estado = await request(app).get(`/api/v1/ventas/${id}/pago-qr/estado`).set('Authorization', `Bearer ${token}`);
+        expect(estado.status).toBe(200);
+        expect(estado.body.datos.estado).toBe('completado');
+        expect(estado.body.datos.pedido.pagado).toBe('40.00');
+        expect(estado.body.datos.datos_impresion.caja.pago_parcial).toMatchObject({ numero: 1, persona: 'Ceci', metodo_pago: 'qr', monto: 40, falta: 60 });
+
+        // Una consulta posterior ya no lo confirma: no trae comprobante.
+        const otra = await request(app).get(`/api/v1/ventas/${id}/pago-qr/estado`).set('Authorization', `Bearer ${token}`);
+        expect(otra.body.datos.estado).toBe('completado');
+        expect(otra.body.datos.datos_impresion).toBeUndefined();
+      } finally {
+        espia.mockRestore();
+      }
+    });
+
     it('cobrar la cuenta completa con partes imprime el ticket final con las partes', async () => {
       const id = await nuevoPedido([{ producto: platoA, cantidad: 1 }, { producto: platoB, cantidad: 1 }], { mesa: true });
       expect((await parte(id, { modo: 'iguales', monto: 20, metodo_pago: 'efectivo', monto_recibido: 20 })).status).toBe(201);
