@@ -560,4 +560,32 @@ describe('Dividir cuenta', () => {
       expect((await Cupon.findByPk(cupon.id)).usos_actuales).toBe(0);
     });
   });
+
+  it('Finanzas y reportes suman bien un pedido mixto', async () => {
+    const reportes = require('../src/modules/reportes/reportes.service');
+    const alcance = { acceso_todas: false, sucursal_id: sucursal.id };
+    const antes = await reportes.ventasResumen({}, alcance);
+    const antesFiltrado = { qr: await reportes.ventasResumen({ metodo_pago: 'qr' }, alcance), efectivo: await reportes.ventasResumen({ metodo_pago: 'efectivo' }, alcance) };
+
+    const id = await nuevoPedido([{ producto: platoC, cantidad: 1 }]);
+    expect((await parte(id, { modo: 'iguales', monto: 60, metodo_pago: 'efectivo', monto_recibido: 60 })).status).toBe(201);
+    expect((await parte(id, { modo: 'iguales', monto: 40, metodo_pago: 'qr' })).status).toBe(201);
+    expect((await qr(id, 'confirmar')).status).toBe(200);
+    expect((await ver(id)).metodo_pago).toBe('mixto');
+
+    const despues = await reportes.ventasResumen({}, alcance);
+    expect(despues.ventas_efectivo - antes.ventas_efectivo).toBe(60);
+    expect(despues.ventas_qr - antes.ventas_qr).toBe(40);
+    expect(despues.total_ventas - antes.total_ventas).toBe(100);
+    expect(despues.cantidad - antes.cantidad).toBe(1);
+
+    // El filtro por método incluye el pedido mixto si alguna parte es de ese método.
+    for (const metodo of ['qr', 'efectivo']) {
+      const lista = await reportes.ventas({ metodo_pago: metodo }, alcance);
+      expect(lista.filas.map((f) => f.id)).toContain(id);
+      const resumen = await reportes.ventasResumen({ metodo_pago: metodo }, alcance);
+      const previo = antesFiltrado[metodo];
+      expect(resumen.ventas_efectivo + resumen.ventas_qr - previo.ventas_efectivo - previo.ventas_qr).toBe(metodo === 'qr' ? 40 : 60);
+    }
+  });
 });

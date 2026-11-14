@@ -4,7 +4,7 @@ const {
   RegistroInventario, Compra, Proveedor, LibroCaja, SesionCaja, Sucursal,
   Opcion, GrupoOpciones, DetallePedidoComboOpcion, Devolucion,
   Insumo, InsumoStockSucursal, InsumoMovimiento, ProductoStockSucursal, CocinaTiempo,
-  DetalleCompra, RecetaInsumo, ComboProducto,
+  DetalleCompra, RecetaInsumo, ComboProducto, PedidoPago,
 } = require('../../models');
 
 // Offset fijo de Bolivia: un datetime sin offset se parsea en la hora local
@@ -29,13 +29,32 @@ function _paginaLimite(filtros = {}) {
   return { pagina, limite };
 }
 
-function _whereVentas(filtros, alcance) {
+// Filtro por método de pago: incluye los pedidos con ese método y los de pago
+// mixto que tengan al menos una parte (completada) con ese método. El valor se
+// escapa con el propio Sequelize; `alias` es el alias del pedido en la consulta.
+function _condMetodoPago(metodo, alias = 'Pedido') {
+  if (metodo !== 'efectivo' && metodo !== 'qr') return { metodo_pago: metodo };
+  const valor = Pedido.sequelize.escape(metodo);
+  return {
+    [Op.or]: [
+      { metodo_pago: metodo },
+      {
+        [Op.and]: [
+          { metodo_pago: 'mixto' },
+          literal(`EXISTS (SELECT 1 FROM pedido_pagos pp WHERE pp.pedido_id = \`${alias}\`.id AND pp.estado = 'completado' AND pp.metodo_pago = ${valor})`),
+        ],
+      },
+    ],
+  };
+}
+
+function _whereVentas(filtros, alcance, alias = 'Pedido') {
   const { desde, hasta, usuario_id, metodo_pago, tipo, origen } = filtros;
   const where = { estado: 'completado', ...filtroFecha(desde, hasta) };
   if (!alcance.acceso_todas) where.sucursal_id = alcance.sucursal_id;
   else if (filtros.sucursal_id) where.sucursal_id = filtros.sucursal_id;
   if (usuario_id) where.usuario_id = usuario_id;
-  if (metodo_pago) where.metodo_pago = metodo_pago;
+  if (metodo_pago) Object.assign(where, _condMetodoPago(metodo_pago, alias));
   if (tipo) where.tipo = tipo;
   if (origen) where.origen = origen;
   return where;
@@ -83,7 +102,7 @@ async function _devolucionesResumen(filtros, alcance) {
   const wherePedido = {};
   if (!alcance.acceso_todas) wherePedido.sucursal_id = alcance.sucursal_id;
   else if (filtros.sucursal_id) wherePedido.sucursal_id = filtros.sucursal_id;
-  if (metodo_pago) wherePedido.metodo_pago = metodo_pago;
+  if (metodo_pago) Object.assign(wherePedido, _condMetodoPago(metodo_pago, 'pedido'));
   if (tipo) wherePedido.tipo = tipo;
   if (origen) wherePedido.origen = origen;
 
@@ -111,13 +130,21 @@ async function _devolucionesResumen(filtros, alcance) {
 async function ventasResumen(filtros = {}, alcance) {
   const where = _whereVentas(filtros, alcance);
   const devs = await _devolucionesResumen(filtros, alcance);
+  // Las partes de los pedidos mixtos se suman al método con que se cobraron.
+  const wherePedidoMixto = { ..._whereVentas(filtros, alcance, 'pedido'), metodo_pago: 'mixto' };
+  const sumaPartes = (metodo) => PedidoPago.findAll({
+    where: { metodo_pago: metodo, estado: 'completado' },
+    include: [{ model: Pedido, as: 'pedido', attributes: [], where: wherePedidoMixto, required: true }],
+    attributes: [[fn('SUM', literal('`PedidoPago`.`monto`')), 'total']],
+    raw: true,
+  }).then((f) => parseFloat(f[0] && f[0].total) || 0);
 
   // Si `metodo_pago` está filtrado a un solo valor, el otro lado es 0 sin
   // consultar la BD — sumar con `{ ...where, metodo_pago: 'qr' }` cuando el
   // caller pidió solo efectivo ignoraría ese filtro y devolvería el total sin
   // filtrar (mismo patrón que cajaResumen para `tipo` y libro_caja.service.js
   // resumen() para `tipo`).
-  const [totalVentas, ventasEfectivo, ventasQR, ventasAppExterna, cantidad, cajerosRaw] = await Promise.all([
+  const [totalVentas, ventasEfectivo, ventasQR, ventasAppExterna, cantidad, cajerosRaw, partesEfectivo, partesQR] = await Promise.all([
     Pedido.sum('total', { where }),
     (!filtros.metodo_pago || filtros.metodo_pago === 'efectivo')
       ? Pedido.sum('total', { where: { ...where, metodo_pago: 'efectivo' } })
@@ -136,6 +163,8 @@ async function ventasResumen(filtros = {}, alcance) {
       group: ['usuario.id', 'usuario.nombre'],
       raw: true,
     }),
+    (!filtros.metodo_pago || filtros.metodo_pago === 'efectivo') ? sumaPartes('efectivo') : Promise.resolve(0),
+    (!filtros.metodo_pago || filtros.metodo_pago === 'qr') ? sumaPartes('qr') : Promise.resolve(0),
   ]);
 
   const cajeros = cajerosRaw
@@ -165,8 +194,8 @@ async function ventasResumen(filtros = {}, alcance) {
     total_ventas,
     ...devs,
     ventas_netas: Math.round((total_ventas - devs.total_devoluciones) * 100) / 100,
-    ventas_efectivo: parseFloat(ventasEfectivo || 0),
-    ventas_qr: parseFloat(ventasQR || 0),
+    ventas_efectivo: Math.round((parseFloat(ventasEfectivo || 0) + partesEfectivo) * 100) / 100,
+    ventas_qr: Math.round((parseFloat(ventasQR || 0) + partesQR) * 100) / 100,
     ventas_app_externa: parseFloat(ventasAppExterna || 0),
     cantidad: cantidad || 0,
     filtros: filtrosResp,
