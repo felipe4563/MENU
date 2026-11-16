@@ -24,6 +24,9 @@ function useImpresora() {
 
 // Conectar la impresora Bluetooth de ESTE celular o computadora. El navegador
 // recuerda el permiso por dispositivo: cada aparato que vende lo hace una vez.
+// iPhone o iPad (el iPad se presenta como Mac, pero con pantalla táctil).
+const esApple = () => /iPhone|iPad|iPod/.test(navigator.userAgent) || (/Macintosh/.test(navigator.userAgent) && navigator.maxTouchPoints > 1);
+
 export default function ImpresoraDispositivo({ compacto = false }) {
   const impresora = useImpresora();
   const enPruebas = useLocation().pathname === '/impresora';
@@ -39,7 +42,9 @@ export default function ImpresoraDispositivo({ compacto = false }) {
         <BluetoothOff className="w-5 h-5 shrink-0 mt-0.5 text-tenue" />
         <div className="text-sm">
           <p className="font-semibold">Este navegador no puede usar Bluetooth</p>
-          <p className="text-tenue mt-0.5">Abre el sistema en Chrome o Edge (en Android o en la computadora). En iPhone no funciona: ahí usa una impresora conectada a la PC.</p>
+          <p className="text-tenue mt-0.5">{esApple()
+            ? 'En iPhone y iPad ningún navegador puede usar Bluetooth, tampoco Chrome: Apple no lo permite. Vende desde un Android o una computadora, o deja que los tickets salgan por la impresora de la PC de caja.'
+            : 'Abre el sistema en Chrome o Edge (en Android o en la computadora).'}</p>
         </div>
       </div>
     );

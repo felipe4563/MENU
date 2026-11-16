@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { ShieldCheck } from 'lucide-react';
+import { Eye, EyeOff, ShieldCheck } from 'lucide-react';
 import { cambiarContrasena } from '../../api/perfil';
 import { useAuthStore } from '../../store/authStore';
 import { errorDe } from '../../lib/util';
@@ -11,6 +11,7 @@ export default function CambioContrasena() {
   const [f, setF] = useState({ actual: '', nueva: '', repetir: '' });
   const [error, setError] = useState('');
   const [enviando, setEnviando] = useState(false);
+  const [ver, setVer] = useState(false);
 
   async function enviar(e) {
     e.preventDefault();
@@ -28,7 +29,7 @@ export default function CambioContrasena() {
     }
   }
 
-  const campo = (k) => ({ value: f[k], onChange: (e) => setF({ ...f, [k]: e.target.value }), className: 'campo', type: 'password', required: true });
+  const campo = (k) => ({ value: f[k], onChange: (e) => setF({ ...f, [k]: e.target.value }), className: 'campo', type: ver ? 'text' : 'password', required: true });
 
   return (
     <Hoja bloquear titulo="Crea tu contraseña" subtitulo="Es tu primer ingreso o un administrador reinició tu clave." ancho="max-w-sm">
@@ -37,6 +38,9 @@ export default function CambioContrasena() {
         <Campo etiqueta="Contraseña que te dieron"><input {...campo('actual')} autoComplete="current-password" autoFocus /></Campo>
         <Campo etiqueta="Nueva contraseña"><input {...campo('nueva')} autoComplete="new-password" /></Campo>
         <Campo etiqueta="Repite la nueva"><input {...campo('repetir')} autoComplete="new-password" /></Campo>
+        <button type="button" className="btn-fantasma -ml-3" onClick={() => setVer(!ver)} aria-pressed={ver}>
+          {ver ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />} {ver ? 'Ocultar contraseñas' : 'Ver contraseñas'}
+        </button>
         {error && <p className="text-sm text-locoto">{error}</p>}
         <button className="btn-aji w-full btn-lg" disabled={enviando}>{enviando ? 'Guardando…' : 'Guardar y entrar'}</button>
       </form>
