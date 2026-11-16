@@ -47,7 +47,7 @@ function pagoParcial(t, data) {
   if (esDelivery) t.left().line('DELIVERY - ' + (pedido.nombre_cliente || 'Cliente'));
   else if (esLlevar) t.left().line('PARA LLEVAR - ' + ((pedido.cliente && pedido.cliente.numero_documento) || pedido.nombre_cliente || 'Cliente'));
   else t.left().line(((pedido.mesa && pedido.mesa.nombre) || '---').toUpperCase());
-  t.left().line('Parte ' + pp.numero);
+  t.left().line(pp.partes_iguales_de ? 'Parte ' + (pp.parte_numero || 1) + ' de ' + pp.partes_iguales_de : 'Parte ' + pp.numero);
   if (pp.persona) t.left().bold(true).line('Persona: ' + pp.persona).bold(false);
   t.rule('-');
 
@@ -59,7 +59,7 @@ function pagoParcial(t, data) {
       t.left().cols(it.cantidad + ' ' + String(it.nombre || '').toUpperCase(), Number(it.subtotal || 0).toFixed(2));
     }
   } else {
-    t.left().line(pp.partes_iguales_de ? 'Parte de la cuenta (1 de ' + pp.partes_iguales_de + ')' : 'Parte de la cuenta');
+    t.left().line(pp.partes_iguales_de ? 'Dividida en ' + pp.partes_iguales_de + ' partes iguales' : 'Parte de la cuenta');
   }
   t.rule('-');
 
@@ -85,7 +85,7 @@ function bloquePartes(t, partes, sym) {
   t.center().bold(true).line('PAGOS').bold(false);
   for (var i = 0; i < partes.length; i++) {
     var p = partes[i];
-    var etiqueta = ['Parte ' + p.numero, p.persona, _metodo(p.metodo_pago)].filter(Boolean).join(' - ');
+    var etiqueta = [p.partes_de ? 'Parte ' + p.parte_numero + ' de ' + p.partes_de : 'Parte ' + p.numero, p.persona, _metodo(p.metodo_pago)].filter(Boolean).join(' - ');
     t.left().cols(etiqueta, _dinero(sym || 'Bs.', p.monto));
   }
   t.rule('-');

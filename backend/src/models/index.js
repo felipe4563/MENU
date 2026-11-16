@@ -26,6 +26,7 @@ const Permiso = require('./Permiso');
 const Usuario = require('./Usuario');
 const Area = require('./Area');
 const Mesa = require('./Mesa');
+const Reserva = require('./Reserva');
 const MesaSesion = require('./MesaSesion');
 const Categoria = require('./Categoria');
 const Producto = require('./Producto');
@@ -40,6 +41,10 @@ const DetallePedido = require('./DetallePedido');
 const DetalleArqueo = require('./DetalleArqueo');
 const Gasto = require('./Gasto');
 const LibroCaja = require('./LibroCaja');
+const CategoriaFlujo = require('./CategoriaFlujo');
+const SueldoPersonal = require('./SueldoPersonal');
+const PagoPersonal = require('./PagoPersonal');
+const AusenciaPersonal = require('./AusenciaPersonal');
 const Devolucion = require('./Devolucion');
 const DevolucionItem = require('./DevolucionItem');
 const PedidoPago = require('./PedidoPago');
@@ -91,6 +96,8 @@ Mesa.belongsTo(Area, { foreignKey: 'area_id', as: 'area' });
 Area.hasMany(Mesa, { foreignKey: 'area_id', as: 'mesas' });
 Mesa.hasMany(MesaSesion, { foreignKey: 'mesa_id', as: 'sesiones' });
 MesaSesion.belongsTo(Mesa, { foreignKey: 'mesa_id', as: 'mesa' });
+Reserva.belongsTo(Mesa, { foreignKey: 'mesa_id', as: 'mesa' });
+Reserva.belongsTo(Usuario, { foreignKey: 'usuario_id', as: 'usuario' });
 MesaSesion.belongsTo(Sucursal, { foreignKey: 'sucursal_id', as: 'sucursal' });
 
 // Productos
@@ -232,6 +239,10 @@ Usuario.hasMany(MarcacionPersonal, { foreignKey: 'usuario_id', as: 'marcaciones'
 MarcacionPersonal.belongsTo(Usuario, { foreignKey: 'usuario_id', as: 'usuario' });
 MarcacionPersonal.belongsTo(Sucursal, { foreignKey: 'sucursal_id', as: 'sucursal' });
 MarcacionPersonal.belongsTo(Usuario, { foreignKey: 'aprobado_por', as: 'aprobador' });
+SueldoPersonal.belongsTo(Usuario, { foreignKey: 'usuario_id', as: 'usuario' });
+PagoPersonal.belongsTo(Usuario, { foreignKey: 'usuario_id', as: 'usuario' });
+PagoPersonal.belongsTo(Usuario, { foreignKey: 'registrado_por', as: 'registrador' });
+PagoPersonal.belongsTo(SesionCaja, { foreignKey: 'sesion_caja_id', as: 'sesion_caja' });
 
 // Devoluciones
 Pedido.hasMany(Devolucion, { foreignKey: 'pedido_id', as: 'devoluciones' });
@@ -259,7 +270,7 @@ module.exports = {
   GrupoOpciones, Opcion, ProductoGrupoOpciones,
   Cliente, ClientePinVerificacion,
   SesionCaja, Pedido, DetallePedido,
-  DetalleArqueo, Gasto, LibroCaja, Devolucion, DevolucionItem, PedidoPago, PedidoPagoItem,
+  DetalleArqueo, Gasto, LibroCaja, CategoriaFlujo, SueldoPersonal, PagoPersonal, AusenciaPersonal, Devolucion, DevolucionItem, PedidoPago, PedidoPagoItem,
   Proveedor, Compra, DetalleCompra,
   RegistroInventario,
   Configuracion,
@@ -273,4 +284,5 @@ module.exports = {
   Insumo, InsumoStockSucursal, InsumoMovimiento, CocinaTiempo, RecetaInsumo, DetallePedidoOpcion, DetallePedidoComboOpcion,
   IntegracionApiKey,
   HorarioPersonal, MarcacionPersonal,
+  Reserva,
 };

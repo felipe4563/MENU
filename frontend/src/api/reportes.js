@@ -8,6 +8,9 @@ export const getSinVentas = (params = {}) => api.get('/reportes/sin-ventas', { p
 export const getGananciaPlatos = (params = {}) => api.get('/reportes/ganancia-platos', { params }).then(r => r.data.datos);
 export const getTiemposCocina = (params = {}) => api.get('/reportes/cocina/tiempos', { params }).then(r => r.data.datos);
 export const getPorAcabarse = (params = {}) => api.get('/reportes/por-acabarse', { params }).then(r => r.data.datos);
+export const getMargenBajo = () => api.get('/reportes/margen-bajo').then(r => r.data.datos);
+export const getReporteSemanas = (params = {}) => api.get('/reportes/ventas/semanas', { params }).then(r => r.data.datos);
+export const getReporteProductosHora = (params = {}) => api.get('/reportes/ventas/productos-hora', { params }).then(r => r.data.datos);
 export const getReporteMapaCalor = (params = {}) => api.get('/reportes/ventas/mapa-calor', { params }).then(r => r.data.datos);
 export const getReporteInventario     = (params = {}) => api.get('/reportes/inventario',        { params }).then(r => r.data.datos);
 export const getReporteInventarioResumen = (params = {}) => api.get('/reportes/inventario/resumen', { params }).then(r => r.data.datos);

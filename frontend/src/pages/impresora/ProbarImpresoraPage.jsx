@@ -4,6 +4,7 @@
 import { useState } from 'react';
 import { Check, Loader2, Printer, Type } from 'lucide-react';
 import ImpresoraDispositivo from '../../components/shell/ImpresoraDispositivo';
+import FormasConexion from './FormasConexion';
 import { Encabezado, Pagina, Segmentado } from '../../components/ui/piezas';
 import { avisar } from '../../components/ui/Aviso';
 import { soportaBluetooth } from '../../utils/bluetoothDirecto';
@@ -64,7 +65,11 @@ export default function ProbarImpresoraPage() {
           <ImpresoraDispositivo />
         </Seccion>
 
-        <Seccion titulo="2. La ñ y las tildes" texto="Cada impresora entiende las letras especiales a su manera. Imprime la muestra: sale la misma frase varias veces, cada una con una letra al lado. Elige la letra donde la frase se lee bien.">
+        <Seccion titulo="2. Si no conecta o no imprime" texto="Prueba otras formas de conectar la impresora: cada canal del Bluetooth directo con distintos modos de envío, el Bluetooth clásico por puerto COM (computadora) o la app RawBT (Android). La que funcione queda guardada en este dispositivo.">
+          <FormasConexion ancho={ancho} />
+        </Seccion>
+
+        <Seccion titulo="3. La ñ y las tildes" texto="Cada impresora entiende las letras especiales a su manera. Imprime la muestra: sale la misma frase varias veces, cada una con una letra al lado. Elige la letra donde la frase se lee bien.">
           <div className="space-y-4">
             <div className="space-y-2">
               <Fila etiqueta="Enviar por">
@@ -105,7 +110,7 @@ export default function ProbarImpresoraPage() {
           </div>
         </Seccion>
 
-        <Seccion titulo="3. Texto libre" texto="Escribe lo que quieras e imprímelo con las letras elegidas. Sirve para revisar nombres de platos o de clientes.">
+        <Seccion titulo="4. Texto libre" texto="Escribe lo que quieras e imprímelo con las letras elegidas. Sirve para revisar nombres de platos o de clientes.">
           <div className="space-y-3">
             <textarea className="campo min-h-[120px] font-mono text-sm" value={texto} onChange={(e) => setTexto(e.target.value)} aria-label="Texto a imprimir" />
             <Fila etiqueta="Tamaño">

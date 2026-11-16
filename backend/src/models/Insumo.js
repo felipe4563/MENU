@@ -8,6 +8,7 @@ const Insumo = sequelize.define('Insumo', {
     type: DataTypes.ENUM('kilogramo', 'gramo', 'litro', 'mililitro', 'arroba', 'libra', 'unidad'),
     allowNull: false,
   },
+  stock_minimo: { type: DataTypes.DECIMAL(10, 3), allowNull: true, defaultValue: null },
   activo: { type: DataTypes.TINYINT(1), allowNull: false, defaultValue: 1 },
 }, { tableName: 'insumos', createdAt: 'creado_en', updatedAt: 'actualizado_en' });
 

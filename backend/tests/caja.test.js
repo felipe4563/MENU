@@ -482,6 +482,35 @@ describe('Caja — modo de cierre directo/ciego y tolerancia', () => {
     expect(res.status).toBe(400);
     await liberarSesion(sesionId, tokenDirecta);
   });
+
+  it('modo ciego: con la caja abierta no se entrega el esperado ni las ventas en efectivo, y el resumen espera al cierre', async () => {
+    const sesionId = await abrir(cajaCiega.id);
+    const get = await request(app).get(`/api/v1/caja/${sesionId}`).set('Authorization', `Bearer ${tokenCiega}`);
+    expect(get.status).toBe(200);
+    expect(get.body.datos.cierre_ciego).toBe(true);
+    expect(get.body.datos.efectivo_esperado).toBeNull();
+    expect(get.body.datos.ventas_efectivo).toBeNull();
+    const rep = await request(app).get(`/api/v1/caja/${sesionId}/reporte`).set('Authorization', `Bearer ${tokenCiega}`);
+    expect(rep.status).toBe(409);
+    expect(rep.body.datos).toBeUndefined();
+
+    const cierre = await request(app).post(`/api/v1/caja/${sesionId}/cerrar`).set('Authorization', `Bearer ${tokenCiega}`).send({ monto_cierre: 100 });
+    expect(cierre.status).toBe(200);
+    // Ya cerrada, se ve todo.
+    expect(Number(cierre.body.datos.efectivo_esperado)).toBe(100);
+    const despues = await request(app).get(`/api/v1/caja/${sesionId}/reporte`).set('Authorization', `Bearer ${tokenCiega}`);
+    expect(despues.status).toBe(200);
+    expect(Number(despues.body.datos.efectivo_esperado)).toBe(100);
+  });
+
+  it('modo directo: con la caja abierta sí se ve el esperado', async () => {
+    const sesionId = await abrir(cajaDirecta.id);
+    const get = await request(app).get(`/api/v1/caja/${sesionId}`).set('Authorization', `Bearer ${tokenDirecta}`);
+    expect(get.body.datos.cierre_ciego).toBeUndefined();
+    expect(Number(get.body.datos.efectivo_esperado)).toBe(100);
+    await liberarSesion(sesionId, tokenDirecta);
+  });
+
 });
 
 describe('Caja — listar() incluye datos de sucursal (modo y tolerancia)', () => {
@@ -591,5 +620,51 @@ describe('Caja — devoluciones en efectivo restan del esperado', () => {
     const cierre = await request(app).post(`/api/v1/caja/${sesionId}/cerrar`).set(auth).send({ monto_cierre: esperado });
     expect(cierre.status).toBe(200);
     expect(Number(cierre.body.datos.diferencia)).toBe(0);
+  });
+});
+
+describe('Caja — personal del turno para repartir las propinas', () => {
+  const { MarcacionPersonal } = require('../src/models');
+  let sucursal, caja, usuarios = [], sesion;
+  const hace = (min) => new Date(Date.now() - min * 60000);
+
+  beforeAll(async () => {
+    sucursal = await Sucursal.create({ nombre: 'Sucursal Propinas Turno Test' });
+    caja = await Caja.create({ sucursal_id: sucursal.id, nombre: 'Caja Propinas Turno Test' });
+    const rol = await Rol.findOne({ where: { nombre: 'Administrador' } });
+    const hash = await bcrypt.hash('clave123', 10);
+    for (const n of ['Ana', 'Beto', 'Carla', 'Dario']) {
+      const u = await Usuario.create({ rol_id: rol.id, nombre: `${n} Propinas Test`, email: `${n.toLowerCase()}-propinas-turno-test@restaurante.com`, contrasena: hash });
+      await u.addSucursal(sucursal);
+      usuarios.push(u);
+    }
+    // Turno de caja: de hace 240 a hace 60 minutos.
+    sesion = await SesionCaja.create({ usuario_id: usuarios[0].id, sucursal_id: sucursal.id, caja_id: caja.id, monto_apertura: 0, estado: 'cerrada', abierto_en: hace(240), cerrado_en: hace(60), monto_cierre: 0, diferencia: 0 });
+    const m = (u, entrada, salida) => ({ usuario_id: u.id, sucursal_id: sucursal.id, fecha: new Date().toISOString().slice(0, 10), hora_entrada: hace(entrada), hora_salida: salida == null ? null : hace(salida), estado: salida == null ? 'abierto' : 'cerrado' });
+    await MarcacionPersonal.bulkCreate([
+      m(usuarios[0], 300, 30),  // todo el turno: 180 min
+      m(usuarios[1], 200, 100), // 100 min
+      m(usuarios[2], 120, null), // sin salida: hasta el cierre del turno, 60 min
+      m(usuarios[3], 50, 10),   // después del turno: no cuenta
+    ]);
+  });
+
+  afterAll(async () => {
+    await MarcacionPersonal.destroy({ where: { sucursal_id: sucursal.id } });
+    await SesionCaja.destroy({ where: { id: sesion.id } });
+    await Usuario.destroy({ where: { id: usuarios.map((u) => u.id) } });
+    await Caja.destroy({ where: { id: caja.id } });
+    await Sucursal.destroy({ where: { id: sucursal.id } });
+  });
+
+  it('lista a quienes marcaron dentro del turno, con los minutos que coinciden', async () => {
+    const tk = (await request(app).post('/api/v1/auth/login').send({ email: 'ana-propinas-turno-test@restaurante.com', contrasena: 'clave123' })).body.datos.token;
+    const rep = await request(app).get(`/api/v1/caja/${sesion.id}/reporte`).set('Authorization', `Bearer ${tk}`);
+    expect(rep.status).toBe(200);
+    expect(rep.body.datos.personal_turno.map((p) => [p.nombre, p.minutos])).toEqual([
+      ['Ana Propinas Test', 180],
+      ['Beto Propinas Test', 100],
+      ['Carla Propinas Test', 60],
+    ]);
   });
 });

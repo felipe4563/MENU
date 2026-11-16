@@ -980,3 +980,119 @@ describe('reportesService.sinVentas — lo que no se vende', () => {
     expect(r.items.map((i) => i.id)).toContain(suelto.id);
   });
 });
+
+describe('Stock mínimo de insumos y aviso en "por acabarse"', () => {
+  const reportesService = require('../src/modules/reportes/reportes.service');
+  const { Insumo, InsumoStockSucursal } = require('../src/models');
+  let adminToken, sucursal, sucursal2, bajo, sobrado, creado;
+
+  beforeAll(async () => {
+    adminToken = (await request(app).post('/api/v1/auth/login').send({ email: 'admin@restaurante.com', contrasena: process.env.ADMIN_PASSWORD || 'admin123' })).body.datos.token;
+    sucursal = await Sucursal.create({ nombre: 'Sucursal Minimo Test' });
+    sucursal2 = await Sucursal.create({ nombre: 'Sucursal Minimo Test 2' });
+    // Sin consumo: solo el mínimo puede hacerlo avisar.
+    bajo = await Insumo.create({ nombre: 'Insumo Bajo Minimo Test', unidad_medida: 'kilogramo', stock_minimo: 5 });
+    sobrado = await Insumo.create({ nombre: 'Insumo Sobrado Test', unidad_medida: 'kilogramo', stock_minimo: 1 });
+    await InsumoStockSucursal.bulkCreate([
+      { insumo_id: bajo.id, sucursal_id: sucursal.id, stock: 5 },
+      { insumo_id: bajo.id, sucursal_id: sucursal2.id, stock: 50 },
+      { insumo_id: sobrado.id, sucursal_id: sucursal.id, stock: 100 },
+    ]);
+  });
+
+  afterAll(async () => {
+    await InsumoStockSucursal.destroy({ where: { sucursal_id: [sucursal.id, sucursal2.id] } });
+    await Insumo.destroy({ where: { id: [bajo.id, sobrado.id, creado && creado.id].filter(Boolean) } });
+    await Sucursal.destroy({ where: { id: [sucursal.id, sucursal2.id] } });
+  });
+
+  it('el insumo que llegó a su mínimo avisa aunque no tenga consumo; el que sobra no', async () => {
+    const lista = await reportesService.porAcabarse({}, { acceso_todas: false, sucursal_id: sucursal.id });
+    expect(lista.find((f) => f.id === bajo.id && f.tipo === 'insumo')).toMatchObject({ stock: 5, bajo_minimo: true, minimo: 5, sucursales_bajo_minimo: 1 });
+    expect(lista.find((f) => f.id === sobrado.id && f.tipo === 'insumo')).toBeUndefined();
+  });
+
+  it('con todas las sucursales, cuenta por sucursal: la que tiene mucho no tapa a la vacía', async () => {
+    const lista = await reportesService.porAcabarse({}, { acceso_todas: true });
+    expect(lista.find((f) => f.id === bajo.id && f.tipo === 'insumo')).toMatchObject({ stock: 55, bajo_minimo: true });
+    const otra = await reportesService.porAcabarse({}, { acceso_todas: false, sucursal_id: sucursal2.id });
+    expect(otra.find((f) => f.id === bajo.id && f.tipo === 'insumo')).toBeUndefined();
+  });
+
+  it('la API guarda, cambia y quita el mínimo, y rechaza uno negativo', async () => {
+    const auth = { Authorization: `Bearer ${adminToken}` };
+    const r = await request(app).post('/api/v1/insumos').set(auth).send({ nombre: 'Insumo Minimo API Test', unidad_medida: 'litro', stock_minimo: '2.5' });
+    expect(r.status).toBe(201);
+    creado = r.body.datos;
+    expect(Number(creado.stock_minimo)).toBe(2.5);
+    expect((await request(app).put(`/api/v1/insumos/${creado.id}`).set(auth).send({ nombre: 'Insumo Minimo API Test', unidad_medida: 'litro', stock_minimo: -1 })).status).toBe(400);
+    const sinMinimo = await request(app).put(`/api/v1/insumos/${creado.id}`).set(auth).send({ nombre: 'Insumo Minimo API Test', unidad_medida: 'litro', stock_minimo: '' });
+    expect(sinMinimo.status).toBe(200);
+    expect((await Insumo.findByPk(creado.id)).stock_minimo).toBeNull();
+  });
+});
+
+describe('Reportes: esta semana contra la anterior y lo más vendido por hora', () => {
+  const reportesService = require('../src/modules/reportes/reportes.service');
+  let sucursal, categoria, lomo, jugo;
+  const pedidos = [];
+  const alcance = () => ({ acceso_todas: false, sucursal_id: sucursal.id });
+  // Fecha y hora de Bolivia (-04:00) a Date.
+  const en = (ymd, hora) => new Date(`${ymd}T${String(hora).padStart(2, '0')}:30:00-04:00`);
+
+  const venta = async (cuando, lineas, total) => {
+    const p = await Pedido.create({ sucursal_id: sucursal.id, usuario_id: 1, tipo: 'llevar', estado: 'completado', total });
+    await Pedido.update({ creado_en: cuando }, { where: { id: p.id }, silent: true });
+    await DetallePedido.bulkCreate(lineas.map(({ producto, ...l }) => ({ pedido_id: p.id, producto_id: producto.id, precio: producto.precio, ...l })));
+    pedidos.push(p.id);
+  };
+
+  beforeAll(async () => {
+    sucursal = await Sucursal.create({ nombre: 'Sucursal Semanas Test' });
+    categoria = await Categoria.create({ nombre: 'Categoria Semanas Test' });
+    lomo = await Producto.create({ categoria_id: categoria.id, nombre: 'Lomo Semanas Test', precio: 40 });
+    jugo = await Producto.create({ categoria_id: categoria.id, nombre: 'Jugo Semanas Test', precio: 10 });
+    // Referencia: miércoles 2026-11-11. Semana actual: lun 9 al mié 11.
+    await venta(en('2026-11-09', 12), [{ producto: lomo, cantidad: 2 }], 80);
+    await venta(en('2026-11-11', 13), [{ producto: jugo, cantidad: 3 }, { producto: lomo, cantidad: 1 }], 70);
+    await venta(en('2026-11-02', 12), [{ producto: lomo, cantidad: 1 }], 40);
+    await venta(en('2026-11-06', 20), [{ producto: jugo, cantidad: 1 }], 10); // viernes pasado: fuera del total
+    await venta(en('2026-11-11', 12), [{ producto: jugo, cantidad: 5, cantidad_anulada: 5 }], 0); // todo anulado
+  });
+
+  afterAll(async () => {
+    await DetallePedido.destroy({ where: { pedido_id: pedidos } });
+    await Pedido.destroy({ where: { id: pedidos } });
+    await Producto.destroy({ where: { id: [lomo.id, jugo.id] } });
+    await categoria.destroy();
+    await sucursal.destroy();
+  });
+
+  it('compara lunes a miércoles de las dos semanas y deja en null los días que faltan', async () => {
+    const r = await reportesService.ventasSemanas({ hasta: '2026-11-11' }, alcance());
+    expect(r.hasta_dia).toBe(2);
+    expect(r.actual).toMatchObject({ desde: '2026-11-09', hasta: '2026-11-11', total: 150, pedidos: 3 });
+    expect(r.anterior).toMatchObject({ desde: '2026-11-02', hasta: '2026-11-04', total: 40, pedidos: 1 });
+    expect(r.actual.dias).toHaveLength(7);
+    expect(r.actual.dias[0]).toMatchObject({ fecha: '2026-11-09', total: 80, pedidos: 1 });
+    expect(r.actual.dias[3]).toMatchObject({ total: null, pedidos: null });
+    expect(r.anterior.dias[4]).toMatchObject({ fecha: '2026-11-06', total: 10, pedidos: 1 });
+  });
+
+  it('lista lo más vendido en cada hora (Bolivia), sin lo anulado', async () => {
+    const r = await reportesService.ventasProductosHora({ desde: '2026-11-09', hasta: '2026-11-11' }, alcance());
+    expect(r.map((h) => h.hora)).toEqual([12, 13]);
+    expect(r[0].productos).toEqual([expect.objectContaining({ nombre: 'Lomo Semanas Test', cantidad: 2, monto: 80 })]);
+    expect(r[1].productos.map((p) => p.nombre)).toEqual(['Jugo Semanas Test', 'Lomo Semanas Test']);
+    expect(r[1].monto).toBe(70);
+  });
+
+  it('las rutas responden con permiso de reportes', async () => {
+    const tk = (await request(app).post('/api/v1/auth/login').send({ email: 'admin@restaurante.com', contrasena: process.env.ADMIN_PASSWORD || 'admin123' })).body.datos.token;
+    const a = await request(app).get('/api/v1/reportes/ventas/semanas').set('Authorization', `Bearer ${tk}`);
+    const b = await request(app).get('/api/v1/reportes/ventas/productos-hora').set('Authorization', `Bearer ${tk}`);
+    expect(a.status).toBe(200);
+    expect(a.body.datos.actual.dias).toHaveLength(7);
+    expect(b.status).toBe(200);
+  });
+});

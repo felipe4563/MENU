@@ -18,6 +18,7 @@ const clientesRoutes = require('./modules/clientes/clientes.routes');
 const cajaRoutes = require('./modules/caja/caja.routes');
 const ventasRoutes = require('./modules/ventas/ventas.routes');
 const libroCajaRoutes = require('./modules/libro_caja/libro_caja.routes');
+const flujoCajaRoutes = require('./modules/flujo_caja/flujo_caja.routes');
 const comprasRoutes = require('./modules/compras/compras.routes');
 const proveedoresRoutes = require('./modules/compras/proveedores.routes');
 const inventarioRoutes = require('./modules/inventario/inventario.routes');
@@ -40,6 +41,9 @@ const agenteRoutes = require('./modules/agente/agente.routes');
 const pwaRoutes = require('./modules/pwa/pwa.routes');
 const devolucionesRoutes = require('./modules/devoluciones/devoluciones.routes');
 const personalRoutes = require('./modules/personal/personal.routes');
+const sueldosRoutes = require('./modules/sueldos/sueldos.routes');
+const kardexRoutes = require('./modules/kardex/kardex.routes');
+const reservasRoutes = require('./modules/reservas/reservas.routes');
 
 const app = express();
 
@@ -83,6 +87,7 @@ app.use('/api/v1/clientes', clientesRoutes);
 app.use('/api/v1/caja', cajaRoutes);
 app.use('/api/v1/ventas', ventasRoutes);
 app.use('/api/v1/libro-caja', libroCajaRoutes);
+app.use('/api/v1/flujo-caja', flujoCajaRoutes);
 app.use('/api/v1/compras', comprasRoutes);
 app.use('/api/v1/proveedores', proveedoresRoutes);
 app.use('/api/v1/inventario', inventarioRoutes);
@@ -103,6 +108,9 @@ app.use('/api/v1/agente', agenteRoutes);
 app.use('/api/v1/pwa', pwaRoutes);
 app.use('/api/v1/uploads', uploadsRoutes);
 app.use('/api/v1/personal', personalRoutes);
+app.use('/api/v1/sueldos', sueldosRoutes);
+app.use('/api/v1/kardex', kardexRoutes);
+app.use('/api/v1/reservas', reservasRoutes);
 app.use('/api/v1/devoluciones', devolucionesRoutes);
 
 app.use(manejarErrores);

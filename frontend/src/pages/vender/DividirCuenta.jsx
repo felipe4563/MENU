@@ -2,8 +2,9 @@ import { useMemo, useState } from 'react';
 import { CheckCircle2, Minus, Plus, QrCode, UserPlus, X } from 'lucide-react';
 import { Segmentado } from '../../components/ui/piezas';
 import { cx, dinero } from '../../lib/util';
+import { nombreMetodo } from '../../lib/metodosPago';
 import {
-  acomodarAsignaciones, faltaDe, itemsDePersona, nombreDeParte, partesIguales, partesVigentes, subtotalDePersona, unidadesDelPedido,
+  acomodarAsignaciones, divisionEnCurso, faltaDe, itemsDePersona, nombreDeParte, partesIguales, partesVigentes, subtotalDePersona, unidadesDelPedido,
 } from '../../lib/dividirCuenta';
 
 // Nombre libre para una persona nueva: "Persona N" que no esté en uso (ni en
@@ -37,12 +38,12 @@ function PartesPagadas({ pedido, moneda }) {
   if (!partes.length) return null;
   return (
     <div>
-      <p className="etiqueta">Partes pagadas</p>
+      <p className="etiqueta">{partes.some((p) => p.estado === 'pendiente') ? 'Partes pagadas y por pagar' : 'Partes pagadas'}</p>
       <ul className="divide-y divide-dashed divide-linea rounded-xl border border-linea px-3">
         {partes.map((p, i) => (
           <li key={p.id} className="py-2 flex items-center gap-2 text-sm">
             <span className="font-semibold min-w-0 truncate">{nombreDeParte(p, i)}</span>
-            <span className="text-tenue shrink-0">· {p.metodo_pago === 'qr' ? 'QR' : 'Efectivo'}</span>
+            <span className="text-tenue shrink-0">· {nombreMetodo(p.metodo_pago)}</span>
             {p.estado === 'pendiente' && <span className="chip bg-aji/25 text-tinta shrink-0">Esperando QR</span>}
             <span className="num ml-auto font-semibold shrink-0">{dinero(p.monto, moneda)}</span>
           </li>
@@ -119,7 +120,9 @@ function PorPlatos({ unidades, personas, usados, elegida, asignaciones, moneda, 
                   )}
                 >
                   <span className={cx('flex-1 min-w-0 truncate', !u.pagadaPor && 'font-medium')}>{u.nombre}</span>
-                  {u.pagadaPor ? (
+                  {u.esperandoQr ? (
+                    <span className="chip bg-aji/25 text-tinta shrink-0 max-w-[45%] truncate" title={`${u.pagadaPor}: esperando el QR`}><QrCode className="w-3 h-3 shrink-0" /> Esperando QR</span>
+                  ) : u.pagadaPor ? (
                     <span className="chip bg-hierba/15 text-hierba shrink-0 max-w-[45%] truncate"><CheckCircle2 className="w-3 h-3 shrink-0" /> {u.pagadaPor}</span>
                   ) : quien ? (
                     <span className={cx('chip shrink-0 max-w-[45%] truncate', quien === elegida ? 'bg-aji text-sobre-aji' : 'bg-hundido text-tinta')}>{quien}</span>
@@ -135,25 +138,27 @@ function PorPlatos({ unidades, personas, usados, elegida, asignaciones, moneda, 
   );
 }
 
-function PartesIgualesVista({ falta, entre, moneda, bloqueado, onEntre, onCobrar }) {
+function PartesIgualesVista({ falta, entre, cobradas, moneda, bloqueado, onEntre, onCobrar }) {
   const partes = partesIguales(falta, entre);
+  const de = cobradas + entre;
   const ultimaDistinta = partes.length > 1 && partes[partes.length - 1] !== partes[0];
   return (
     <div className="space-y-4">
       <div className="flex items-center gap-3 flex-wrap">
-        <span className="font-semibold">Entre</span>
+        <span className="font-semibold">{cobradas > 0 ? 'Faltan' : 'Entre'}</span>
         <div className="flex items-center gap-1 rounded-full bg-hundido p-1">
           <button type="button" className="w-10 h-10 rounded-full grid place-items-center hover:bg-papel disabled:opacity-40" disabled={entre <= 1} onClick={() => onEntre(entre - 1)} aria-label="Una parte menos"><Minus className="w-4 h-4" /></button>
           <span className="num w-8 text-center text-xl font-bold">{entre}</span>
           <button type="button" className="w-10 h-10 rounded-full grid place-items-center hover:bg-papel disabled:opacity-40" disabled={entre >= 20} onClick={() => onEntre(entre + 1)} aria-label="Una parte más"><Plus className="w-4 h-4" /></button>
         </div>
         <p className="text-sm text-tenue">
+          {cobradas > 0 && <>Ya pagaron {cobradas} de {de} · </>}
           {entre === 1 ? 'Se cobra todo lo que falta' : <><span className="num font-semibold text-tinta">{dinero(partes[0], moneda)}</span> cada una</>}
           {ultimaDistinta && <> · la última <span className="num">{dinero(partes[partes.length - 1], moneda)}</span></>}
         </p>
       </div>
       <button type="button" data-principal className="btn-aji btn-lg w-full num" disabled={bloqueado || falta <= 0} onClick={() => onCobrar(partes[0])}>
-        Cobrar una parte · {dinero(partes[0], moneda)}
+        {de > 1 ? `Cobrar parte ${cobradas + 1} de ${de}` : 'Cobrar lo que falta'} · {dinero(partes[0], moneda)}
       </button>
     </div>
   );
@@ -171,7 +176,11 @@ export default function DividirCuenta({ pedido, moneda, renderCobro, onCancelarQ
   const [personas, setPersonas] = useState(() => [nombreLibre(pagadores)]);
   const [elegida, setElegida] = useState(personas[0]);
   const [asignacionesGuardadas, setAsignaciones] = useState({});
-  const [entre, setEntre] = useState(2);
+  // Partes iguales: "entre" son las que faltan y "cobradas" las ya pagadas
+  // de esta misma división (se retoma si se cerró la hoja a medias).
+  const [division] = useState(() => divisionEnCurso(pedido));
+  const [entre, setEntre] = useState(division ? division.partes_de - division.parte_numero : 2);
+  const [cobradas, setCobradas] = useState(division ? division.parte_numero : 0);
   const [parte, setParte] = useState(null);
   const [aviso, setAviso] = useState(null);
 
@@ -213,6 +222,7 @@ export default function DividirCuenta({ pedido, moneda, renderCobro, onCancelarQ
       setPersonas(siguientes);
       setElegida(siguientes[0]);
     } else {
+      if (parte.partes_de) setCobradas((c) => c + 1);
       setEntre((n) => Math.max(1, n - 1));
     }
     setAviso({ etiqueta: parte.etiqueta, monto: r.monto, cambio: r.cambio, metodo: r.metodo });
@@ -226,9 +236,12 @@ export default function DividirCuenta({ pedido, moneda, renderCobro, onCancelarQ
   const cobrarPersona = (persona, monto) => setParte({
     modo: 'platos', persona, monto, items: itemsDePersona(asignaciones, persona), etiqueta: persona,
   });
-  const cobrarIgual = (monto) => setParte({
-    modo: 'iguales', persona: null, monto, etiqueta: entre > 1 ? `Una parte de ${entre}` : 'Lo que falta',
-  });
+  const cobrarIgual = (monto) => {
+    const de = cobradas + entre;
+    setParte(de > 1
+      ? { modo: 'iguales', persona: null, monto, parte_numero: cobradas + 1, partes_de: de, etiqueta: `Parte ${cobradas + 1} de ${de}` }
+      : { modo: 'iguales', persona: null, monto, etiqueta: 'Lo que falta' });
+  };
 
   return (
     <div className="space-y-4 min-w-0">
@@ -278,7 +291,7 @@ export default function DividirCuenta({ pedido, moneda, renderCobro, onCancelarQ
           onCobrar={cobrarPersona}
         />
       ) : (
-        <PartesIgualesVista falta={falta} entre={entre} moneda={moneda} bloqueado={qrPendiente} onEntre={setEntre} onCobrar={cobrarIgual} />
+        <PartesIgualesVista falta={falta} entre={entre} cobradas={cobradas} moneda={moneda} bloqueado={qrPendiente} onEntre={setEntre} onCobrar={cobrarIgual} />
       )}
 
       <PartesPagadas pedido={pedido} moneda={moneda} />

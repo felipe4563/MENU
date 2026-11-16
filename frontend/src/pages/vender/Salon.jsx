@@ -1,6 +1,7 @@
 import { useMemo } from 'react';
-import { Armchair, ShoppingBag, Bike, QrCode, ChefHat, Check } from 'lucide-react';
-import { cx, dinero, haceMinutos } from '../../lib/util';
+import { Armchair, ShoppingBag, Bike, QrCode, ChefHat, Check, CalendarClock } from 'lucide-react';
+import { cx, dinero, haceMinutos, hora } from '../../lib/util';
+import { reservaDeMesa } from '../../lib/reservas';
 import { useMoneda } from '../../hooks/useConfig';
 import { Vacio } from '../../components/ui/piezas';
 import { etiquetaDestino } from './datosCatalogo';
@@ -29,7 +30,7 @@ function EstadoCocina({ pedido }) {
 }
 
 // Mesas agrupadas por área + pedidos para llevar y delivery abiertos.
-export default function Salon({ mesas, pedidos, onMesaLibre, onPedido, onMesaSinPedido, onAbrirQr }) {
+export default function Salon({ mesas, pedidos, reservas = [], onMesaLibre, onPedido, onMesaSinPedido, onAbrirQr }) {
   const moneda = useMoneda();
   const porMesa = useMemo(() => {
     const m = {};
@@ -97,20 +98,28 @@ export default function Salon({ mesas, pedidos, onMesaLibre, onPedido, onMesaSin
               }
               const conQr = m.sesiones?.length > 0;
               const ocupadaSinPedido = conQr || m.estado === 'ocupada';
+              const reserva = !ocupadaSinPedido ? reservaDeMesa(reservas, m.id) : null;
               return (
                 <div key={m.id} className="relative">
                   <button
                     onClick={() => (ocupadaSinPedido ? onMesaSinPedido(m) : onMesaLibre(m))}
                     className={cx(
                       'w-full aspect-square rounded-ficha border-2 border-dashed p-3 flex flex-col items-start transition',
-                      ocupadaSinPedido ? 'border-aji bg-aji/10' : 'border-linea hover:border-tinta/40 hover:bg-papel',
+                      ocupadaSinPedido ? 'border-aji bg-aji/10' : reserva ? 'border-cielo bg-cielo/10 hover:bg-cielo/15' : 'border-linea hover:border-tinta/40 hover:bg-papel',
                     )}
                   >
                     <span className="text-xs text-tenue flex items-center gap-1"><Armchair className="w-3.5 h-3.5" /> {m.asientos ?? 4}</span>
                     <span className="font-display font-extrabold text-2xl leading-none mt-1">{m.nombre}</span>
-                    <span className="mt-auto text-xs font-semibold text-tenue flex items-center gap-1">
-                      {conQr ? <><QrCode className="w-3.5 h-3.5" /> Pidiendo por QR</> : ocupadaSinPedido ? 'Sentados, sin pedido' : 'Libre'}
-                    </span>
+                    {reserva ? (
+                      <span className="mt-auto text-xs font-semibold text-cielo text-left leading-tight">
+                        <span className="flex items-center gap-1"><CalendarClock className="w-3.5 h-3.5 shrink-0" /> Reservada {hora(reserva.fecha_hora)}</span>
+                        <span className="block truncate font-normal">{reserva.nombre_cliente} · {reserva.personas}</span>
+                      </span>
+                    ) : (
+                      <span className="mt-auto text-xs font-semibold text-tenue flex items-center gap-1">
+                        {conQr ? <><QrCode className="w-3.5 h-3.5" /> Pidiendo por QR</> : ocupadaSinPedido ? 'Sentados, sin pedido' : 'Libre'}
+                      </span>
+                    )}
                   </button>
                   {!ocupadaSinPedido && m.codigo_qr && onAbrirQr && (
                     <button onClick={() => onAbrirQr(m)} title="Habilitar pedido por QR" aria-label={`Habilitar QR en ${m.nombre}`}

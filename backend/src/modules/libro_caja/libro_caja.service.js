@@ -1,6 +1,7 @@
 const { Op } = require('sequelize');
 const { LibroCaja, SesionCaja, Usuario, Sucursal } = require('../../models');
 const { emitir } = require('../../socket');
+const { categoriaPara } = require('../flujo_caja/categorias');
 
 const INCLUDE_LB = [
   { model: SesionCaja, as: 'sesion_caja', attributes: ['id', 'estado', 'abierto_en'] },
@@ -153,10 +154,16 @@ async function resumen(filtros = {}, alcance) {
 // gastos/ingresos fuera de una sesión de caja abierta (ej. fuera de horario
 // de atención) — no todo movimiento de plata pasa necesariamente por una
 // caja registradora activa.
-async function crear(usuario_id, { sesion_caja_id, tipo, concepto, monto, metodo_pago = 'efectivo' }, alcance) {
+async function crear(usuario_id, { sesion_caja_id, tipo, concepto, monto, metodo_pago = 'efectivo', categoria }, alcance) {
   if (!['ingreso', 'egreso'].includes(tipo)) throw Object.assign(new Error('tipo debe ser ingreso o egreso'), { status: 400 });
   if (sesion_caja_id) await _verificarSesionEnAlcance(sesion_caja_id, alcance);
-  const entrada = await LibroCaja.create({ sesion_caja_id: sesion_caja_id || null, usuario_id, tipo, concepto, monto, metodo_pago });
+  const cat = await categoriaPara(categoria, tipo);
+  // La categoría ubica el movimiento en el flujo de caja; sin caja se guarda
+  // la sucursal para el filtro por sucursal.
+  const entrada = await LibroCaja.create({
+    sesion_caja_id: sesion_caja_id || null, sucursal_id: sesion_caja_id ? null : (alcance?.sucursal_id ?? null),
+    usuario_id, tipo, concepto, monto, metodo_pago, categoria: cat,
+  });
 
   // El cierre de caja calcula "esperado en caja" restando sesion.total_gastos
   // (no sumando egresos del libro en vivo), así que un egreso en efectivo

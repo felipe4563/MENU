@@ -62,9 +62,14 @@ async function recibirCompra(req, res, next) {
   } catch (err) { next(err); }
 }
 
+async function compraSugerida(req, res, next) {
+  try { res.json({ ok: true, datos: await svc.compraSugerida(req.usuario.sucursal_id) }); }
+  catch (err) { next(err); }
+}
+
 async function catalogo(req, res, next) {
   try { res.json({ ok: true, datos: await svc.catalogo() }); }
   catch (err) { next(err); }
 }
 
-module.exports = { listarProveedores, crearProveedor, actualizarProveedor, desactivarProveedor, listarCompras, obtenerCompra, crearCompra, actualizarCompra, recibirCompra, catalogo };
+module.exports = { listarProveedores, crearProveedor, actualizarProveedor, desactivarProveedor, listarCompras, obtenerCompra, crearCompra, actualizarCompra, recibirCompra, catalogo, compraSugerida };

@@ -1,9 +1,14 @@
 import { useMemo, useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { Wallet, Receipt, LayoutGrid, Plus, Trash2, ChevronUp } from 'lucide-react';
+import { Wallet, Receipt, LayoutGrid, Plus, Trash2, ChevronUp, CalendarDays, MonitorSmartphone } from 'lucide-react';
+import { abrirPantallaCliente, usePantalla } from '../../lib/pantallaCliente';
 import { getMesas, cerrarSesionMesa, abrirSesionMesa } from '../../api/mesas';
 import { getVentas, crearVentaCompleta } from '../../api/ventas';
+import { cobrarConRespaldo } from '../../lib/ventasOffline';
+import { useAuthStore } from '../../store/authStore';
+import { getReservas, cambiarEstadoReserva } from '../../api/reservas';
+import { reservaDeMesa } from '../../lib/reservas';
 import { useCajaActiva } from '../../hooks/useCajaActiva';
 import { usePermisos } from '../../hooks/usePermisos';
 import { useMoneda } from '../../hooks/useConfig';
@@ -19,7 +24,7 @@ import { DestinoChips, LineaComanda, TotalComanda } from './Comanda';
 import Hoja from '../../components/ui/Hoja';
 import { Cargando, Segmentado, SinPermiso, Vacio, useConfirmar } from '../../components/ui/piezas';
 import { avisar } from '../../components/ui/Aviso';
-import { dinero, errorDe } from '../../lib/util';
+import { dinero, errorDe, hora, hoyISO } from '../../lib/util';
 
 function HojaMesas({ mesas, ocupadas, onElegir, onCerrar }) {
   const libres = mesas.filter((m) => !ocupadas.has(m.id) && m.estado !== 'ocupada');
@@ -70,11 +75,13 @@ export default function VenderPage() {
   const [hoja, setHoja] = useState(null); // 'mesas' | 'delivery' | 'cobro' | 'comanda'
   const [confirmacion, confirmar] = useConfirmar();
   const caja = useCajaActiva();
+  const usuario = useAuthStore((s) => s.usuario);
   const cat = useCatalogo();
   const { lineas, destino, agregar, cambiar, setDestino, limpiar } = useCarrito();
 
   const mesasQ = useQuery({ queryKey: ['mesas'], queryFn: () => getMesas(), enabled: puedeVer });
   const activosQ = useQuery({ queryKey: ['ventas', 'activos'], queryFn: () => getVentas({ estado: 'pendiente,listo' }), enabled: puedeVer });
+  const reservasQ = useQuery({ queryKey: ['reservas', hoyISO()], queryFn: () => getReservas(hoyISO()), enabled: puedeVer, refetchInterval: 60_000 });
   const mesas = mesasQ.data ?? [];
   const activos = useMemo(() => (activosQ.data ?? []).filter((p) => p.origen !== 'app_externa'), [activosQ.data]);
   const ocupadas = useMemo(() => new Set(activos.map((p) => p.mesa_id).filter(Boolean)), [activos]);
@@ -82,6 +89,7 @@ export default function VenderPage() {
   useSocket('restaurante:actualizar', () => {
     qc.invalidateQueries({ queryKey: ['mesas'] });
     qc.invalidateQueries({ queryKey: ['ventas'] });
+    qc.invalidateQueries({ queryKey: ['reservas'] });
   });
   useSocket('productos:actualizado', () => qc.invalidateQueries({ queryKey: ['productos-pos'] }));
 
@@ -100,12 +108,41 @@ export default function VenderPage() {
   }, [lineas]);
   const total = lineas.reduce((s, l) => s + l.precio * l.cantidad, 0);
   const items = lineas.reduce((s, l) => s + l.cantidad, 0);
+  // Pantalla del cliente: lo que se va agregando a la comanda.
+  const imagenDe = (l) => (l.combo_id ? cat.combos.find((c) => c.id === l.combo_id) : cat.productos.find((p) => p.id === l.producto_id))?.imagen ?? null;
+  usePantalla({
+    tipo: 'comanda', total,
+    lineas: lineas.map((l) => ({ id: l.id, nombre: l.nombre, cantidad: l.cantidad, detalle: l.detalle || null, peso: l.peso || null, imagen: imagenDe(l), subtotal: l.precio * l.cantidad })),
+  }, JSON.stringify([lineas.map((l) => [l.id, l.cantidad]), cat.productos.length]));
+  // Fotos de los platos para la pantalla en espera (los más vendidos primero).
+  const vitrina = cat.productos.filter((p) => p.imagen && p.disponible_hoy !== false).slice(0, 12)
+    .map((p) => ({ nombre: p.nombre, precio: cat.precioDe(p), imagen: p.imagen }));
+  usePantalla({ tipo: 'vitrina', productos: vitrina }, vitrina.map((p) => p.imagen).join('|'));
 
   const liberarMesa = useMutation({
     mutationFn: (m) => cerrarSesionMesa(m.id),
     onSuccess: () => { qc.invalidateQueries({ queryKey: ['mesas'] }); avisar.ok('Mesa liberada'); },
     onError: (e) => avisar.error(errorDe(e)),
   });
+
+  // Mesa libre con una reserva por llegar: si son ellos, la reserva queda como
+  // 'llegaron'; si es otro cliente, se avisa que la mesa está reservada.
+  const elegirMesaLibre = async (m) => {
+    const r = reservaDeMesa(reservasQ.data, m.id);
+    if (r) {
+      const sonEllos = await confirmar({
+        titulo: `${m.nombre} está reservada a las ${hora(r.fecha_hora)}`,
+        texto: `A nombre de ${r.nombre_cliente}, ${r.personas} ${r.personas === 1 ? 'persona' : 'personas'}. ¿Son ellos?`,
+        confirmar: 'Sí, llegaron',
+        cancelar: 'Es otro cliente',
+      });
+      if (sonEllos) {
+        try { await cambiarEstadoReserva(r.id, 'llego'); qc.invalidateQueries({ queryKey: ['reservas'] }); } catch (e) { avisar.error(errorDe(e)); }
+      } else avisar.info(`Ojo: ${m.nombre} se necesita a las ${hora(r.fecha_hora)}.`);
+    }
+    setDestino({ tipo: 'mesa', mesa: m });
+    setVista('vender');
+  };
 
   const abrirQr = useMutation({
     mutationFn: (m) => abrirSesionMesa(m.id),
@@ -222,7 +259,9 @@ export default function VenderPage() {
               { valor: 'salon', etiqueta: 'Salón', Icono: LayoutGrid, cuenta: activos.length || null },
             ]}
           />
-          <Link to="/vender/mis-ventas" className="btn-fantasma ml-auto"><Receipt className="w-4 h-4" /> <span className="hidden sm:inline">Mis ventas</span></Link>
+          <button type="button" onClick={abrirPantallaCliente} className="btn-fantasma ml-auto" title="Abre una ventana para el segundo monitor que mira el cliente"><MonitorSmartphone className="w-4 h-4" /> <span className="hidden xl:inline">Pantalla del cliente</span></button>
+          <Link to="/vender/reservas" className="btn-fantasma"><CalendarDays className="w-4 h-4" /> <span className="hidden sm:inline">Reservas</span></Link>
+          <Link to="/vender/mis-ventas" className="btn-fantasma"><Receipt className="w-4 h-4" /> <span className="hidden sm:inline">Mis ventas</span></Link>
         </div>
         <PagosQrPorConfirmar />
         {vista === 'vender' ? (
@@ -236,7 +275,8 @@ export default function VenderPage() {
                 mesas={mesas}
                 pedidos={activos}
                 onPedido={(p) => navigate(`/vender/pedido/${p.id}`)}
-                onMesaLibre={(m) => { setDestino({ tipo: 'mesa', mesa: m }); setVista('vender'); }}
+                reservas={reservasQ.data ?? []}
+                onMesaLibre={elegirMesaLibre}
                 onAbrirQr={puedeCrear ? (m) => abrirQr.mutate(m) : undefined}
                 onMesaSinPedido={async (m) => {
                   const ok = await confirmar({
@@ -288,9 +328,10 @@ export default function VenderPage() {
           items={lineas.map((l) => ({ producto_id: l.combo_id ? null : (l.producto_id ?? null), combo_id: l.combo_id ?? null, cantidad: l.cantidad, precio: l.precio }))}
           permitirDespues={destino?.tipo === 'mesa' || destino?.tipo === 'delivery' || !puedeCobrar}
           puedeCobrar={puedeCobrar}
-          onConfirmar={(p) => crearVentaCompleta({ ...datosVenta(), ...p })}
+          onConfirmar={(p) => cobrarConRespaldo({ ...datosVenta(), ...p }, { lineas, usuario_id: usuario?.id, sucursal_id: caja.sesion.sucursal_id ?? usuario?.sucursal_activa?.id })}
           onDespues={(p) => crearVentaCompleta({ ...datosVenta(), ...p, metodo_pago: 'diferido' })}
           onCreado={() => { limpiar(); qc.invalidateQueries({ queryKey: ['ventas'] }); }}
+          onDividir={(r) => { setHoja(null); navigate(`/vender/pedido/${r.id}`, { state: { dividir: true } }); }}
           onTerminado={terminar}
           onCerrar={() => setHoja(null)}
         />

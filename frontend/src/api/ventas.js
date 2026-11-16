@@ -39,8 +39,8 @@ export const marcarListo = (pedido_id) =>
 export const marcarEntregado = (pedido_id) =>
   api.patch(`/ventas/${pedido_id}/entregado`).then((r) => r.data.datos);
 
-export const crearVentaCompleta = (datos) =>
-  api.post('/ventas/completa', datos).then((r) => r.data.datos);
+export const crearVentaCompleta = (datos, config) =>
+  api.post('/ventas/completa', datos, config).then((r) => r.data.datos);
 
 export const anularProductos = (pedido_id, datos) =>
   api.post(`/ventas/${pedido_id}/anular`, datos).then((r) => r.data.datos);

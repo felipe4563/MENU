@@ -188,6 +188,30 @@ describe('Dividir cuenta', () => {
     expect(final.metodo_pago).toBe('efectivo');
   });
 
+  it('partes iguales guardan "parte k de N" y el comprobante lo lleva', async () => {
+    const id = await nuevoPedido([{ producto: platoC, cantidad: 1 }]);
+    const r1 = await parte(id, { modo: 'iguales', monto: 25, parte_numero: 1, partes_de: 4, metodo_pago: 'efectivo', monto_recibido: 25 });
+    expect(r1.status).toBe(201);
+    expect(r1.body.datos.pago).toMatchObject({ parte_numero: 1, partes_de: 4 });
+    const r2 = await parte(id, { modo: 'iguales', monto: 25, parte_numero: 2, partes_de: 4, metodo_pago: 'efectivo', monto_recibido: 25 });
+    expect(r2.status).toBe(201);
+    expect(r2.body.datos.datos_impresion.caja.pago_parcial).toMatchObject({ numero: 2, parte_numero: 2, partes_iguales_de: 4 });
+    const pagos = (await ver(id)).pagos;
+    expect(pagos.map((p) => [p.parte_numero, p.partes_de])).toEqual([[1, 4], [2, 4]]);
+  });
+
+  it('partes iguales: número de parte inválido da 400 y sin números queda null', async () => {
+    const id = await nuevoPedido([{ producto: platoC, cantidad: 1 }]);
+    for (const malo of [{ parte_numero: 5, partes_de: 4 }, { parte_numero: 1 }, { parte_numero: 0, partes_de: 3 }, { parte_numero: 1, partes_de: 1 }]) {
+      const r = await parte(id, { modo: 'iguales', monto: 10, metodo_pago: 'efectivo', monto_recibido: 10, ...malo });
+      expect(r.status).toBe(400);
+    }
+    const sin = await parte(id, { modo: 'iguales', monto: 10, metodo_pago: 'efectivo', monto_recibido: 10 });
+    expect(sin.status).toBe(201);
+    expect(sin.body.datos.pago).toMatchObject({ parte_numero: null, partes_de: null });
+    expect((await ver(id)).pagado).toBe('10.00');
+  });
+
   it('no se puede pagar más de lo que falta', async () => {
     const id = await nuevoPedido([{ producto: platoC, cantidad: 1 }]);
     const primera = await parte(id, { modo: 'iguales', monto: 60, metodo_pago: 'efectivo', monto_recibido: 60 });
@@ -591,7 +615,7 @@ describe('Dividir cuenta', () => {
       expect(caja.partes).toBeUndefined();
       expect(caja.pago_parcial).toEqual({
         pago_id: juan.body.datos.pago.id, numero: 1, persona: 'Juan', modo: 'platos', monto: 30, metodo_pago: 'efectivo',
-        monto_recibido: 50, cambio: 20, pagado: 30, falta: 25, partes_iguales_de: null,
+        monto_recibido: 50, cambio: 20, pagado: 30, falta: 25, parte_numero: null, partes_iguales_de: null,
         items: [{ nombre: 'Plato A', cantidad: 1, subtotal: 30 }],
       });
       expect(caja.metodo_pago).toBe('efectivo');
@@ -864,5 +888,30 @@ describe('Dividir cuenta', () => {
       const previo = antesFiltrado[metodo];
       expect(resumen.ventas_efectivo + resumen.ventas_qr - previo.ventas_efectivo - previo.ventas_qr).toBe(metodo === 'qr' ? 40 : 60);
     }
+  });
+
+  it('propina: se suma a lo cobrado, sale aparte en el reporte de caja y no puede pasar la cuenta', async () => {
+    const cobrarEntero = (id, body) => request(app).post(`/api/v1/ventas/${id}/cobrar`).set('Authorization', `Bearer ${token}`).send(body);
+    const id = await nuevoPedido([{ producto: platoB, cantidad: 2 }]); // 50
+
+    expect((await cobrarEntero(id, { metodo_pago: 'efectivo', monto_recibido: 200, propina: 51 })).status).toBe(400);
+    expect((await cobrarEntero(id, { metodo_pago: 'efectivo', monto_recibido: 200, propina: -1 })).status).toBe(400);
+    // 50 + 5 de propina: con 50 no alcanza.
+    expect((await cobrarEntero(id, { metodo_pago: 'efectivo', monto_recibido: 50, propina: 5 })).status).toBe(400);
+
+    const antes = (await request(app).get(`/api/v1/caja/${sesion.id}/reporte`).set('Authorization', `Bearer ${token}`)).body.datos;
+    const r = await cobrarEntero(id, { metodo_pago: 'efectivo', monto_recibido: 60, propina: '5' });
+    expect(r.status).toBe(200);
+    const p = await Pedido.findByPk(id);
+    expect(Number(p.propina)).toBe(5);
+    expect(Number(p.cambio)).toBe(5);
+    expect(Number(p.total)).toBe(50);
+
+    const rep = (await request(app).get(`/api/v1/caja/${sesion.id}/reporte`).set('Authorization', `Bearer ${token}`)).body.datos;
+    expect(rep.propinas.total - antes.propinas.total).toBe(5);
+    expect(rep.propinas.efectivo - antes.propinas.efectivo).toBe(5);
+    expect(rep.propinas.cantidad - antes.propinas.cantidad).toBe(1);
+    // La propina en efectivo queda en el cajón: el esperado sube 55.
+    expect(Math.round((rep.efectivo_esperado - antes.efectivo_esperado) * 100) / 100).toBe(55);
   });
 });

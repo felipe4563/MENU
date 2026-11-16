@@ -6,7 +6,7 @@ import { useConfiguracion, Seccion } from './comun';
 import { cx, iniciales } from '../../lib/util';
 
 const COLORES = ['#F2B705', '#E4572E', '#8A0000', '#2F9E6B', '#2F6FD2', '#7B4AE2', '#D73382', '#17262B'];
-const CLAVES = ['nombre_negocio', 'telefono', 'direccion', 'moneda', 'simbolo_moneda', 'color_primario', 'logo', 'portada', 'pie_ticket'];
+const CLAVES = ['nombre_negocio', 'telefono', 'direccion', 'moneda', 'simbolo_moneda', 'color_primario', 'logo', 'portada', 'pie_ticket', 'alerta_costo_pct'];
 
 const inicial = (config) => Object.fromEntries(CLAVES.map((k) => [k, config[k] === 'NULL' ? '' : (config[k] ?? '')]));
 
@@ -59,6 +59,14 @@ function Formulario({ config, guardar, editar }) {
               <Campo etiqueta="Código"><input className="campo" {...campo('moneda')} placeholder="Bs" /></Campo>
               <Campo etiqueta="Símbolo en pantalla"><input className="campo" {...campo('simbolo_moneda')} placeholder="Bs." /></Campo>
             </div>
+          </Seccion>
+          <Seccion titulo="Ganancia de los platos" texto="El inicio avisa cuando lo que cuesta hacer un plato pasa este porcentaje de su precio.">
+            <Campo etiqueta="Avisar si el costo pasa el" ayuda="Vacío: 40%. El costo sale de la receta y del precio de la última compra de cada insumo." className="max-w-xs">
+              <div className="flex items-center gap-2">
+                <input inputMode="numeric" className="campo num w-24" {...campo('alerta_costo_pct')} onChange={(e) => setF({ ...f, alerta_costo_pct: e.target.value.replace(/[^\d]/g, '').slice(0, 2) })} placeholder="40" />
+                <span className="text-tenue">% del precio</span>
+              </div>
+            </Campo>
           </Seccion>
           <Seccion titulo="Ticket" texto="Mensaje al final de cada ticket de venta.">
             <textarea rows={2} className="campo max-w-3xl" {...campo('pie_ticket')} placeholder="¡Gracias por su preferencia!" />

@@ -1,5 +1,6 @@
-import { useState } from 'react';
-import { useNavigate, useParams } from 'react-router-dom';
+import { useEffect, useRef, useState } from 'react';
+import { useLocation, useNavigate, useParams } from 'react-router-dom';
+import { publicarPantalla } from '../../lib/pantallaCliente';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { ArrowLeft, Plus, Printer, Undo2, XCircle, ChefHat, Check, X } from 'lucide-react';
 import { getVenta, agregarItem, actualizarItem, eliminarItem, cobrarVenta, cancelarVenta, reimprimirVenta } from '../../api/ventas';
@@ -8,7 +9,7 @@ import { useMoneda } from '../../hooks/useConfig';
 import { useSocket } from '../../hooks/useSocket';
 import { imprimirLocal, reimprimirConFallback } from '../../utils/impresionLocal';
 import { vigente, puedeAnularPedido } from '../../utils/devoluciones';
-import { faltaDe } from '../../lib/dividirCuenta';
+import { cuentaYaPagada, faltaDe } from '../../lib/dividirCuenta';
 import { useCatalogo, etiquetaDestino, nombreDetalle, textoOpcionesDetalle } from './datosCatalogo';
 import { useAgregar } from './useAgregar';
 import Catalogo from './Catalogo';
@@ -27,7 +28,9 @@ export default function PedidoPage() {
   const qc = useQueryClient();
   const moneda = useMoneda();
   const { tiene } = usePermisos();
-  const [hoja, setHoja] = useState(null); // agregar | cobrar | anular
+  // Venta nueva que se mandó a dividir desde Vender: abre directo el cobro dividido.
+  const dividirAlAbrir = !!useLocation().state?.dividir;
+  const [hoja, setHoja] = useState(dividirAlAbrir ? 'cobrar' : null); // agregar | cobrar | anular
   const [confirmacion, confirmar] = useConfirmar();
   const cat = useCatalogo();
 
@@ -52,7 +55,41 @@ export default function PedidoPage() {
   const cancelar = useMutation({ mutationFn: () => cancelarVenta(id), onSuccess: () => { qc.invalidateQueries({ queryKey: ['ventas'] }); avisar.ok('Pedido cancelado'); navigate('/vender'); }, onError: fallo });
   const reimprimir = useMutation({ mutationFn: () => reimprimirVenta(id), onSuccess: reimprimirConFallback, onError: fallo });
 
+  // Al abrir un pedido que ya se pagó en partes pero quedó abierto, se cierra
+  // solo (libera la mesa e imprime el ticket final). Una vez por pedido; si
+  // otro dispositivo lo cerró primero, el 409 solo refresca.
+  const cerrarPagada = useMutation({
+    mutationFn: () => cobrarVenta(id, { metodo_pago: 'efectivo' }),
+    onSuccess: (r) => {
+      if (!r?.datos_impresion) { avisar.ok('La cuenta ya estaba pagada: pedido cerrado'); qc.invalidateQueries({ queryKey: ['mesas'] }); }
+      trasCambio(r);
+    },
+    onError: refrescar,
+  });
+  const yaIntentado = useRef(null);
+  const puedeCobrar = tiene('ventas', 'cobrar');
+  useEffect(() => {
+    const ped = q.data;
+    if (!ped || !puedeCobrar || yaIntentado.current === ped.id || !cuentaYaPagada(ped)) return;
+    yaIntentado.current = ped.id;
+    cerrarPagada.mutate();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [q.data, puedeCobrar]);
+
   const ag = useAgregar({ precioDe: cat.precioDe, onAgregar: (l) => { agregar.mutate(l); setHoja(null); } });
+
+  // Pantalla del cliente: al cobrar este pedido muestra sus platos.
+  useEffect(() => {
+    const ped = q.data;
+    if (hoja !== 'cobrar' || !ped) return undefined;
+    const lineas = (ped.detalles ?? []).filter((d) => vigente(d) > 0).map((d) => ({
+      id: d.id, nombre: nombreDetalle(d), cantidad: vigente(d), detalle: textoOpcionesDetalle(d) || null,
+      imagen: (d.combo_id ? cat.combos.find((c) => c.id === d.combo_id) : cat.productos.find((x) => x.id === d.producto_id))?.imagen ?? d.producto?.imagen ?? null,
+      peso: d.peso ? Number(d.peso) : null, subtotal: Number(d.precio) * vigente(d),
+    }));
+    publicarPantalla({ tipo: 'comanda', lineas, total: Number(ped.total) });
+    return () => publicarPantalla({ tipo: 'comanda', lineas: [], total: 0 });
+  }, [hoja, q.data, cat.productos.length]); // eslint-disable-line react-hooks/exhaustive-deps
 
   if (q.isLoading) return <Cargando />;
   const p = q.data;
@@ -152,6 +189,7 @@ export default function PedidoPage() {
           subtitulo={etiquetaDestino(p)}
           clienteInicial={p.cliente}
           pedido={p}
+          dividirInicial={dividirAlAbrir}
           items={detalles.map((d) => ({ producto_id: d.producto_id, combo_id: d.combo_id, cantidad: vigente(d), precio: Number(d.precio) }))}
           onConfirmar={(datos) => cobrarVenta(id, datos)}
           onTerminado={() => { qc.invalidateQueries({ queryKey: ['ventas'] }); qc.invalidateQueries({ queryKey: ['mesas'] }); navigate('/vender'); }}

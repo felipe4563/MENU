@@ -2,8 +2,7 @@ import {
   Sun, ShoppingBag, ChefHat, Wallet, BookOpen, Truck, UtensilsCrossed, Users, Boxes,
   BarChart3, UsersRound, Settings2, Clock, Package, Gift, Layers, Tag, Ticket, Disc3,
   Wheat, ShoppingCart, Shield, UserCheck, Building2, Landmark, Grid3x3, Store, Star,
-  Cake, Plug, Workflow, Receipt, History, Printer, QrCode, Calculator,
-} from 'lucide-react';
+  Cake, Plug, Workflow, Receipt, History, Printer, QrCode, Calculator, TrendingUp, Banknote, ScrollText } from 'lucide-react';
 
 // Cada destino: `ver` dice qué permiso lo muestra. Los `hijos` se muestran
 // como pestañas dentro de la sección y también en el buscador (Ctrl+K).
@@ -32,10 +31,11 @@ export const SECCIONES = [
     ],
   },
   {
-    to: '/inventario', etiqueta: 'Inventario', Icono: Boxes, ver: ['inventario.ajustar', 'insumos.ver', 'compras.ver'],
+    to: '/inventario', etiqueta: 'Inventario', Icono: Boxes, ver: ['inventario.ajustar', 'inventario.ver', 'insumos.ver', 'compras.ver'],
     hijos: [
       { to: '/inventario/stock', etiqueta: 'Stock', Icono: Boxes, ver: ['inventario.ajustar', 'inventario.ver'] },
       { to: '/inventario/insumos', etiqueta: 'Insumos', Icono: Wheat, ver: ['insumos.ver'] },
+      { to: '/inventario/kardex', etiqueta: 'Kardex', Icono: ScrollText, ver: ['insumos.ver', 'inventario.ver'] },
       { to: '/inventario/compras', etiqueta: 'Compras', Icono: ShoppingCart, ver: ['compras.ver'] },
       { to: '/inventario/proveedores', etiqueta: 'Proveedores', Icono: Truck, ver: ['proveedores.ver'] },
     ],
@@ -45,16 +45,18 @@ export const SECCIONES = [
     hijos: [
       { to: '/finanzas/reportes', etiqueta: 'Reportes', Icono: BarChart3, ver: ['reportes.ver'] },
       { to: '/finanzas/platos', etiqueta: 'Ganancia por plato', Icono: Calculator, ver: ['reportes.ver'] },
+      { to: '/finanzas/flujo', etiqueta: 'Flujo de caja', Icono: TrendingUp, ver: ['libro_caja.ver'] },
       { to: '/finanzas/libro', etiqueta: 'Libro de caja', Icono: BookOpen, ver: ['libro_caja.ver'] },
       { to: '/finanzas/turnos', etiqueta: 'Turnos de caja', Icono: History, ver: ['caja.ver'] },
     ],
   },
   {
-    to: '/equipo', etiqueta: 'Equipo', Icono: UsersRound, ver: ['usuarios.ver', 'roles.ver', 'personal.administrar'],
+    to: '/equipo', etiqueta: 'Equipo', Icono: UsersRound, ver: ['usuarios.ver', 'roles.ver', 'personal.administrar', 'personal.pagar'],
     hijos: [
       { to: '/equipo/usuarios', etiqueta: 'Usuarios', Icono: UsersRound, ver: ['usuarios.ver'] },
       { to: '/equipo/roles', etiqueta: 'Roles y permisos', Icono: Shield, ver: ['roles.ver'] },
       { to: '/equipo/asistencia', etiqueta: 'Asistencia', Icono: UserCheck, ver: ['personal.administrar'] },
+      { to: '/equipo/sueldos', etiqueta: 'Sueldos', Icono: Banknote, ver: ['personal.pagar'] },
     ],
   },
   {

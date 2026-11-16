@@ -1,4 +1,5 @@
 import { imprimirHtml } from './imprimirHtml';
+import { METODO, METODO_TICKET } from '../lib/metodosPago';
 // Ancho real de la columna de producto en el ticket de venta: col-prod es
 // 46% de los 248px del body. Si el nombre no entra a fsMax en una sola
 // línea, se achica hasta fsMin — el CSS de .prod-nombre (nowrap/ellipsis)
@@ -26,13 +27,12 @@ function _opcionesPorProducto(comboOpciones) {
 
 // Texto de usuario (persona, platos) dentro del HTML del ticket.
 const _esc = (v) => String(v ?? '').replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
-const METODO_PARTE = { efectivo: 'Efectivo', qr: 'QR' };
 
 // Bloque PAGOS del ticket final de una cuenta dividida: una línea por parte.
 function _bloquePartes(partes, simbolo) {
   if (!partes?.length) return '';
   const filas = partes.map((p) => {
-    const etiqueta = [`Parte ${p.numero}`, p.persona && _esc(p.persona), METODO_PARTE[p.metodo_pago] ?? p.metodo_pago].filter(Boolean).join(' · ');
+    const etiqueta = [p.partes_de ? `Parte ${p.parte_numero} de ${p.partes_de}` : `Parte ${p.numero}`, p.persona && _esc(p.persona), METODO[p.metodo_pago] ?? p.metodo_pago].filter(Boolean).join(' · ');
     return `<div class="total-row"><span>${etiqueta}</span><span>${simbolo} ${Number(p.monto).toFixed(2)}</span></div>`;
   }).join('');
   return `<hr class="sdash"/><div class="sec-title">Pagos</div>${filas}`;
@@ -56,7 +56,7 @@ function _htmlPagoParcial(pedido, pp, config, numeroOrdenDiario) {
   const fila = (a, b, clase = '') => `<div class="fila ${clase}"><span>${a}</span><span>${b}</span></div>`;
   const items = pp.items?.length
     ? pp.items.map((it) => fila(`${it.cantidad} ${_esc(it.nombre)}`, Number(it.subtotal || 0).toFixed(2))).join('')
-    : `<div>${pp.partes_iguales_de ? `Parte de la cuenta (1 de ${pp.partes_iguales_de})` : 'Parte de la cuenta'}</div>`;
+    : `<div>${pp.partes_iguales_de ? `Dividida en ${pp.partes_iguales_de} partes iguales` : 'Parte de la cuenta'}</div>`;
 
   return `<!DOCTYPE html>
 <html lang="es">
@@ -85,13 +85,13 @@ function _htmlPagoParcial(pedido, pp, config, numeroOrdenDiario) {
   <hr class="sep"/>
   ${fila(`Pedido # ${nOrden}`, `${fecha} ${hora}`)}
   <div class="fuerte">${donde}</div>
-  <div>Parte ${pp.numero}</div>
+  <div>${pp.partes_iguales_de ? `Parte ${pp.parte_numero || 1} de ${pp.partes_iguales_de}` : `Parte ${pp.numero}`}</div>
   ${pp.persona ? `<div class="fuerte">Persona: ${_esc(pp.persona)}</div>` : ''}
   <hr class="sdash"/>
   ${items}
   <hr class="sdash"/>
   ${fila('Monto', m(pp.monto), 'fuerte')}
-  ${fila('Pago', METODO_PARTE[pp.metodo_pago] ?? pp.metodo_pago)}
+  ${fila('Pago', METODO[pp.metodo_pago] ?? pp.metodo_pago)}
   ${pp.metodo_pago === 'efectivo' ? fila('Recibido', m(pp.monto_recibido)) + fila('Cambio', m(pp.cambio)) : ''}
   <hr class="sdash"/>
   ${fila('Pagado', m(pp.pagado))}
@@ -123,8 +123,7 @@ export function imprimirTicketVenta(pedido, pago, config = {}, numeroOrdenDiario
   const nOrden   = String(
     numeroOrdenDiario != null ? numeroOrdenDiario : (esLlevar ? (pedido.numero_llevar ?? pedido.id) : pedido.id)
   ).padStart(3, '0');
-  const METODO_PAGO_LABEL = { qr: 'QR / Transferencia', app_externa: 'Pagado en la app', diferido: 'Pendiente de cobro', mixto: 'Mixto' };
-  const metodoPagoLabel = METODO_PAGO_LABEL[pago.metodo_pago] ?? 'Efectivo';
+  const metodoPagoLabel = METODO_TICKET[pago.metodo_pago] ?? 'Efectivo';
 
   const detalles = pedido.detalles ?? [];
   const subtotalLineas = detalles.reduce((s, d) => s + parseFloat(d.precio) * d.cantidad, 0);

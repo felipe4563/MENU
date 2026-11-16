@@ -35,15 +35,25 @@ async function obtenerInsumo(id) {
   return insumo;
 }
 
-async function crearInsumo({ nombre, unidad_medida }) {
-  if (!nombre) throw Object.assign(new Error('nombre es requerido'), { status: 400 });
-  if (!unidad_medida) throw Object.assign(new Error('unidad_medida es requerida'), { status: 400 });
-  return Insumo.create({ nombre, unidad_medida });
+// Vacío o null = sin mínimo. Si viene, número >= 0.
+function _stockMinimo(valor) {
+  if (valor === undefined) return undefined;
+  if (valor === null || valor === '') return null;
+  const n = Number(valor);
+  if (!Number.isFinite(n) || n < 0) throw Object.assign(new Error('El stock mínimo debe ser un número mayor o igual a 0'), { status: 400 });
+  return Math.round(n * 1000) / 1000;
 }
 
-async function actualizarInsumo(id, { nombre, unidad_medida }) {
+async function crearInsumo({ nombre, unidad_medida, stock_minimo }) {
+  if (!nombre) throw Object.assign(new Error('nombre es requerido'), { status: 400 });
+  if (!unidad_medida) throw Object.assign(new Error('unidad_medida es requerida'), { status: 400 });
+  return Insumo.create({ nombre, unidad_medida, stock_minimo: _stockMinimo(stock_minimo) ?? null });
+}
+
+async function actualizarInsumo(id, { nombre, unidad_medida, stock_minimo }) {
   const insumo = await obtenerInsumo(id);
-  await insumo.update({ nombre, unidad_medida });
+  const minimo = _stockMinimo(stock_minimo);
+  await insumo.update({ nombre, unidad_medida, ...(minimo !== undefined ? { stock_minimo: minimo } : {}) });
   return insumo;
 }
 

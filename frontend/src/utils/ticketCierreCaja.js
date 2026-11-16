@@ -246,6 +246,13 @@ export function imprimirTicketCierreCaja(reporte, config = {}) {
       <span>TOTAL VENTAS</span>
       <span>${simbolo} ${totalVentas.toFixed(2)}</span>
     </div>
+    ${parseFloat(reporte.propinas?.total || 0) > 0 ? `
+    <div class="resumen-row">
+      <span>Propinas (${reporte.propinas.cantidad})</span>
+      <span>${simbolo} ${parseFloat(reporte.propinas.total).toFixed(2)}</span>
+    </div>
+    ${parseFloat(reporte.propinas.efectivo) > 0 ? `<div class="resumen-row"><span>&nbsp;&nbsp;En efectivo</span><span>${simbolo} ${parseFloat(reporte.propinas.efectivo).toFixed(2)}</span></div>` : ''}
+    ${parseFloat(reporte.propinas.qr) > 0 ? `<div class="resumen-row"><span>&nbsp;&nbsp;Por QR</span><span>${simbolo} ${parseFloat(reporte.propinas.qr).toFixed(2)}</span></div>` : ''}` : ''}
   </div>
 
   <hr class="sdash"/>

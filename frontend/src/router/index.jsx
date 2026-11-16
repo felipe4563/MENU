@@ -27,6 +27,9 @@ export const router = createBrowserRouter([
   { path: '/login', element: <LoginPage /> },
   // Menú público de autoservicio (los QR impresos de las mesas apuntan acá).
   { path: '/m/:codigo', element: l(() => import('../pages/autoservicio/AutoservicioPage')) },
+  // Pantalla que mira el cliente en la caja (segundo monitor). Recibe todo
+  // de la pestaña de Vender por BroadcastChannel; no necesita sesión.
+  { path: '/pantalla-cliente', element: l(() => import('../pages/pantalla/PantallaClientePage')) },
   {
     element: <Protegida><Shell /></Protegida>,
     children: [
@@ -34,6 +37,7 @@ export const router = createBrowserRouter([
       { path: '/vender', element: l(() => import('../pages/vender/VenderPage')) },
       { path: '/vender/pedido/:id', element: l(() => import('../pages/vender/PedidoPage')) },
       { path: '/vender/mis-ventas', element: l(() => import('../pages/vender/MisVentasPage')) },
+      { path: '/vender/reservas', element: l(() => import('../pages/vender/ReservasPage')) },
       { path: '/cocina', element: l(() => import('../pages/cocina/CocinaPage')) },
       { path: '/cocina/bluetooth', element: l(() => import('../pages/cocina/CocinaBluetoothPage')) },
       { path: '/caja', element: l(() => import('../pages/caja/CajaPage')) },
@@ -62,6 +66,7 @@ export const router = createBrowserRouter([
         children: [
           { path: 'stock', element: l(() => import('../pages/inventario/StockPage')) },
           { path: 'insumos', element: l(() => import('../pages/inventario/InsumosPage')) },
+          { path: 'kardex', element: l(() => import('../pages/inventario/KardexPage')) },
           { path: 'compras', element: l(() => import('../pages/inventario/ComprasPage')) },
           { path: 'proveedores', element: l(() => import('../pages/inventario/ProveedoresPage')) },
         ],
@@ -71,6 +76,7 @@ export const router = createBrowserRouter([
         children: [
           { path: 'reportes', element: l(() => import('../pages/finanzas/ReportesPage')) },
           { path: 'platos', element: l(() => import('../pages/finanzas/GananciaPlatosPage')) },
+          { path: 'flujo', element: l(() => import('../pages/finanzas/FlujoCajaPage')) },
           { path: 'libro', element: l(() => import('../pages/finanzas/LibroCajaPage')) },
           { path: 'turnos', element: l(() => import('../pages/finanzas/TurnosPage')) },
         ],
@@ -81,6 +87,7 @@ export const router = createBrowserRouter([
           { path: 'usuarios', element: l(() => import('../pages/equipo/UsuariosPage')) },
           { path: 'roles', element: l(() => import('../pages/equipo/RolesPage')) },
           { path: 'asistencia', element: l(() => import('../pages/equipo/AsistenciaPage')) },
+          { path: 'sueldos', element: l(() => import('../pages/equipo/SueldosPage')) },
         ],
       },
       {

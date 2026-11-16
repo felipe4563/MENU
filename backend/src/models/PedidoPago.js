@@ -13,6 +13,9 @@ const PedidoPago = sequelize.define('PedidoPago', {
   cambio: { type: DataTypes.DECIMAL(10, 2), allowNull: false, defaultValue: 0 },
   persona: { type: DataTypes.STRING(80) },
   modo: { type: DataTypes.ENUM('platos', 'iguales'), allowNull: false },
+  // Partes iguales: "Parte parte_numero de partes_de" (null por platos).
+  parte_numero: { type: DataTypes.TINYINT.UNSIGNED },
+  partes_de: { type: DataTypes.TINYINT.UNSIGNED },
   estado: { type: DataTypes.ENUM('pendiente', 'completado', 'anulado'), allowNull: false, defaultValue: 'completado' },
 }, {
   tableName: 'pedido_pagos',

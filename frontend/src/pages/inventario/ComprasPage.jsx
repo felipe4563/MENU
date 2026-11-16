@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { Plus, ShoppingCart, PackageCheck, Wallet, Landmark, Check } from 'lucide-react';
-import { getCompras, crearCompra, recibirCompra } from '../../api/compras';
+import { Plus, ShoppingCart, PackageCheck, Wallet, Landmark, Check, ListChecks } from 'lucide-react';
+import { getCompras, crearCompra, recibirCompra, getCompraSugerida } from '../../api/compras';
 import { getEstadoCajas } from '../../api/caja';
 import { useAuthStore } from '../../store/authStore';
 import { usePermisos } from '../../hooks/usePermisos';
@@ -15,22 +15,32 @@ import { cx, dinero, errorDe, fechaCorta } from '../../lib/util';
 
 const invalidarStock = (qc) => { for (const k of [['compras'], ['insumos'], ['productos']]) qc.invalidateQueries({ queryKey: k }); };
 
-function HojaCompra({ onCerrar }) {
+// `inicial` (opcional): { proveedor_id, items: [{ insumo_id, cantidad, costo_unitario }] }
+// para abrirla ya armada desde la compra sugerida.
+function HojaCompra({ onCerrar, inicial }) {
   const qc = useQueryClient();
   const moneda = useMoneda();
   const catalogo = useCatalogoCompras();
-  const [proveedor, setProveedor] = useState('');
-  const [notas, setNotas] = useState('');
-  const [items, setItems] = useState([lineaVacia()]);
+  const [proveedor, setProveedor] = useState(inicial?.proveedor_id ? String(inicial.proveedor_id) : '');
+  const [notas, setNotas] = useState(inicial ? 'Compra sugerida por stock mínimo' : '');
+  const [items, setItems] = useState(() => (inicial?.items?.length
+    ? inicial.items.map((i) => ({ clave: `i:${i.insumo_id}`, cantidad: String(i.cantidad), costo_unitario: i.costo_unitario != null ? String(i.costo_unitario) : '' }))
+    : [lineaVacia()]));
   const total = totalLineas(items);
+  // Líneas con algo elegido pero sin cantidad o precio: no se descartan en silencio.
+  const incompletas = items.filter((x) => x.clave && !lineasValidas([x]).length).length;
   const guardar = useMutation({
     mutationFn: () => crearCompra({ proveedor_id: Number(proveedor), notas: notas.trim() || undefined, items: itemsParaApi(items) }),
-    onSuccess: () => { qc.invalidateQueries({ queryKey: ['compras'] }); avisar.ok('Compra registrada. Márcala como recibida cuando llegue.'); onCerrar(); },
+    onSuccess: () => { qc.invalidateQueries({ queryKey: ['compras'] }); qc.invalidateQueries({ queryKey: ['compra-sugerida'] }); avisar.ok('Compra registrada. Márcala como recibida cuando llegue.'); onCerrar(); },
     onError: (e) => avisar.error(errorDe(e)),
   });
   return (
     <Hoja onCerrar={onCerrar} titulo="Nueva compra" ancho="max-w-2xl"
-      pie={<><span className="mr-auto num text-xl font-extrabold self-center">{dinero(total, moneda)}</span><button data-principal className="btn-aji" disabled={!proveedor || !lineasValidas(items).length || guardar.isPending} onClick={() => guardar.mutate()}>Registrar compra</button></>}>
+      pie={<>
+        <span className="mr-auto num text-xl font-extrabold self-center">{dinero(total, moneda)}</span>
+        {incompletas > 0 && <span className="text-sm text-locoto self-center">{incompletas === 1 ? 'A una línea le falta cantidad o precio' : `A ${incompletas} líneas les falta cantidad o precio`}</span>}
+        <button data-principal className="btn-aji" disabled={!proveedor || !lineasValidas(items).length || incompletas > 0 || guardar.isPending} onClick={() => guardar.mutate()}>Registrar compra</button>
+      </>}>
       <div className="space-y-4">
         <Campo etiqueta="Proveedor">
           <select className="campo" value={proveedor} onChange={(e) => setProveedor(e.target.value)}>
@@ -41,6 +51,53 @@ function HojaCompra({ onCerrar }) {
         <Campo etiqueta="Notas"><input className="campo" value={notas} onChange={(e) => setNotas(e.target.value)} placeholder="Nº de factura, condiciones…" /></Campo>
         <p className="text-sm text-tenue">Si la pagan en el momento con plata de la caja, regístrala desde Caja › Registrar gasto › Compra de insumos.</p>
       </div>
+    </Hoja>
+  );
+}
+
+const UNIDAD_CORTA = { kilogramo: 'kg', gramo: 'g', litro: 'L', mililitro: 'ml', arroba: '@', libra: 'lb', unidad: 'u' };
+const cant = (n, unidad) => `${Number(n).toLocaleString('es-BO', { maximumFractionDigits: 3 })} ${UNIDAD_CORTA[unidad] ?? ''}`.trim();
+
+// Lo que llegó a su stock mínimo, agrupado por el proveedor de la última
+// compra. Cada grupo se convierte en una compra (se puede corregir antes).
+function HojaSugerida({ onCerrar, onArmar }) {
+  const moneda = useMoneda();
+  const q = useQuery({ queryKey: ['compra-sugerida'], queryFn: getCompraSugerida });
+  const grupos = q.data?.grupos ?? [];
+  return (
+    <Hoja onCerrar={onCerrar} titulo="Compra sugerida" subtitulo="Insumos que llegaron a su stock mínimo" ancho="max-w-2xl">
+      {q.isLoading ? <Cargando /> : grupos.length === 0 ? (
+        <Vacio Icono={PackageCheck} titulo="No hace falta comprar nada" texto="Ningún insumo con stock mínimo llegó a ese número. El mínimo se pone al editar cada insumo." />
+      ) : (
+        <div className="space-y-4">
+          <p className="text-sm text-tenue">Cantidad: lo que falta para llegar al doble del mínimo, o a lo que se gasta en una semana si es más. Precio: el de la última compra.</p>
+          {grupos.map((g) => (
+            <section key={g.proveedor?.id ?? 'sin'} className="rounded-2xl border border-linea">
+              <header className="flex items-center gap-3 px-4 pt-3">
+                <h3 className="font-display font-bold text-lg flex-1 min-w-0 truncate">{g.proveedor?.nombre ?? 'Sin proveedor anterior'}</h3>
+                {g.total > 0 && <span className="num font-bold">{dinero(g.total, moneda)}</span>}
+              </header>
+              <ul className="px-4 py-2 divide-y divide-linea">
+                {g.items.map((i) => (
+                  <li key={i.insumo_id} className="py-2 flex items-baseline gap-3 text-sm">
+                    <span className="flex-1 min-w-0">
+                      <span className="font-semibold block truncate">{i.nombre}</span>
+                      <span className="text-xs text-tenue">Quedan {cant(i.stock, i.unidad)} · mínimo {cant(i.minimo, i.unidad)}{i.consumo_semana > 0 ? ` · se gastan ${cant(i.consumo_semana, i.unidad)} por semana` : ''}</span>
+                    </span>
+                    <span className="num font-bold shrink-0">{cant(i.cantidad, i.unidad)}</span>
+                    <span className="num text-tenue w-24 text-right shrink-0">{i.subtotal != null ? dinero(i.subtotal, moneda) : 'sin precio'}</span>
+                  </li>
+                ))}
+              </ul>
+              <div className="px-4 pb-3 flex justify-end">
+                <button className="btn-aji h-9" onClick={() => onArmar({ proveedor_id: g.proveedor?.id ?? null, items: g.items })}>
+                  <ShoppingCart className="w-4 h-4" /> Armar esta compra
+                </button>
+              </div>
+            </section>
+          ))}
+        </div>
+      )}
     </Hoja>
   );
 }
@@ -97,7 +154,9 @@ export default function ComprasPage() {
   const usuario = useAuthStore((s) => s.usuario);
   const sucursalId = usuario?.sucursal_activa?.id;
   const [vista, setVista] = useState('pendiente');
-  const [nueva, setNueva] = useState(false);
+  const [nueva, setNueva] = useState(false); // false | true | { inicial }
+  // Desde el aviso del inicio se llega con ?sugerida=1: abre la compra sugerida.
+  const [sugerida, setSugerida] = useState(() => new URLSearchParams(window.location.search).has('sugerida'));
   const [recibiendo, setRecibiendo] = useState(null);
   const q = useQuery({ queryKey: ['compras'], queryFn: getCompras, enabled: tiene('compras', 'ver') });
   const cajasQ = useQuery({ queryKey: ['caja-estado', sucursalId], queryFn: () => getEstadoCajas(sucursalId), enabled: !!sucursalId && tiene('caja', 'ver') && tiene('compras', 'recibir') });
@@ -110,6 +169,7 @@ export default function ComprasPage() {
       <Encabezado titulo="Compras" texto="Pedidos a proveedores. Al recibirlos, el stock sube solo."
         acciones={<>
           <Segmentado valor={vista} onCambio={setVista} opciones={[{ valor: 'pendiente', etiqueta: 'Por recibir', cuenta: todas.filter((c) => c.estado === 'pendiente').length }, { valor: 'recibido', etiqueta: 'Recibidas' }]} />
+          {tiene('compras', 'crear') && <button className="btn-borde" onClick={() => setSugerida(true)}><ListChecks className="w-4 h-4" /> Compra sugerida</button>}
           {tiene('compras', 'crear') && <button className="btn-aji" onClick={() => setNueva(true)}><Plus className="w-4 h-4" /> Nueva compra</button>}
         </>} />
       {q.isLoading ? <Cargando /> : lista.length === 0 ? <Vacio Icono={ShoppingCart} titulo={vista === 'pendiente' ? 'Nada por recibir' : 'Sin compras recibidas'} /> : (
@@ -136,7 +196,8 @@ export default function ComprasPage() {
           ))}
         </div>
       )}
-      {nueva && <HojaCompra onCerrar={() => setNueva(false)} />}
+      {sugerida && tiene('compras', 'crear') && <HojaSugerida onCerrar={() => setSugerida(false)} onArmar={(inicial) => { setSugerida(false); setNueva({ inicial }); }} />}
+      {nueva && <HojaCompra inicial={nueva.inicial} onCerrar={() => setNueva(false)} />}
       {recibiendo && <HojaRecibir compra={recibiendo} miCaja={miCaja} onCerrar={() => setRecibiendo(null)} />}
     </Pagina>
   );

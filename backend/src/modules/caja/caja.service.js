@@ -1,4 +1,11 @@
-const { SesionCaja, DetalleArqueo, Gasto, LibroCaja, Usuario, Pedido, Mesa, Caja, Sucursal, sequelize } = require('../../models');
+const { Op } = require('sequelize');
+const { SesionCaja, DetalleArqueo, Gasto, LibroCaja, Usuario, Pedido, Mesa, Caja, Sucursal, MarcacionPersonal, sequelize } = require('../../models');
+const { categoriaPara } = require('../flujo_caja/categorias');
+
+// Cierre ciego: mientras la caja está abierta no se entrega nada con lo que
+// se pueda sacar el efectivo esperado (ni el esperado ni las ventas en
+// efectivo). Se ve recién en el resumen, después de cerrar.
+const _esCiegoAbierta = (s) => s.estado === 'abierta' && s.sucursal?.modo_cierre_caja === 'ciego';
 
 async function listarConEstado(sucursal_id) {
   const cajas = await Caja.findAll({
@@ -61,6 +68,11 @@ async function obtener(id, alcance) {
   datos.ventas_qr       = ventasQR       || 0;
   datos.efectivo_esperado = parseFloat(s.monto_apertura) + datos.ventas_efectivo
     - parseFloat(s.total_gastos) - parseFloat(s.total_devoluciones || 0);
+  if (_esCiegoAbierta(s)) {
+    datos.cierre_ciego = true;
+    datos.ventas_efectivo = null;
+    datos.efectivo_esperado = null;
+  }
   return datos;
 }
 
@@ -74,7 +86,8 @@ async function abrir(usuario_id, caja_id, monto_apertura = 0) {
   return SesionCaja.create({ usuario_id, caja_id, sucursal_id: caja.sucursal_id, monto_apertura });
 }
 
-async function registrarGasto(sesion_id, usuario_id, { descripcion, monto }, alcance) {
+async function registrarGasto(sesion_id, usuario_id, { descripcion, monto, categoria }, alcance) {
+  const cat = await categoriaPara(categoria, 'egreso');
   const sesion = await SesionCaja.findByPk(sesion_id);
   if (!sesion) throw Object.assign(new Error('Sesión no encontrada'), { status: 404 });
   _verificarAlcance(sesion, alcance);
@@ -88,6 +101,7 @@ async function registrarGasto(sesion_id, usuario_id, { descripcion, monto }, alc
     usuario_id,
     tipo: 'egreso',
     concepto: descripcion,
+    categoria: cat,
     monto,
     metodo_pago: 'efectivo',
     referencia_id: gasto.id,
@@ -186,8 +200,39 @@ async function cerrar(sesion_id, usuario_id, { denominaciones = [], monto_cierre
   return obtener(sesion_id, alcance);
 }
 
+// Quién trabajó durante el turno de caja, para repartir las propinas: las
+// marcaciones de la sucursal que se cruzan con el horario del turno, y
+// cuántos minutos de cada persona caen dentro. Si alguien no marcó salida,
+// se cuenta hasta el cierre del turno (o hasta ahora si sigue abierto).
+async function _personalDelTurno(sesion) {
+  const inicio = new Date(sesion.abierto_en);
+  const fin = sesion.cerrado_en ? new Date(sesion.cerrado_en) : new Date();
+  const marcaciones = await MarcacionPersonal.findAll({
+    where: {
+      sucursal_id: sesion.sucursal_id,
+      hora_entrada: { [Op.lt]: fin },
+      [Op.or]: [{ hora_salida: null }, { hora_salida: { [Op.gt]: inicio } }],
+    },
+    include: [{ model: Usuario, as: 'usuario', attributes: ['id', 'nombre'] }],
+  });
+  const porPersona = new Map();
+  for (const m of marcaciones) {
+    const desde = Math.max(inicio.getTime(), new Date(m.hora_entrada).getTime());
+    const hasta = Math.min(fin.getTime(), m.hora_salida ? new Date(m.hora_salida).getTime() : fin.getTime());
+    const minutos = Math.round((hasta - desde) / 60000);
+    if (minutos <= 0) continue;
+    const p = porPersona.get(m.usuario_id) || { usuario_id: m.usuario_id, nombre: m.usuario?.nombre ?? 'Sin nombre', minutos: 0 };
+    p.minutos += minutos;
+    porPersona.set(m.usuario_id, p);
+  }
+  return Array.from(porPersona.values()).sort((a, b) => b.minutos - a.minutos || a.nombre.localeCompare(b.nombre));
+}
+
 async function reporte(sesion_id, alcance) {
   const sesion = await obtener(sesion_id, alcance);
+  if (sesion.cierre_ciego) {
+    throw Object.assign(new Error('Con cierre ciego, el resumen se ve después de cerrar la caja'), { status: 409, codigo: 'CIERRE_CIEGO' });
+  }
 
   const ventasPorMetodoArr = await sequelize.query(
     `SELECT metodo_pago, COUNT(*) as cantidad, SUM(monto) as total
@@ -246,8 +291,23 @@ async function reporte(sesion_id, alcance) {
     parseFloat(sesion.total_gastos) -
     parseFloat(sesion.total_devoluciones || 0);
 
+  // Propinas del turno: ya están sumadas en lo cobrado por cada método (y en
+  // el efectivo esperado); acá se muestran aparte para repartirlas.
+  const propinas = { total: 0, efectivo: 0, qr: 0, otros: 0, cantidad: 0 };
+  pedidos.forEach((p) => {
+    const monto = parseFloat(p.propina || 0);
+    if (monto <= 0) return;
+    propinas.total += monto;
+    propinas.cantidad += 1;
+    if (p.metodo_pago === 'efectivo' || p.metodo_pago === 'qr') propinas[p.metodo_pago] += monto;
+    else propinas.otros += monto;
+  });
+  for (const k of ['total', 'efectivo', 'qr', 'otros']) propinas[k] = Math.round(propinas[k] * 100) / 100;
+
   return {
     sesion,
+    propinas,
+    personal_turno: await _personalDelTurno(sesion),
     ventas_por_metodo: ventasPorMetodoArr,
     pedidos,
     efectivo_esperado: efectivoEsperado,

@@ -11,9 +11,10 @@ import { Cargando, Pagina, SinPermiso, Vacio } from '../../components/ui/piezas'
 import { avisar } from '../../components/ui/Aviso';
 import { cx, dinero, errorDe, fechaHora, hora } from '../../lib/util';
 import { etiquetaDestino } from '../vender/datosCatalogo';
+import { METODO_LARGO as METODO } from '../../lib/metodosPago';
+import RepartoPropinas from './RepartoPropinas';
 
 const n = (v) => parseFloat(v || 0);
-const METODO = { efectivo: 'Efectivo', qr: 'QR', app_externa: 'App externa', mixto: 'Mixto' };
 
 function Linea({ t, v, fuerte, tono }) {
   return (
@@ -36,9 +37,10 @@ export default function ReporteCierrePage() {
 
   if (!tiene('caja', 'ver')) return <SinPermiso />;
   if (q.isLoading) return <Cargando />;
+  if (q.error?.response?.data?.codigo === 'CIERRE_CIEGO') return <Vacio titulo="El resumen se ve al cerrar la caja" texto="Esta caja usa cierre ciego: lo esperado se muestra recién después del conteo." />;
   if (!q.data) return <Vacio titulo="No encontramos ese turno" />;
 
-  const { sesion: s, ventas_por_metodo: metodos = [], pedidos = [], productos_vendidos: productos = [], efectivo_esperado: esperado, devoluciones = [] } = q.data;
+  const { sesion: s, ventas_por_metodo: metodos = [], pedidos = [], productos_vendidos: productos = [], efectivo_esperado: esperado, devoluciones = [], propinas, personal_turno: personal = [] } = q.data;
   const totalVentas = metodos.reduce((a, m) => a + n(m.total), 0);
   const dif = n(s.diferencia);
   const tol = n(s.sucursal?.tolerancia_cierre_caja);
@@ -91,6 +93,18 @@ export default function ReporteCierrePage() {
             {metodos.map((m) => <Linea key={m.metodo_pago} t={`${METODO[m.metodo_pago] ?? m.metodo_pago} (${m.cantidad})`} v={dinero(m.total, moneda)} />)}
             <Linea t="Total vendido" v={dinero(totalVentas, moneda)} fuerte />
           </ul>
+          {n(propinas?.total) > 0 && (
+            <>
+              <div className="perforado my-4" />
+              <ul className="space-y-2 text-[15px]">
+                <Linea t={`Propinas (${propinas.cantidad})`} v={dinero(propinas.total, moneda)} fuerte />
+                {n(propinas.efectivo) > 0 && <Linea t="En efectivo" v={dinero(propinas.efectivo, moneda)} />}
+                {n(propinas.qr) > 0 && <Linea t="Por QR" v={dinero(propinas.qr, moneda)} />}
+                {n(propinas.otros) > 0 && <Linea t="Otros medios" v={dinero(propinas.otros, moneda)} />}
+              </ul>
+              <p className="text-xs text-tenue mt-2">Ya están sumadas en lo vendido; las de efectivo están en el cajón.</p>
+            </>
+          )}
           <div className="perforado my-4" />
           <ul className="space-y-2 text-[15px]">
             <Linea t="Apertura" v={dinero(s.monto_apertura, moneda)} />
@@ -123,6 +137,7 @@ export default function ReporteCierrePage() {
         </div>
 
         <div className="space-y-5 min-w-0">
+          {n(propinas?.total) > 0 && <RepartoPropinas propinas={propinas} personal={personal} moneda={moneda} />}
           <div className="hidden 2xl:block">{masVendido}</div>
           {devoluciones.length > 0 && (
             <section className="ficha min-w-0">

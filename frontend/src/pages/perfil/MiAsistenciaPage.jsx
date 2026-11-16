@@ -2,11 +2,14 @@ import { useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { MapPin, LogIn, LogOut, Loader2, AlertTriangle } from 'lucide-react';
 import { marcarAsistencia, getMiEstadoAsistencia, proponerHoraSalida } from '../../api/personal';
+import { getMiSueldo } from '../../api/sueldos';
+import { useMoneda } from '../../hooks/useConfig';
+import { TIPOS_MOV, diaCorto, lineaPeriodo, textoSueldo } from '../../lib/sueldos';
 import { useAuthStore } from '../../store/authStore';
 import Hoja from '../../components/ui/Hoja';
 import { Cargando, Campo, Pagina, Insignia } from '../../components/ui/piezas';
 import { avisar } from '../../components/ui/Aviso';
-import { cx, errorDe, hora } from '../../lib/util';
+import { cx, dinero, errorDe, hora } from '../../lib/util';
 
 const duracion = (a, b) => {
   const m = Math.max(0, Math.round((new Date(b ?? Date.now()) - new Date(a)) / 60000));
@@ -22,6 +25,38 @@ function ubicacion() {
       { enableHighAccuracy: true, timeout: 10_000 },
     );
   });
+}
+
+// Lo que lleva ganado y lo que ya se le pagó (si tiene sueldo configurado).
+function MiSueldo() {
+  const moneda = useMoneda();
+  const q = useQuery({ queryKey: ['sueldos', 'mio'], queryFn: getMiSueldo, staleTime: 60_000 });
+  const d = q.data;
+  if (!d?.configurado) return null;
+  const linea = lineaPeriodo(d.periodo, moneda);
+  return (
+    <section className="ficha p-5 mt-4">
+      <div className="flex items-start justify-between gap-3">
+        <div>
+          <p className="font-display font-semibold">Mi sueldo</p>
+          <p className="text-[13px] text-tenue">{textoSueldo(d.sueldo, moneda)}</p>
+        </div>
+        <div className="text-right">
+          <p className="text-[12px] text-tenue">{d.debe < 0 ? 'Adelantado' : 'Por cobrar'}</p>
+          <p className="num text-2xl font-bold">{dinero(Math.abs(d.debe), moneda)}</p>
+        </div>
+      </div>
+      {linea && <p className="text-[13px] mt-2">{linea}</p>}
+      {d.proximo && d.periodo?.modalidad !== 'diario' && <p className="text-[13px] text-tenue">Si vienes los días que faltan, el {diaCorto(d.proximo.fecha)} cobras {dinero(d.proximo.monto, moneda)}.</p>}
+      {d.ultimos.length > 0 && (
+        <ul className="mt-3 text-sm divide-y divide-linea">
+          {d.ultimos.map((m, i) => (
+            <li key={i} className="py-1.5 flex gap-3"><span className="w-14 text-tenue">{diaCorto(m.fecha)}</span><span className="flex-1">{TIPOS_MOV[m.tipo].etiqueta}</span><span className="num">{dinero(m.monto, moneda)}</span></li>
+          ))}
+        </ul>
+      )}
+    </section>
+  );
 }
 
 export default function MiAsistenciaPage() {
@@ -76,6 +111,7 @@ export default function MiAsistenciaPage() {
           {marcar.isPending ? <Loader2 className="w-5 h-5 animate-spin" /> : abierta ? <><LogOut className="w-5 h-5" /> Marcar salida</> : <><LogIn className="w-5 h-5" /> Marcar entrada</>}
         </button>
       </section>
+      <MiSueldo />
       </div>
 
       <div>

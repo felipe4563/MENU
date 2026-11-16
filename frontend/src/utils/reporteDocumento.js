@@ -7,6 +7,7 @@
 //   rango: { desde: '2026-11-01', hasta: '2026-11-07' },
 //   resumen: [{ etiqueta: 'Ventas netas', valor: 'Bs. 1.234,00' }, ...],
 //   secciones: [{ titulo, columnas: [{ titulo, derecha? }], filas: [[...textos]], pie?: [...textos] }],
+//   horizontal: true,   // opcional: hoja apaisada, para tablas con muchas columnas
 // }
 import { jsPDF } from 'jspdf';
 import { autoTable } from 'jspdf-autotable';
@@ -44,7 +45,7 @@ const TENUE = [110, 116, 120];
 const ACENTO = [139, 0, 0];
 
 export async function descargarPdf(def, cfg = {}) {
-  const doc = new jsPDF({ unit: 'mm', format: 'letter' });
+  const doc = new jsPDF({ unit: 'mm', format: 'letter', orientation: def.horizontal ? 'landscape' : 'portrait' });
   const ancho = doc.internal.pageSize.getWidth();
   const M = 16;
   let y = M;
@@ -95,7 +96,7 @@ export async function descargarPdf(def, cfg = {}) {
       body: s.filas.map((f) => f.map(limpiar)),
       foot: s.pie ? [s.pie.map(limpiar)] : undefined,
       theme: 'plain',
-      styles: { font: 'helvetica', fontSize: 9, textColor: TINTA, cellPadding: { top: 1.8, bottom: 1.8, left: 2, right: 2 } },
+      styles: { font: 'helvetica', fontSize: def.horizontal ? 8.5 : 9, textColor: TINTA, cellPadding: { top: 1.8, bottom: 1.8, left: 2, right: 2 } },
       headStyles: { textColor: TENUE, fontStyle: 'normal', fontSize: 8.5, lineWidth: { bottom: 0.3 }, lineColor: [200, 200, 195] },
       footStyles: { fontStyle: 'bold', lineWidth: { top: 0.3 }, lineColor: [200, 200, 195] },
       alternateRowStyles: { fillColor: [249, 248, 245] },
@@ -129,7 +130,7 @@ export async function imprimirReporte(def, cfg = {}) {
   };
   const html = `<!DOCTYPE html><html lang="es"><head><meta charset="utf-8"><title>${esc(def.titulo)}</title>
 <style>
-  @page { size: letter; margin: 14mm 14mm 16mm; }
+  @page { size: letter${def.horizontal ? ' landscape' : ''}; margin: 14mm 14mm 16mm; }
   * { box-sizing: border-box; }
   body { font-family: 'Segoe UI', Arial, sans-serif; color: #182126; font-size: 10.5pt; margin: 0; }
   header { display: flex; gap: 14px; align-items: center; border-bottom: 2px solid #8b0000; padding-bottom: 10px; margin-bottom: 14px; }

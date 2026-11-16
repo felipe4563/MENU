@@ -30,5 +30,9 @@ export const recibirCompra = (id, datos = {}) =>
   api.put(`/compras/${id}/recibir`, datos).then(r => r.data.datos);
 
 // Proveedores, insumos y productos con stock, para armar una compra.
+// Insumos en su stock mínimo: cuánto comprar, agrupado por proveedor.
+export const getCompraSugerida = () =>
+  api.get('/compras/sugerida').then(r => r.data.datos);
+
 export const getCatalogoCompras = () =>
   api.get('/compras/catalogo').then(r => r.data.datos);

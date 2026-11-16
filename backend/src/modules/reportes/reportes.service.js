@@ -721,10 +721,10 @@ async function ventasMapaCalor(filtros = {}, alcance) {
     .sort((a, b) => a.dia - b.dia || a.hora - b.hora);
 }
 
-// Lo que se está por acabar: no hay stock mínimo configurable, así que se
-// estima con el ritmo de consumo de las últimas DIAS_RITMO semanas cuántos
-// días alcanza lo que queda. Insumos: consumo por ventas (recetas).
-// Productos con stock propio: ventas y salidas.
+// Lo que se está por acabar: se estima con el ritmo de consumo de las
+// últimas DIAS_RITMO semanas cuántos días alcanza lo que queda. Insumos:
+// consumo por ventas (recetas); además, los que llegaron a su stock mínimo
+// (si tienen uno) se avisan siempre. Productos con stock propio: ventas y salidas.
 const DIAS_RITMO = 14;
 const DIAS_AVISO = 3;
 
@@ -762,19 +762,45 @@ async function porAcabarse(filtros = {}, alcance) {
     }),
   ]);
 
+  // Stock mínimo: se compara en cada sucursal (el mínimo es el mismo para
+  // todas), no contra la suma, para que una sucursal vacía no quede tapada
+  // por otra con mucho.
+  const bajoMinimo = new Map();
+  (await InsumoStockSucursal.findAll({
+    where: enSucursal, raw: true,
+    include: [{ model: Insumo, as: 'insumo', attributes: [], where: { activo: 1, stock_minimo: { [Op.ne]: null } }, required: true }],
+    attributes: ['insumo_id', 'sucursal_id', 'stock', [literal('`insumo`.`stock_minimo`'), 'minimo']],
+  })).forEach((f) => {
+    const minimo = parseFloat(f.minimo);
+    if (parseFloat(f.stock) <= minimo) {
+      const b = bajoMinimo.get(f.insumo_id) || { minimo, sucursales: 0 };
+      b.sucursales += 1;
+      bajoMinimo.set(f.insumo_id, b);
+    }
+  });
+
   const consumoI = new Map(consumoInsumos.map((c) => [c.insumo_id, parseFloat(c.consumido) || 0]));
   const consumoP = new Map(consumoProductos.map((c) => [c.producto_id, parseFloat(c.consumido) || 0]));
   const avisar = (f) => (f.stock <= 0 && f.por_dia > 0) || (f.dias != null && f.dias <= DIAS_AVISO);
 
   const insumos = stockInsumos
-    .map((s) => ({ tipo: 'insumo', id: s.insumo_id, nombre: s.nombre, unidad: s.unidad, ..._estimar(parseFloat(s.stock) || 0, consumoI.get(s.insumo_id) || 0) }))
-    .filter(avisar);
+    .map((s) => {
+      const b = bajoMinimo.get(s.insumo_id);
+      return {
+        tipo: 'insumo', id: s.insumo_id, nombre: s.nombre, unidad: s.unidad,
+        ..._estimar(parseFloat(s.stock) || 0, consumoI.get(s.insumo_id) || 0),
+        ...(b ? { bajo_minimo: true, minimo: b.minimo, sucursales_bajo_minimo: b.sucursales } : {}),
+      };
+    })
+    .filter((f) => f.bajo_minimo || avisar(f));
   // Un producto en 0 no se puede vender: se avisa aunque no haya ventas recientes.
   const productos = stockProductos
     .map((s) => ({ tipo: 'producto', id: s.producto_id, nombre: s.nombre, unidad: 'unidad', ..._estimar(parseInt(s.stock, 10) || 0, consumoP.get(s.producto_id) || 0) }))
     .filter((f) => f.stock <= 0 || avisar(f));
 
-  return [...insumos, ...productos].sort((a, b) => (a.dias ?? (a.stock <= 0 ? -1 : Infinity)) - (b.dias ?? (b.stock <= 0 ? -1 : Infinity)) || a.nombre.localeCompare(b.nombre));
+  // Primero lo que se acaba antes; lo que está bajo el mínimo va como si le quedara 0 días.
+  const clave = (f) => Math.min(f.dias ?? (f.stock <= 0 ? -1 : Infinity), f.bajo_minimo ? 0 : Infinity);
+  return [...insumos, ...productos].sort((a, b) => clave(a) - clave(b) || a.nombre.localeCompare(b.nombre));
 }
 
 // Tiempo de cocina: promedio de las rondas terminadas en el período (por
@@ -970,7 +996,122 @@ async function sinVentas(filtros = {}, alcance) {
   return { dias, items: items.filter((x) => !x.ultima_venta || x.ultima_venta < desde) };
 }
 
+// Esta semana contra la anterior. La semana va de lunes a domingo (hora de
+// Bolivia) y llega hasta `filtros.hasta` (o hoy). Los totales comparan los
+// mismos días de las dos semanas (lunes a hoy contra lunes al mismo día de
+// la semana pasada), para no comparar media semana contra una entera. Los
+// días que todavía no llegaron van en null.
+const _sumarDias = (ymd, n) => new Date(Date.parse(`${ymd}T12:00:00Z`) + n * 86400000).toISOString().slice(0, 10);
+
+async function ventasSemanas(filtros = {}, alcance) {
+  const ref = /^\d{4}-\d{2}-\d{2}$/.test(filtros.hasta || '') ? filtros.hasta : _fechaLocalYMD(new Date());
+  const hoyDia = (new Date(`${ref}T12:00:00Z`).getUTCDay() + 6) % 7; // 0 = lunes
+  const lunes = _sumarDias(ref, -hoyDia);
+  const lunesAnt = _sumarDias(lunes, -7);
+  const base = { ...filtros, desde: undefined, hasta: undefined };
+
+  const pedidos = await Pedido.findAll({
+    where: _whereVentas({ ...base, desde: lunesAnt, hasta: ref }, alcance),
+    attributes: ['total', 'creado_en'], raw: true,
+  });
+  const porFecha = new Map();
+  pedidos.forEach((p) => {
+    const f = _fechaLocalYMD(p.creado_en);
+    const c = porFecha.get(f) || { total: 0, pedidos: 0 };
+    c.total += parseFloat(p.total || 0);
+    c.pedidos += 1;
+    porFecha.set(f, c);
+  });
+
+  const semana = (inicio, esActual) => {
+    const dias = Array.from({ length: 7 }, (_, i) => {
+      const fecha = _sumarDias(inicio, i);
+      if (esActual && i > hoyDia) return { dia: i, fecha, total: null, pedidos: null };
+      const c = porFecha.get(fecha) || { total: 0, pedidos: 0 };
+      return { dia: i, fecha, total: Math.round(c.total * 100) / 100, pedidos: c.pedidos };
+    });
+    const hasta = dias.slice(0, hoyDia + 1);
+    return {
+      desde: inicio,
+      hasta: _sumarDias(inicio, hoyDia),
+      total: Math.round(hasta.reduce((a, d) => a + d.total, 0) * 100) / 100,
+      pedidos: hasta.reduce((a, d) => a + d.pedidos, 0),
+      dias,
+    };
+  };
+  return { hasta_dia: hoyDia, actual: semana(lunes, true), anterior: semana(lunesAnt, false) };
+}
+
+// Lo más vendido en cada hora del período: para cada hora con ventas, los
+// 3 platos/combos con más unidades. Misma cuenta de cantidad que
+// ventasProductos (peso para lo vendido por kilo, sin lo anulado).
+async function ventasProductosHora(filtros = {}, alcance) {
+  const lineas = await DetallePedido.findAll({
+    include: [
+      { model: Pedido, attributes: ['creado_en'], where: _whereVentas(filtros, alcance), required: true },
+      { model: Producto, as: 'producto', attributes: ['nombre'], required: false },
+      { model: Combo, as: 'combo', attributes: ['nombre'], required: false },
+    ],
+    attributes: ['producto_id', 'combo_id', 'cantidad', 'cantidad_anulada', 'peso', 'precio'],
+    raw: true,
+  });
+
+  const horas = new Map();
+  lineas.forEach((l) => {
+    const vivas = (parseFloat(l.cantidad) || 0) - (parseFloat(l.cantidad_anulada) || 0);
+    if (vivas <= 0) return;
+    const hora = new Date(new Date(l['Pedido.creado_en']).getTime() - 4 * 3600000).getUTCHours();
+    const clave = l.producto_id ? `p${l.producto_id}` : `c${l.combo_id}`;
+    if (!horas.has(hora)) horas.set(hora, new Map());
+    const prods = horas.get(hora);
+    const f = prods.get(clave) || {
+      id: l.producto_id ?? l.combo_id, tipo: l.producto_id ? 'producto' : 'combo',
+      nombre: l['producto.nombre'] ?? l['combo.nombre'] ?? '(eliminado)', cantidad: 0, monto: 0, unidad: 'un',
+    };
+    if (l.peso != null) { f.cantidad += parseFloat(l.peso) || 0; f.unidad = 'kg'; } else f.cantidad += vivas;
+    f.monto += vivas * (parseFloat(l.precio) || 0);
+    prods.set(clave, f);
+  });
+
+  return Array.from(horas.entries())
+    .sort((a, b) => a[0] - b[0])
+    .map(([hora, prods]) => {
+      const todos = Array.from(prods.values());
+      return {
+        hora,
+        monto: Math.round(todos.reduce((a, f) => a + f.monto, 0) * 100) / 100,
+        productos: todos
+          .sort((a, b) => b.cantidad - a.cantidad || b.monto - a.monto)
+          .slice(0, 3)
+          .map((f) => ({ ...f, cantidad: Math.round(f.cantidad * 1000) / 1000, monto: Math.round(f.monto * 100) / 100 })),
+      };
+    });
+}
+
+// Platos con poco margen: los que se vendieron en los últimos 30 días y cuyo
+// costo (receta con el precio de la última compra) ya pasa el porcentaje
+// del precio configurado en 'alerta_costo_pct' (por defecto 40%). Así, si
+// sube el precio de un insumo, el inicio avisa qué platos quedaron caros.
+const COSTO_PCT_DEFECTO = 40;
+
+async function margenBajo(filtros = {}, alcance) {
+  const { Configuracion } = require('../../models');
+  const cfg = await Configuracion.findOne({ where: { clave: 'alerta_costo_pct' }, raw: true });
+  const pct = parseFloat(cfg?.valor);
+  const umbral = Number.isFinite(pct) && pct > 0 && pct < 100 ? pct : COSTO_PCT_DEFECTO;
+  const hoy = _fechaLocalYMD(new Date());
+  const desde = _fechaLocalYMD(new Date(Date.now() - 29 * 86400000));
+  const { platos } = await gananciaPlatos({ ...filtros, desde, hasta: hoy }, alcance);
+  const caros = platos
+    .filter((f) => f.costo != null && f.vendidos > 0 && f.precio > 0 && f.costo_pct >= umbral)
+    .sort((a, b) => b.costo_pct - a.costo_pct)
+    .map((f) => ({ tipo: f.tipo, id: f.id, nombre: f.nombre, precio: f.precio, costo: f.costo, costo_pct: f.costo_pct, ganancia_unitaria: f.ganancia_unitaria, vendidos: f.vendidos }));
+  return { umbral, platos: caros };
+}
+
 module.exports = {
+  margenBajo,
+  ventasSemanas, ventasProductosHora,
   porAcabarse, tiemposCocina, gananciaPlatos, sinVentas,
   ventas, ventasResumen, ventasProductos, ventasVariantes, ventasMapaCalor,
   inventario, inventarioResumen,

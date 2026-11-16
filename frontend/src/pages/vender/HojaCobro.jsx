@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { Banknote, QrCode, CheckCircle2, Printer, UserRound, UserPlus, Ticket, X, Loader2, Star, Clock, Disc3, Split, Info } from 'lucide-react';
+import { Banknote, QrCode, CheckCircle2, Printer, UserRound, UserPlus, Ticket, X, Loader2, Star, Clock, Disc3, Split, Info, WifiOff } from 'lucide-react';
 import Hoja from '../../components/ui/Hoja';
 import { Segmentado } from '../../components/ui/piezas';
 import { getClientes, crearCliente } from '../../api/clientes';
@@ -8,6 +8,7 @@ import { avisar } from '../../components/ui/Aviso';
 import { validarCupon } from '../../api/cupones';
 import { consultarEstadoPagoQr, cancelarPagoQr, confirmarPagoQr } from '../../api/pagosQr';
 import { srcQr } from '../../components/ui/formulario';
+import { publicarPantalla, usePantalla } from '../../lib/pantallaCliente';
 import { reimprimirVenta, cobrarParte } from '../../api/ventas';
 import { imprimirLocal, reimprimirConFallback } from '../../utils/impresionLocal';
 import { useConfig, useMoneda } from '../../hooks/useConfig';
@@ -146,6 +147,7 @@ function PanelQr({ pedidoId, pagoQr, moneda, onPagado, onCancelado }) {
   });
   const cancelar = useMutation({ mutationFn: () => cancelarPagoQr(pedidoId), onSuccess: onCancelado });
   const propio = pagoQr.proveedor === 'propio';
+  usePantalla({ tipo: 'qr', qr_code: pagoQr.qr_code, monto: Number(pagoQr.monto_total ?? pagoQr.monto_neto) }, pagoQr.tx_id ?? pagoQr.qr_code, { tipo: 'fin_qr' });
   const confirmar = useMutation({
     mutationFn: () => confirmarPagoQr(pedidoId),
     onSuccess: (p) => { imprimirPago(p.datos_impresion, p); onPagado(p); },
@@ -208,6 +210,7 @@ function BloquePago({ aPagar, etiqueta = 'A pagar', metodo, onMetodo, recibido, 
   const recibidoNum = parseFloat(recibido) || 0;
   const cambio = recibidoNum - aPagar;
   const sugeridos = useMemo(() => sugerencias(aPagar), [aPagar]);
+  usePantalla(puedeCobrar ? { tipo: 'cobro', aPagar, etiqueta } : null, `${puedeCobrar}|${aPagar}|${etiqueta}`, { tipo: 'fin_cobro' });
   return (
     <>
       <div className="rounded-2xl bg-pizarra text-sobre-pizarra p-4">
@@ -273,6 +276,8 @@ function CobroDeParte({ pedidoId, parte, moneda, onListo, onVolver, onEsperandoQ
       modo: parte.modo,
       persona: parte.persona || undefined,
       monto: parte.modo === 'iguales' ? parte.monto : undefined,
+      parte_numero: parte.parte_numero,
+      partes_de: parte.partes_de,
       items: parte.modo === 'platos' ? parte.items : undefined,
       metodo_pago: metodo,
       monto_recibido: metodo === 'efectivo' ? (recibidoNum || parte.monto) : undefined,
@@ -326,13 +331,16 @@ function CobroDeParte({ pedidoId, parte, moneda, onListo, onVolver, onEsperandoQ
  * - pedido: el pedido existente (con `pagado` y `pagos`). Permite dividir la
  *   cuenta y, si ya tiene partes pagadas, abre directo en modo dividido.
  */
-export default function HojaCobro({ total, subtitulo, items = [], clienteInicial = null, pedido = null, permitirDespues, puedeCobrar = true, onConfirmar, onDespues, onCreado, onTerminado, onCerrar }) {
+export default function HojaCobro({ total, subtitulo, items = [], clienteInicial = null, pedido = null, permitirDespues, puedeCobrar = true, dividirInicial = false, onConfirmar, onDespues, onCreado, onDividir, onTerminado, onCerrar }) {
   const moneda = useMoneda();
   const { config } = useConfig();
   const qc = useQueryClient();
   const pagado = Number(pedido?.pagado || 0);
   const puedeDividir = !!pedido && puedeCobrar && !ORIGENES_SIN_DIVIDIR.includes(pedido.origen);
-  const [dividir, setDividir] = useState(() => puedeDividir && pagado > 0);
+  const [dividir, setDividir] = useState(() => puedeDividir && (pagado > 0 || dividirInicial));
+  // Venta nueva (todavía sin pedido): para dividir primero se guarda el pedido
+  // sin cobrar (va a cocina, como 'Cobrar después') y se sigue en su pantalla.
+  const puedeDividirNueva = !pedido && puedeCobrar && !!onDividir && !!onDespues;
   const [esperandoQr, setEsperandoQr] = useState(false);
   const [metodo, setMetodo] = useState('efectivo');
   const [recibido, setRecibido] = useState('');
@@ -341,6 +349,8 @@ export default function HojaCobro({ total, subtitulo, items = [], clienteInicial
   const [cuponTxt, setCuponTxt] = useState('');
   const [cupon, setCupon] = useState(null);
   const [notas, setNotas] = useState('');
+  const [propinaModo, setPropinaModo] = useState('');
+  const [propinaTxt, setPropinaTxt] = useState('');
   const [error, setError] = useState('');
   const [qr, setQr] = useState(null);
   const [exito, setExito] = useState(null);
@@ -355,7 +365,14 @@ export default function HojaCobro({ total, subtitulo, items = [], clienteInicial
   const maxPuntos = cliente ? Math.min(cliente.puntos ?? 0, Math.floor(base / (valorPunto || 1))) : 0;
   const descPuntos = puedeCanjear ? puntos * valorPunto : 0;
   const descCupon = cupon?.descuento ?? 0;
-  const aPagar = Math.max(0, base - descPuntos - descCupon);
+  // Propina: solo cobrando la cuenta completa (con partes pagadas no se suma).
+  // El porcentaje es sobre la cuenta, antes de puntos y cupón.
+  const conPropina = puedeCobrar && pagado === 0;
+  const propina = !conPropina ? 0
+    : propinaModo === 'otro' ? Math.round((parseFloat(propinaTxt) || 0) * 100) / 100
+    : propinaModo ? Math.round(total * Number(propinaModo)) / 100 : 0;
+  const propinaExcede = propina > total + 0.005;
+  const aPagar = Math.max(0, base - descPuntos - descCupon) + propina;
   const recibidoNum = parseFloat(recibido) || 0;
 
   const aplicarCupon = useMutation({
@@ -371,6 +388,7 @@ export default function HojaCobro({ total, subtitulo, items = [], clienteInicial
       cliente_id: cliente?.id,
       puntos_canjear: puedeCanjear ? puntos : 0,
       cupon_codigo: cupon?.codigo,
+      propina: propina > 0 ? propina : undefined,
       notas: notas.trim() || undefined,
     }),
     onSuccess: (r) => {
@@ -380,7 +398,10 @@ export default function HojaCobro({ total, subtitulo, items = [], clienteInicial
         setQr({ pedidoId: r.pedido.id, pagoQr: r.pago_qr });
       } else {
         imprimirLocal(r?.datos_impresion);
-        setExito({ pedidoId: r.id, metodo, cobrado: aPagar, cambio: metodo === 'efectivo' ? Math.max(0, (recibidoNum || aPagar) - aPagar) : 0, pedido: r });
+        // Cuenta ya pagada en partes: no se cobró nada ahora, se muestra lo
+        // que pagaron entre todos. Con partes previas, también el total.
+        if (yaPagado) setExito({ pedidoId: r.id, metodo, titulo: 'Cuenta cerrada · pagado en partes', cobrado: pagado, cambio: 0, pedido: r });
+        else setExito({ pedidoId: r.id, metodo, cobrado: aPagar, cambio: metodo === 'efectivo' ? Math.max(0, (recibidoNum || aPagar) - aPagar) : 0, totalCuenta: pagado > 0 ? total : null, propina, pedido: r });
       }
     },
     onError: (e) => setError(errorDe(e, 'No se pudo cobrar.')),
@@ -392,9 +413,17 @@ export default function HojaCobro({ total, subtitulo, items = [], clienteInicial
     onError: (e) => setError(errorDe(e, 'No se pudo enviar a cocina.')),
   });
 
+  const dividirNueva = useMutation({
+    mutationFn: () => onDespues({ cliente_id: cliente?.id, notas: notas.trim() || undefined }),
+    onSuccess: (r) => { onCreado?.(r); imprimirLocal(r?.datos_impresion); onDividir(r); },
+    onError: (e) => setError(errorDe(e, 'No se pudo guardar el pedido para dividirlo.')),
+  });
+
+  // Una venta hecha sin internet todavía no está en el servidor: se reimprime
+  // el ticket que se armó en esta caja.
   const reimprimir = useMutation({
-    mutationFn: () => reimprimirVenta(exito.pedidoId),
-    onSuccess: reimprimirConFallback,
+    mutationFn: async () => (exito.pedido?.sin_conexion ? exito.pedido.datos_impresion : reimprimirVenta(exito.pedidoId)),
+    onSuccess: (d) => (exito.pedido?.sin_conexion ? imprimirLocal(d, { forzar: true }) : reimprimirConFallback(d)),
   });
 
   // Tras cada parte: el pedido de la pantalla se pone al día con la respuesta.
@@ -415,8 +444,13 @@ export default function HojaCobro({ total, subtitulo, items = [], clienteInicial
   const yaPagado = !!pedido && pagado > 0 && faltaDe({ total, pagado }) <= 0.005 && ['pendiente', 'listo'].includes(pedido.estado);
 
   const ancho = useAncho();
-  const efectivoInsuficiente =metodo === 'efectivo' && recibido !== '' && recibidoNum < aPagar - 0.005;
-  const ocupado = cobrar.isPending || despues.isPending;
+  const efectivoInsuficiente = metodo === 'efectivo' && recibido !== '' && recibidoNum < aPagar - 0.005;
+  const ocupado = cobrar.isPending || despues.isPending || dividirNueva.isPending;
+
+  // Pantalla del cliente: "¡Gracias!" con el cambio al terminar el cobro.
+  useEffect(() => {
+    if (exito) publicarPantalla({ tipo: 'gracias', cobrado: exito.cobrado, cambio: exito.cambio });
+  }, [exito]);
 
   if (exito) {
     return (
@@ -430,8 +464,23 @@ export default function HojaCobro({ total, subtitulo, items = [], clienteInicial
             </div>
           ) : (
             <div>
-              <p className="text-tenue">Cobrado</p>
+              <p className="text-tenue">{exito.titulo ?? 'Cobrado'}</p>
               <p className="num text-5xl font-extrabold mt-1">{dinero(exito.cobrado, moneda)}</p>
+            </div>
+          )}
+          {exito.propina > 0 && (
+            <p className="text-sm text-tenue">Incluye propina: <span className="num font-semibold text-tinta">{dinero(exito.propina, moneda)}</span></p>
+          )}
+          {exito.totalCuenta > 0 && (
+            <p className="text-sm text-tenue">Cuenta completa pagada: <span className="num font-semibold text-tinta">{dinero(exito.totalCuenta, moneda)}</span></p>
+          )}
+          {exito.pedido?.sin_conexion && (
+            <div className="rounded-xl bg-hundido px-3 py-2.5 text-sm text-left flex gap-2">
+              <WifiOff className="w-4 h-4 shrink-0 mt-0.5 text-locoto" />
+              <p>
+                Vendido sin internet. Pedido <span className="num font-bold">{exito.pedido.numero}</span>.
+                {' '}{exito.pedido.datos_impresion ? 'Se guardó en esta caja' : 'No se pudo armar el ticket (esta caja todavía no imprimió con internet). Se guardó en esta caja'} y se sube solo cuando vuelva la conexión.
+              </p>
             </div>
           )}
           <div className="flex gap-2">
@@ -495,7 +544,7 @@ export default function HojaCobro({ total, subtitulo, items = [], clienteInicial
                 onVolver={() => { refrescarPedido(); onVolver(); }}
                 onListo={(r) => {
                   refrescarPedido(r.pedido);
-                  if (r.completado) setExito({ pedidoId: r.pedido.id, metodo: r.metodo, cobrado: r.monto, cambio: r.cambio, pedido: r.pedido });
+                  if (r.completado) setExito({ pedidoId: r.pedido.id, metodo: r.metodo, cobrado: r.monto, cambio: r.cambio, totalCuenta: Number(r.pedido.total), pedido: r.pedido });
                   else onListo(r);
                 }}
               />
@@ -526,7 +575,7 @@ export default function HojaCobro({ total, subtitulo, items = [], clienteInicial
               </button>
             )}
             {puedeCobrar && (
-              <button data-principal className="btn-aji btn-lg flex-[1.4]" disabled={ocupado || efectivoInsuficiente} onClick={() => cobrar.mutate()}>
+              <button data-principal className="btn-aji btn-lg flex-[1.4]" disabled={ocupado || efectivoInsuficiente || propinaExcede} onClick={() => cobrar.mutate()}>
                 {cobrar.isPending ? <Loader2 className="w-5 h-5 animate-spin" /> : metodo === 'qr' ? (config.qr_proveedor === 'propio' ? 'Mostrar QR' : 'Generar QR') : `Cobrar ${dinero(aPagar, moneda)}`}
               </button>
             )}
@@ -544,17 +593,45 @@ export default function HojaCobro({ total, subtitulo, items = [], clienteInicial
           onRecibido={setRecibido}
           moneda={moneda}
           puedeCobrar={puedeCobrar}
-          descuentos={(descPuntos > 0 || descCupon > 0) && (
+          descuentos={(descPuntos > 0 || descCupon > 0 || propina > 0) && (
             <div className="text-right text-xs opacity-80 num">
-              <p className="line-through">{dinero(base, moneda)}</p>
+              {descPuntos > 0 || descCupon > 0 ? <p className="line-through">{dinero(base, moneda)}</p> : <p>Cuenta {base.toFixed(2)}</p>}
               {descCupon > 0 && <p>Cupón −{descCupon.toFixed(2)}</p>}
               {descPuntos > 0 && <p>Puntos −{descPuntos.toFixed(2)}</p>}
+              {propina > 0 && <p>Propina +{propina.toFixed(2)}</p>}
             </div>
           )}
         />
+        {conPropina && (
+          <div>
+            <p className="etiqueta">Propina</p>
+            <Segmentado
+              tamano="sm"
+              valor={propinaModo}
+              onCambio={(v) => { setPropinaModo(v); setError(''); }}
+              opciones={[{ valor: '', etiqueta: 'Sin propina' }, { valor: '5', etiqueta: '5%' }, { valor: '10', etiqueta: '10%' }, { valor: 'otro', etiqueta: 'Otro monto' }]}
+            />
+            {propinaModo === 'otro' && (
+              <input
+                aria-label="Monto de la propina"
+                inputMode="decimal"
+                className="campo h-11 num mt-2"
+                placeholder="0.00"
+                value={propinaTxt}
+                onChange={(e) => setPropinaTxt(e.target.value.replace(',', '.').replace(/[^\d.]/g, ''))}
+              />
+            )}
+            {propinaExcede && <p className="text-sm text-locoto mt-1">La propina no puede ser mayor que la cuenta.</p>}
+          </div>
+        )}
         {puedeDividir && (
           <button type="button" className="btn-borde w-full" onClick={() => { setDividir(true); setError(''); }}>
             <Split className="w-4 h-4" /> Dividir cuenta
+          </button>
+        )}
+        {puedeDividirNueva && (
+          <button type="button" className="btn-borde w-full" disabled={ocupado} onClick={() => { setError(''); dividirNueva.mutate(); }}>
+            {dividirNueva.isPending ? <Loader2 className="w-4 h-4 animate-spin" /> : <Split className="w-4 h-4" />} Dividir cuenta
           </button>
         )}
       </div>

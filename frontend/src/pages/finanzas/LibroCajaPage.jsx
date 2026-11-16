@@ -12,8 +12,8 @@ import { avisar } from '../../components/ui/Aviso';
 import { useRango, SelectorRango, exportarCsv, BotonCsv, BotonExportar, Paginador } from './comun';
 import { armarLibro } from './exportes';
 import { cx, dinero, errorDe, fechaHora } from '../../lib/util';
+import { METODO } from '../../lib/metodosPago';
 
-const METODO = { efectivo: 'Efectivo', qr: 'QR', app_externa: 'App', mixto: 'Mixto' };
 
 function HojaMovimiento({ onCerrar }) {
   const qc = useQueryClient();

@@ -4,6 +4,7 @@ import { Plus, Package, Scale, ImageOff, GripVertical, Trash2, Archive } from 'l
 import { getProductos, crearProducto, actualizarProducto, eliminarProducto, actualizarDisponibilidad } from '../../api/productos';
 import { getCategorias } from '../../api/categorias';
 import { getGruposOpciones } from '../../api/gruposOpciones';
+import { getInsumos, getRecetaProducto, guardarRecetaProducto } from '../../api/insumos';
 import { usePermisos } from '../../hooks/usePermisos';
 import { useMoneda } from '../../hooks/useConfig';
 import Hoja from '../../components/ui/Hoja';
@@ -11,10 +12,20 @@ import { Buscador, Cargando, Campo, Encabezado, Interruptor, Pagina, SinPermiso,
 import { SubirImagen, urlImagen, numero, useCampos } from '../../components/ui/formulario';
 import { avisar } from '../../components/ui/Aviso';
 import { cx, dinero, errorDe, normalizar } from '../../lib/util';
+import RecetaProducto from './RecetaProducto';
+import { lineasDeReceta, lineasIncompletas, recetaParaGuardar } from '../../lib/receta';
 
 function HojaProducto({ producto, categorias, grupos, onCerrar }) {
   const qc = useQueryClient();
+  const { tiene } = usePermisos();
   const nuevo = !producto;
+  // La receta se ve con insumos.ver y se cambia con insumos.editar.
+  const verReceta = tiene('insumos', 'ver');
+  const editarReceta = tiene('insumos', 'editar');
+  const insumosQ = useQuery({ queryKey: ['insumos'], queryFn: getInsumos, enabled: verReceta });
+  const recetaQ = useQuery({ queryKey: ['receta', producto?.id], queryFn: () => getRecetaProducto(producto.id), enabled: verReceta && !nuevo });
+  const [receta, setReceta] = useState(null); // null = sin tocar
+  const lineasReceta = receta ?? lineasDeReceta(recetaQ.data);
   const { f, campo, poner } = useCampos({
     nombre: producto?.nombre ?? '',
     categoria_id: producto?.categoria_id ?? categorias[0]?.id ?? '',
@@ -28,20 +39,24 @@ function HojaProducto({ producto, categorias, grupos, onCerrar }) {
   });
 
   const guardar = useMutation({
-    mutationFn: () => {
+    mutationFn: async () => {
       const datos = {
         nombre: f.nombre.trim(), categoria_id: Number(f.categoria_id), precio: Number(f.precio),
         es_pesable: f.es_pesable ? 1 : 0, es_vendible: f.es_vendible ? 1 : 0, imagen: f.imagen,
         grupos_opciones: f.grupos_opciones.map((g, i) => ({ ...g, orden: i })),
       };
+      let guardado;
       if (nuevo) {
         if (f.controla_stock) datos.stock = Number(f.stock || 0);
-        return crearProducto(datos);
-      }
-      return actualizarProducto(producto.id, datos);
+        guardado = await crearProducto(datos);
+      } else guardado = await actualizarProducto(producto.id, datos);
+      const id = nuevo ? guardado.id : producto.id;
+      if (receta && editarReceta) await guardarRecetaProducto(id, recetaParaGuardar(receta));
+      return id;
     },
-    onSuccess: () => {
+    onSuccess: (id) => {
       qc.invalidateQueries({ queryKey: ['productos'] });
+      qc.invalidateQueries({ queryKey: ['receta', id] });
       qc.invalidateQueries({ queryKey: ['productos-pos'] });
       avisar.ok(nuevo ? 'Producto creado' : 'Cambios guardados');
       onCerrar();
@@ -50,11 +65,14 @@ function HojaProducto({ producto, categorias, grupos, onCerrar }) {
   });
 
   const disponibles = grupos.filter((g) => !f.grupos_opciones.some((x) => x.id === g.id));
-  const valido = f.nombre.trim() && f.categoria_id && Number(f.precio) >= 0 && f.precio !== '';
+  const incompletas = receta ? lineasIncompletas(receta) : 0;
+  const valido = f.nombre.trim() && f.categoria_id && Number(f.precio) >= 0 && f.precio !== '' && !incompletas;
+  // Opciones de los grupos elegidos: una línea de la receta puede valer solo con una de ellas.
+  const opciones = f.grupos_opciones.flatMap((g) => (grupos.find((x) => x.id === g.id)?.opciones ?? []).map((o) => ({ id: o.id, nombre: o.nombre })));
 
   return (
     <Hoja onCerrar={onCerrar} titulo={nuevo ? 'Nuevo producto' : producto.nombre} ancho="max-w-2xl"
-      pie={<><button className="btn-suave" onClick={onCerrar}>Cancelar</button><button data-principal className="btn-aji" disabled={!valido || guardar.isPending} onClick={() => guardar.mutate()}>{nuevo ? 'Crear producto' : 'Guardar cambios'}</button></>}>
+      pie={<>{incompletas > 0 && <span className="text-sm text-locoto mr-auto">Falta la cantidad o el insumo en {incompletas === 1 ? 'una línea' : `${incompletas} líneas`} de la receta</span>}<button className="btn-suave" onClick={onCerrar}>Cancelar</button><button data-principal className="btn-aji" disabled={!valido || guardar.isPending} onClick={() => guardar.mutate()}>{nuevo ? 'Crear producto' : 'Guardar cambios'}</button></>}>
       <div className="grid sm:grid-cols-[160px_1fr] gap-5">
         <SubirImagen className="w-40 h-40" valor={f.imagen} onCambio={(v) => poner('imagen', v)} />
         <div className="space-y-3">
@@ -102,6 +120,11 @@ function HojaProducto({ producto, categorias, grupos, onCerrar }) {
           </select>
         )}
       </div>
+
+      {verReceta && (
+        <RecetaProducto lineas={lineasReceta} onCambio={setReceta} insumos={insumosQ.data ?? []} opciones={opciones}
+          cargando={insumosQ.isLoading || (!nuevo && recetaQ.isLoading)} editable={editarReceta} />
+      )}
     </Hoja>
   );
 }

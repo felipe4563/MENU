@@ -4,9 +4,10 @@
 // - 'rawbt': una URL `rawbt:` que Android le pasa a la app RawBT si está
 //   instalada — mismo mecanismo que "compartir" a otra app.
 import { Esc, buildCaja, buildCocina, buildCierre, LOGO_MAX_PX, CODIFICACIONES } from './escpos';
-import { emparejar, imprimirDirecto } from './bluetoothDirecto';
+import { emparejar, imprimirDirecto, viaGuardada } from './bluetoothDirecto';
 import { avisar } from '../components/ui/Aviso';
 import { logoAEscPos } from './logoEscPos';
+import { bytesParaImpresora } from './tspl';
 import { logoSrc } from '../api/configuracion';
 
 // El logo no cambia entre tickets — se cachea por URL para no re-rasterizarlo
@@ -46,9 +47,10 @@ function bytesABase64(bytes) {
 // Un <a> invisible en vez de `window.location.href`: si RawBT no está
 // instalado, Android/Chrome se limitan a no hacer nada — no navega la SPA
 // a una página de error ni pierde el estado de la pantalla actual.
-function dispararRawBT(bytes) {
+// `crudo`: los bytes ya vienen en el idioma de la impresora (pruebas).
+function dispararRawBT(bytes, { crudo = false } = {}) {
   const a = document.createElement('a');
-  a.href = 'rawbt:base64,' + bytesABase64(bytes);
+  a.href = 'rawbt:base64,' + bytesABase64(crudo ? bytes : bytesParaImpresora(bytes));
   a.style.display = 'none';
   document.body.appendChild(a);
   a.click();
@@ -66,7 +68,9 @@ async function enviar(bytes, conexion, que) {
   } catch (e) {
     // Sin impresora en este aparato: el botón abre la lista del navegador
     // (necesita el toque) y después imprime lo que quedó pendiente.
-    const falta = e.codigo === 'SIN_IMPRESORA' || e.codigo === 'OLVIDADA';
+    // Por puerto COM el puerto se elige en Probar impresora (no hay lista
+    // Bluetooth que abrir desde acá).
+    const falta = (e.codigo === 'SIN_IMPRESORA' || e.codigo === 'OLVIDADA') && viaGuardada() !== 'serial';
     const reintentar = falta
       ? () => emparejar().then(() => enviar(bytes, conexion, que)).catch((err) => err.codigo !== 'CANCELADO' && avisar.error(err.message))
       : () => enviar(bytes, conexion, que);
@@ -93,15 +97,26 @@ export async function imprimirBluetoothCierre(reporte, config) {
 // Ticket corto para probar la impresora desde "Impresora de este dispositivo".
 // Devuelve si llevó logo, o por qué no, para mostrarlo en pantalla.
 export async function imprimirPrueba({ config, ancho = '80mm', nombreImpresora, conLogo = true }) {
+  const r = await bytesPrueba({ config, ancho, lineas: [nombreImpresora || ''], conLogo });
+  await imprimirDirecto(r.bytes);
+  return r;
+}
+
+// Bytes del ticket de prueba. `titulo` grande arriba (p. ej. el número de
+// canal que se está probando) y `lineas` con el detalle.
+export async function bytesPrueba({ config, ancho = '80mm', titulo, lineas = [], conLogo = false }) {
   const { logo, error } = conLogo ? await cargarLogo(config) : { logo: null };
   const t = new Esc(ancho).init().charset();
   if (logo) t.center().imagen(logo.anchoBytes, logo.alto, logo.datos).lf();
-  t.center().bold(true).dbl().line(config?.nombre_negocio || 'Prueba').normal().bold(false);
-  t.lf().line('Prueba de impresión').line(nombreImpresora || '').line(new Date().toLocaleString('es-BO'));
+  t.center().bold(true).dbl().line(titulo || config?.nombre_negocio || 'Prueba').normal().bold(false);
+  t.lf().line('Prueba de impresión');
+  lineas.filter(Boolean).forEach((l) => t.line(l));
+  t.line(new Date().toLocaleString('es-BO'));
   t.lf().line('Si lees esto bien, la impresora').line('está lista para los tickets.').lf(3).cut();
-  await imprimirDirecto(t.build());
-  return { conLogo: Boolean(logo), errorLogo: conLogo ? error : null, bytesLogo: logo ? logo.datos.length : 0 };
+  return { bytes: t.build(), conLogo: Boolean(logo), errorLogo: conLogo ? error : null, bytesLogo: logo ? logo.datos.length : 0 };
 }
+
+export { dispararRawBT };
 
 export const FRASE_LETRAS = 'Ñandú, piña, año ¿Sí? ¡Olé! áéíóú ÁÉÍÓÚ ü 25°';
 

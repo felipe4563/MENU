@@ -6,6 +6,7 @@
 // arma el backend en `_emitirImpresion`), para que el ticket salga igual
 // sin importar el canal.
 import { MOTIVOS_DEVOLUCION, FORMAS_DEVOLUCION } from './ticketDevolucion';
+import { METODO, METODO_LARGO, METODO_TICKET } from '../lib/metodosPago';
 
 // Columnas de texto según el ancho de papel configurado en la caja (ver
 // ancho_papel_bluetooth en el modelo Caja) — 58mm imprime ~32 columnas con
@@ -141,7 +142,6 @@ class Esc {
 }
 
 // ── Cuenta dividida (mismo ticket que print-agent/ticketPagoParcial.js) ─────
-const METODO_PARTE = { efectivo: 'Efectivo', qr: 'QR' };
 const dineroParte = (sym, v) => sym + ' ' + Number(v || 0).toFixed(2);
 
 // Comprobante corto de una parte que no completa el pedido (`pago_parcial`,
@@ -173,7 +173,7 @@ function _pagoParcial(t, data) {
   if (pedido.tipo === 'delivery') t.left().line('DELIVERY — ' + (pedido.nombre_cliente || 'Cliente'));
   else if (esLlevar) t.left().line('PARA LLEVAR — ' + (pedido.cliente?.numero_documento || pedido.nombre_cliente || 'Cliente'));
   else t.left().line((pedido.mesa?.nombre || '---').toUpperCase());
-  t.left().line('Parte ' + pp.numero);
+  t.left().line(pp.partes_iguales_de ? 'Parte ' + (pp.parte_numero || 1) + ' de ' + pp.partes_iguales_de : 'Parte ' + pp.numero);
   if (pp.persona) t.left().bold(true).line('Persona: ' + pp.persona).bold(false);
   t.rule('-');
 
@@ -181,12 +181,12 @@ function _pagoParcial(t, data) {
   if (items.length) {
     for (const it of items) t.left().cols(it.cantidad + ' ' + String(it.nombre || '').toUpperCase(), Number(it.subtotal || 0).toFixed(2));
   } else {
-    t.left().line(pp.partes_iguales_de ? 'Parte de la cuenta (1 de ' + pp.partes_iguales_de + ')' : 'Parte de la cuenta');
+    t.left().line(pp.partes_iguales_de ? 'Dividida en ' + pp.partes_iguales_de + ' partes iguales' : 'Parte de la cuenta');
   }
   t.rule('-');
 
   t.left().bold(true).cols('Monto', dineroParte(sym, pp.monto)).bold(false);
-  t.left().line('Pago: ' + (METODO_PARTE[pp.metodo_pago] || pp.metodo_pago));
+  t.left().line('Pago: ' + (METODO[pp.metodo_pago] || pp.metodo_pago));
   if (pp.metodo_pago === 'efectivo') {
     t.left().cols('Recibido', dineroParte(sym, pp.monto_recibido));
     t.left().cols('Cambio', dineroParte(sym, pp.cambio));
@@ -204,7 +204,7 @@ function _pagoParcial(t, data) {
 function _bloquePartes(t, partes, sym) {
   t.center().bold(true).line('PAGOS').bold(false);
   for (const p of partes) {
-    const etiqueta = ['Parte ' + p.numero, p.persona, METODO_PARTE[p.metodo_pago] || p.metodo_pago].filter(Boolean).join(' · ');
+    const etiqueta = [p.partes_de ? 'Parte ' + p.parte_numero + ' de ' + p.partes_de : 'Parte ' + p.numero, p.persona, METODO[p.metodo_pago] || p.metodo_pago].filter(Boolean).join(' · ');
     t.left().cols(etiqueta, dineroParte(sym, p.monto));
   }
   t.rule('-');
@@ -319,8 +319,7 @@ function buildCaja(data, logo) {
   t.left().bold(true).cols('TOTAL ' + sym, total.toFixed(2)).bold(false);
   t.rule('=');
 
-  const METODO_PAGO_LABEL = { qr: 'QR / Transferencia', app_externa: 'Pagado en la app', diferido: 'Pendiente de cobro', mixto: 'Mixto' };
-  t.left().line('Pago: ' + (METODO_PAGO_LABEL[metodo_pago] || 'Efectivo'));
+  t.left().line('Pago: ' + (METODO_TICKET[metodo_pago] || 'Efectivo'));
   t.rule('-');
 
   if (data.partes?.length) _bloquePartes(t, data.partes, sym);
@@ -445,7 +444,6 @@ function buildCierre(reporte, cfg = {}, ancho = '80mm', logo = null) {
   const n = (v) => parseFloat(v || 0);
   const m = (v) => sym + ' ' + n(v).toFixed(2);
   const fh = (f) => (f ? new Date(f).toLocaleString('es-BO', { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' }) : '-');
-  const METODO = { efectivo: 'Efectivo', qr: 'QR', app_externa: 'App externa', mixto: 'Mixto' };
   const efectivo = n(metodos.find((x) => x.metodo_pago === 'efectivo')?.total);
   const totalVentas = metodos.reduce((a, x) => a + n(x.total), 0);
   const dif = n(sesion.diferencia);
@@ -462,8 +460,15 @@ function buildCierre(reporte, cfg = {}, ancho = '80mm', logo = null) {
   t.cols('Apertura', fh(sesion.abierto_en)).cols('Cierre', fh(sesion.cerrado_en));
   t.rule('-');
   t.center().bold(true).line('VENTAS').bold(false).left();
-  metodos.forEach((x) => t.cols((METODO[x.metodo_pago] || x.metodo_pago) + ' (' + x.cantidad + ')', m(x.total)));
+  metodos.forEach((x) => t.cols((METODO_LARGO[x.metodo_pago] || x.metodo_pago) + ' (' + x.cantidad + ')', m(x.total)));
   t.bold(true).cols('Total vendido', m(totalVentas)).bold(false);
+  const propinas = reporte.propinas;
+  if (propinas && n(propinas.total) > 0) {
+    t.cols('Propinas (' + propinas.cantidad + ')', m(propinas.total));
+    if (n(propinas.efectivo) > 0) t.cols('  En efectivo', m(propinas.efectivo));
+    if (n(propinas.qr) > 0) t.cols('  Por QR', m(propinas.qr));
+    if (n(propinas.otros) > 0) t.cols('  Otros medios', m(propinas.otros));
+  }
   t.rule('-');
   t.center().bold(true).line('EFECTIVO EN CAJA').bold(false).left();
   t.cols('Apertura', m(sesion.monto_apertura)).cols('+ Efectivo vendido', m(efectivo));

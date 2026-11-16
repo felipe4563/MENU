@@ -188,4 +188,75 @@ async function catalogo() {
   return { proveedores, insumos, productos };
 }
 
-module.exports = { listarProveedores, crearProveedor, actualizarProveedor, desactivarProveedor, listarCompras, obtenerCompra, crearCompra, actualizarCompra, recibirCompra, catalogo };
+// Compra sugerida: los insumos de la sucursal que llegaron a su stock
+// mínimo, con cuánto comprar y a quién. Cuánto: lo que falta para llegar al
+// doble del mínimo, o a lo que se gasta en una semana si eso es más
+// (consumo por ventas de las últimas 2 semanas, dividido entre 2). A quién y
+// a qué precio: el proveedor y el costo de la última compra recibida de ese
+// insumo. Lo que nunca se compró a un proveedor va en "sin proveedor".
+const DIAS_CONSUMO = 14;
+
+function _redondearArriba(cantidad, unidad) {
+  const paso = unidad === 'unidad' ? 1 : 0.1;
+  return Math.round(Math.ceil((cantidad - 1e-9) / paso) * paso * 1000) / 1000;
+}
+
+async function compraSugerida(sucursal_id) {
+  const { InsumoStockSucursal, InsumoMovimiento } = require('../../models');
+  const insumos = await Insumo.findAll({ where: { activo: 1, stock_minimo: { [Op.ne]: null } }, raw: true });
+  if (!insumos.length) return { grupos: [], total: 0 };
+  const ids = insumos.map((i) => i.id);
+
+  const desde = new Date(Date.now() - DIAS_CONSUMO * 86400000);
+  const [stocks, consumos, ultimas] = await Promise.all([
+    InsumoStockSucursal.findAll({ where: { sucursal_id, insumo_id: ids }, raw: true }),
+    InsumoMovimiento.findAll({
+      where: { sucursal_id, insumo_id: ids, tipo: 'consumo_venta', creado_en: { [Op.gte]: desde } },
+      attributes: ['insumo_id', [sequelize.fn('SUM', sequelize.col('cantidad')), 'consumido']], group: ['insumo_id'], raw: true,
+    }),
+    DetalleCompra.findAll({
+      where: { insumo_id: ids },
+      include: [{ model: Compra, attributes: ['proveedor_id', 'creado_en'], where: { estado: 'recibido' }, required: true,
+        include: [{ model: Proveedor, as: 'proveedor', attributes: ['id', 'nombre'] }] }],
+      order: [[Compra, 'creado_en', 'DESC'], ['id', 'DESC']],
+    }),
+  ]);
+
+  const stockDe = new Map(stocks.map((s) => [s.insumo_id, parseFloat(s.stock) || 0]));
+  const consumoDe = new Map(consumos.map((c) => [c.insumo_id, parseFloat(c.consumido) || 0]));
+  const ultimaDe = new Map();
+  for (const d of ultimas) if (!ultimaDe.has(d.insumo_id)) ultimaDe.set(d.insumo_id, d);
+
+  const grupos = new Map();
+  for (const ins of insumos) {
+    const stock = stockDe.get(ins.id) ?? 0;
+    const minimo = parseFloat(ins.stock_minimo);
+    if (stock > minimo) continue;
+    const semana = (consumoDe.get(ins.id) || 0) / (DIAS_CONSUMO / 7);
+    const objetivo = Math.max(2 * minimo, semana);
+    const sugerido = _redondearArriba(Math.max(objetivo - stock, 0), ins.unidad_medida);
+    if (sugerido <= 0) continue;
+    const ultima = ultimaDe.get(ins.id);
+    const prov = ultima?.Compra?.proveedor;
+    const proveedor = prov ? { id: prov.id, nombre: prov.nombre } : null;
+    const costo = ultima ? parseFloat(ultima.costo_unitario) : null;
+    const clave = proveedor ? proveedor.id : 0;
+    if (!grupos.has(clave)) grupos.set(clave, { proveedor, items: [], total: 0 });
+    const g = grupos.get(clave);
+    const subtotal = costo != null ? Math.round(costo * sugerido * 100) / 100 : null;
+    g.items.push({
+      insumo_id: ins.id, nombre: ins.nombre, unidad: ins.unidad_medida,
+      stock: Math.round(stock * 1000) / 1000, minimo, consumo_semana: Math.round(semana * 1000) / 1000,
+      cantidad: sugerido, costo_unitario: costo, subtotal,
+    });
+    g.total = Math.round((g.total + (subtotal || 0)) * 100) / 100;
+  }
+
+  const lista = Array.from(grupos.values())
+    .map((g) => ({ ...g, items: g.items.sort((a, b) => a.nombre.localeCompare(b.nombre)) }))
+    // Primero los proveedores por nombre; "sin proveedor" al final.
+    .sort((a, b) => (!a.proveedor) - (!b.proveedor) || (a.proveedor?.nombre ?? '').localeCompare(b.proveedor?.nombre ?? ''));
+  return { grupos: lista, total: Math.round(lista.reduce((a, g) => a + g.total, 0) * 100) / 100 };
+}
+
+module.exports = { listarProveedores, crearProveedor, actualizarProveedor, desactivarProveedor, listarCompras, obtenerCompra, crearCompra, actualizarCompra, recibirCompra, catalogo, compraSugerida };

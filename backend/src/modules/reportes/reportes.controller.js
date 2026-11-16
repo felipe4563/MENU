@@ -60,6 +60,18 @@ async function getFinanzasSerie(req, res, next) {
   try { res.json({ ok: true, datos: await svc.finanzasSerie(req.query, _alcance(req)) }); } catch (e) { next(e); }
 }
 
+async function getMargenBajo(req, res, next) {
+  try { res.json({ ok: true, datos: await svc.margenBajo(req.query, _alcance(req)) }); } catch (e) { next(e); }
+}
+
+async function getVentasSemanas(req, res, next) {
+  try { res.json({ ok: true, datos: await svc.ventasSemanas(req.query, _alcance(req)) }); } catch (e) { next(e); }
+}
+
+async function getVentasProductosHora(req, res, next) {
+  try { res.json({ ok: true, datos: await svc.ventasProductosHora(req.query, _alcance(req)) }); } catch (e) { next(e); }
+}
+
 async function getVentasMapaCalor(req, res, next) {
   try { res.json({ ok: true, datos: await svc.ventasMapaCalor(req.query, _alcance(req)) }); } catch (e) { next(e); }
 }
@@ -82,7 +94,7 @@ async function getSinVentas(req, res, next) {
 
 module.exports = {
   getPorAcabarse, getTiemposCocina, getGananciaPlatos, getSinVentas,
-  getVentas, getVentasResumen, getVentasProductos, getVentasVariantes, getVentasMapaCalor,
+  getVentas, getVentasResumen, getVentasProductos, getVentasVariantes, getVentasMapaCalor, getVentasSemanas, getVentasProductosHora, getMargenBajo,
   getInventario, getInventarioResumen,
   getCompras, getComprasResumen,
   getCaja, getCajaResumen,

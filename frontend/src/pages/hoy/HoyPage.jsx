@@ -1,8 +1,8 @@
 import { useMemo } from 'react';
 import { Link } from 'react-router-dom';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { Printer, ArrowUpRight, ArrowDownRight, PackageX } from 'lucide-react';
-import { getReporteVentasResumen, getReporteVentasProductos, getReporteFinanzasSerie, getReporteFinanzasResumen, getReporteVentas, getReporteMapaCalor, getPorAcabarse, getTiemposCocina, getSinVentas } from '../../api/reportes';
+import { Printer, ArrowUpRight, ArrowDownRight, PackageX, TrendingDown } from 'lucide-react';
+import { getReporteVentasResumen, getReporteVentasProductos, getReporteFinanzasSerie, getReporteFinanzasResumen, getReporteVentas, getReporteMapaCalor, getPorAcabarse, getTiemposCocina, getSinVentas, getMargenBajo } from '../../api/reportes';
 import { PorHora, FormasPago, Tendencia, Canales, ResultadoMes, MapaCalor, TiempoCocina } from './graficos';
 import { getVentas } from '../../api/ventas';
 import { getEstadoCajas } from '../../api/caja';
@@ -53,6 +53,7 @@ export default function HoyPage() {
   const pedidosHoy = useQuery({ queryKey: ['hoy', 'pedidos', hoy], queryFn: () => getReporteVentas({ desde: hoy, hasta: hoy, limite: 0 }), enabled: verReportes, refetchInterval: 60_000 });
   const pedidosAyer = useQuery({ queryKey: ['hoy', 'pedidos', ayer], queryFn: () => getReporteVentas({ desde: ayer, hasta: ayer, limite: 0 }), enabled: verReportes, staleTime: 10 * 60_000 });
   const calor = useQuery({ queryKey: ['hoy', 'calor', hoy], queryFn: () => getReporteMapaCalor({ desde: haceDias(27), hasta: hoy }), enabled: verReportes, staleTime: 10 * 60_000 });
+  const margen = useQuery({ queryKey: ['hoy', 'margen'], queryFn: getMargenBajo, enabled: verReportes, staleTime: 10 * 60_000 });
   const acabarse = useQuery({ queryKey: ['hoy', 'acabarse'], queryFn: () => getPorAcabarse(), enabled: verReportes, refetchInterval: 5 * 60_000 });
   const cocina = useQuery({ queryKey: ['hoy', 'cocina'], queryFn: () => getTiemposCocina(), enabled: verReportes, refetchInterval: 60_000 });
   const sinVenta = useQuery({ queryKey: ['hoy', 'sin-ventas'], queryFn: () => getSinVentas({ dias: 14 }), enabled: verReportes, staleTime: 10 * 60_000 });
@@ -114,15 +115,46 @@ export default function HoyPage() {
               {acabarse.data.slice(0, 6).map((f) => (
                 <li key={`${f.tipo}${f.id}`} className="flex items-baseline gap-2 min-w-0">
                   <span className="truncate">{f.nombre}</span>
-                  <span className={cx('num shrink-0 ml-auto', f.stock <= 0 ? 'text-locoto font-semibold' : 'text-tenue')}>
-                    {f.stock <= 0 ? 'agotado' : `quedan ${cantidadCorta(f.stock, f.unidad)} · ${f.dias < 1 ? 'no llega a 1 día' : `para ${Math.round(f.dias)} ${Math.round(f.dias) === 1 ? 'día' : 'días'}`}`}
+                  <span className={cx('num shrink-0 ml-auto', f.stock <= 0 ? 'text-locoto font-semibold' : f.bajo_minimo ? 'text-aji font-semibold' : 'text-tenue')}>
+                    {f.stock <= 0 ? 'agotado'
+                      : f.bajo_minimo ? `quedan ${cantidadCorta(f.stock, f.unidad)} · mínimo ${cantidadCorta(f.minimo, f.unidad)}`
+                      : `quedan ${cantidadCorta(f.stock, f.unidad)} · ${f.dias < 1 ? 'no llega a 1 día' : `para ${Math.round(f.dias)} ${Math.round(f.dias) === 1 ? 'día' : 'días'}`}`}
                   </span>
                 </li>
               ))}
             </ul>
             <p className="text-tenue mt-2">
-              Según lo que se gastó en las últimas 2 semanas.{acabarse.data.length > 6 && ` Y ${acabarse.data.length - 6} más.`}{' '}
+              Según lo que se gastó en las últimas 2 semanas y el stock mínimo de cada insumo.{acabarse.data.length > 6 && ` Y ${acabarse.data.length - 6} más.`}{' '}
               {tiene('insumos', 'ver') && <Link to="/inventario/insumos" className="font-semibold text-tinta underline underline-offset-2">Ver inventario</Link>}
+              {tiene('compras', 'crear') && acabarse.data.some((f) => f.bajo_minimo) && (
+                <>{' · '}<Link to="/inventario/compras?sugerida=1" className="font-semibold text-tinta underline underline-offset-2">Armar la compra</Link></>
+              )}
+            </p>
+          </div>
+        </div>
+      )}
+
+      {(margen.data?.platos ?? []).length > 0 && (
+        <div className="mb-5 rounded-2xl bg-papel border border-linea p-4 flex items-start gap-3">
+          <TrendingDown className="w-5 h-5 text-locoto mt-0.5 shrink-0" />
+          <div className="text-sm flex-1 min-w-0">
+            <p className="font-semibold">
+              {margen.data.platos.length === 1 ? '1 plato deja poca ganancia' : `${margen.data.platos.length} platos dejan poca ganancia`}
+            </p>
+            <ul className="mt-1.5 grid sm:grid-cols-2 gap-x-6 gap-y-1">
+              {margen.data.platos.slice(0, 6).map((f) => (
+                <li key={`${f.tipo}${f.id}`} className="flex items-baseline gap-2 min-w-0">
+                  <span className="truncate">{f.nombre}</span>
+                  <span className="num shrink-0 ml-auto text-tenue">
+                    <span className="text-locoto font-semibold">costo {f.costo_pct.toFixed(0)}%</span> · gana {dinero(f.ganancia_unitaria, moneda)} de {dinero(f.precio, moneda)}
+                  </span>
+                </li>
+              ))}
+            </ul>
+            <p className="text-tenue mt-2">
+              Su costo, con el precio de la última compra de cada insumo, pasa el {margen.data.umbral}% de lo que se cobra. Revisa el precio o la receta.
+              {margen.data.platos.length > 6 && ` Y ${margen.data.platos.length - 6} más.`}{' '}
+              <Link to="/finanzas/platos" className="font-semibold text-tinta underline underline-offset-2">Ver ganancia por plato</Link>
             </p>
           </div>
         </div>

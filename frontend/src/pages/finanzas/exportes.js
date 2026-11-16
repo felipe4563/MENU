@@ -6,8 +6,8 @@ import { getLibroCaja, getResumenLibroCaja } from '../../api/libroCaja';
 import { MOTIVOS_DEVOLUCION } from '../../utils/ticketDevolucion';
 import { etiquetaDestino } from '../vender/datosCatalogo';
 import { dinero, fechaHora } from '../../lib/util';
+import { METODO } from '../../lib/metodosPago';
 
-const METODO = { efectivo: 'Efectivo', qr: 'QR', app_externa: 'App', mixto: 'Mixto' };
 const n = (v) => Number(v || 0);
 const dia = (f) => new Date(`${f}T12:00`).toLocaleDateString('es-BO', { weekday: 'short', day: '2-digit', month: '2-digit' });
 

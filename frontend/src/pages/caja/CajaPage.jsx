@@ -15,6 +15,12 @@ import Hoja from '../../components/ui/Hoja';
 import { Cargando, Campo, Encabezado, Pagina, SinPermiso, Tarjeta, Vacio, Segmentado, Insignia } from '../../components/ui/piezas';
 import { avisar } from '../../components/ui/Aviso';
 import { imprimirCierreLocal } from '../../utils/impresionLocal';
+import { useColaOffline } from '../../lib/ventasOffline';
+import { categoriasElegibles } from '../../lib/flujoCaja';
+import { getCategoriasFlujo } from '../../api/flujoCaja';
+
+// Se pagan desde Equipo › Sueldos, unidos a la persona (ahí se descuentan los adelantos).
+const SUELDOS = ['sueldos', 'bonos'];
 import { cx, dinero, errorDe, hora } from '../../lib/util';
 
 export const DENOMINACIONES = [200, 100, 50, 20, 10, 5, 2, 1, 0.5, 0.2, 0.1];
@@ -51,7 +57,7 @@ function HojaGasto({ sesionId, onCerrar }) {
   const { tiene } = usePermisos();
   const puedeComprar = tiene('compras', 'crear') && tiene('compras', 'recibir');
   const [modo, setModo] = useState('gasto'); // gasto | compra
-  const [f, setF] = useState({ descripcion: '', monto: '' });
+  const [f, setF] = useState({ descripcion: '', monto: '', categoria: '' });
   // Compra: una que ya estaba anotada en Compras, o una nueva (al paso).
   const [elegida, setElegida] = useState(null);
   const [proveedor, setProveedor] = useState('');
@@ -66,8 +72,9 @@ function HojaGasto({ sesionId, onCerrar }) {
     avisar.ok(texto);
     onCerrar();
   };
+  const catsQ = useQuery({ queryKey: ['flujo', 'categorias'], queryFn: getCategoriasFlujo, staleTime: 60000, enabled: modo === 'gasto' });
   const guardar = useMutation({
-    mutationFn: () => registrarGasto(sesionId, { descripcion: f.descripcion.trim(), monto: n(f.monto) }),
+    mutationFn: () => registrarGasto(sesionId, { descripcion: f.descripcion.trim(), monto: n(f.monto), categoria: f.categoria || undefined }),
     onSuccess: () => listo('Gasto registrado'),
     onError: (e) => avisar.error(errorDe(e)),
   });
@@ -98,6 +105,16 @@ function HojaGasto({ sesionId, onCerrar }) {
         <div className="space-y-3">
           <div><label className="etiqueta">¿En qué se gastó?</label><input autoFocus className="campo" value={f.descripcion} onChange={(e) => setF({ ...f, descripcion: e.target.value })} placeholder={puedeComprar ? 'Gas, taxi, adelanto…' : 'Gas, verduras, taxi…'} /></div>
           <div><label className="etiqueta">Monto</label><input inputMode="decimal" className="campo num text-lg" value={f.monto} onChange={(e) => setF({ ...f, monto: e.target.value.replace(',', '.').replace(/[^\d.]/g, '') })} /></div>
+          <div>
+            <label className="etiqueta">Tipo de gasto <span className="font-normal text-tenue">(opcional, ordena el flujo de caja)</span></label>
+            <select className="campo" value={f.categoria} onChange={(e) => setF({ ...f, categoria: e.target.value })}>
+              <option value="">Sin elegir</option>
+              {categoriasElegibles(catsQ.data).map((g) => (
+                <optgroup key={g.clave} label={g.nombre}>{g.categorias.filter((c) => !SUELDOS.includes(c.clave)).map((c) => <option key={c.clave} value={c.clave}>{c.nombre}</option>)}</optgroup>
+              ))}
+            </select>
+            <p className="text-[12px] text-tenue mt-1">Sueldos y adelantos del personal se pagan en Equipo › Sueldos (sale de esta caja igual).</p>
+          </div>
         </div>
       ) : elegida ? (
         <div>
@@ -157,6 +174,8 @@ function HojaCierre({ sesion, onCerrar, onCerrada }) {
   const [reintento, setReintento] = useState(false);
   const [motivo, setMotivo] = useState('');
   const [error, setError] = useState('');
+  const usuarioId = useAuthStore((s) => s.usuario?.id);
+  const porSubir = useColaOffline((s) => s.ventas.filter((v) => v.usuario_id === usuarioId).length);
 
   const contado = modo === 'billetes' ? DENOMINACIONES.reduce((s, d) => s + (parseInt(cant[d], 10) || 0) * d, 0) : n(total);
   const esperado = n(sesion.efectivo_esperado);
@@ -201,6 +220,12 @@ function HojaCierre({ sesion, onCerrar, onCerrada }) {
       ancho="max-w-lg"
       pie={(
         <div className="w-full space-y-2">
+          {porSubir > 0 && (
+            <p className="text-sm text-locoto flex items-start gap-2">
+              <AlertTriangle className="w-4 h-4 shrink-0 mt-0.5" />
+              {porSubir === 1 ? 'Hay 1 venta hecha sin internet' : `Hay ${porSubir} ventas hechas sin internet`} que todavía no se subió. Su efectivo está en el cajón pero no en lo esperado: espera a que vuelva la conexión antes de cerrar.
+            </p>
+          )}
           {error && <p className="text-sm text-locoto">{error}</p>}
           <button data-principal className="btn-peligro btn-lg w-full" disabled={contado <= 0 || (paso === 'motivo' && !motivo.trim()) || cerrar.isPending} onClick={() => cerrar.mutate()}>
             {cerrar.isPending ? <Loader2 className="w-5 h-5 animate-spin" /> : <><Lock className="w-5 h-5" /> Cerrar con {dinero(contado, moneda)}</>}
@@ -263,10 +288,12 @@ function Turno({ sesionBase }) {
 
   const s = sesionQ.data;
   if (!s) return <Cargando />;
-  const esCiego = s.sucursal?.modo_cierre_caja === 'ciego';
+  const esCiego = s.cierre_ciego || s.sucursal?.modo_cierre_caja === 'ciego';
+  // En cierre ciego no se muestran las ventas en efectivo: con ellas se
+  // saca el esperado sumando a mano.
   const filas = [
     ['Con lo que abriste', n(s.monto_apertura)],
-    ['Ventas en efectivo', n(s.ventas_efectivo)],
+    ...(esCiego ? [] : [['Ventas en efectivo', n(s.ventas_efectivo)]]),
     ['Gastos', -n(s.total_gastos)],
     ['Devoluciones en efectivo', -n(s.total_devoluciones)],
   ];
@@ -309,7 +336,9 @@ function Turno({ sesionBase }) {
         <div className="space-y-4">
           <div className="grid grid-cols-2 gap-3">
             <div className="ficha p-4"><p className="text-[13px] text-tenue">Ventas con QR</p><p className="num text-2xl font-bold mt-1">{dinero(s.ventas_qr, moneda)}</p></div>
-            <div className="ficha p-4"><p className="text-[13px] text-tenue">Total vendido</p><p className="num text-2xl font-bold mt-1">{dinero(n(s.ventas_efectivo) + n(s.ventas_qr), moneda)}</p></div>
+            {esCiego
+              ? <div className="ficha p-4"><p className="text-[13px] text-tenue">Efectivo vendido</p><p className="text-sm text-tenue mt-2">Se ve al cerrar la caja</p></div>
+              : <div className="ficha p-4"><p className="text-[13px] text-tenue">Total vendido</p><p className="num text-2xl font-bold mt-1">{dinero(n(s.ventas_efectivo) + n(s.ventas_qr), moneda)}</p></div>}
           </div>
           <Tarjeta titulo="Gastos del turno" cuerpo="px-4 sm:px-5 pb-4 pt-2">
             {(gastosQ.data ?? []).length === 0 ? <p className="text-sm text-tenue py-3">Sin gastos todavía.</p> : (

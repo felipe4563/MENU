@@ -13,6 +13,9 @@ router.get('/sin-ventas', verificarPermiso('reportes', 'ver'), ctrl.getSinVentas
 router.get('/ganancia-platos', verificarPermiso('reportes', 'ver'), ctrl.getGananciaPlatos);
 router.get('/cocina/tiempos', verificarPermiso('reportes', 'ver'), ctrl.getTiemposCocina);
 router.get('/por-acabarse', verificarPermiso('reportes', 'ver'), ctrl.getPorAcabarse);
+router.get('/margen-bajo', verificarPermiso('reportes', 'ver'), ctrl.getMargenBajo);
+router.get('/ventas/semanas', verificarPermiso('reportes', 'ver'), ctrl.getVentasSemanas);
+router.get('/ventas/productos-hora', verificarPermiso('reportes', 'ver'), ctrl.getVentasProductosHora);
 router.get('/ventas/mapa-calor', verificarPermiso('reportes', 'ver'), ctrl.getVentasMapaCalor);
 router.get('/ventas',         verificarPermiso('reportes', 'ver'), ctrl.getVentas);
 router.get('/inventario/resumen', verificarPermiso('reportes', 'ver'), ctrl.getInventarioResumen);

@@ -39,6 +39,9 @@ const Pedido = sequelize.define('Pedido', {
   monto_recibido: { type: DataTypes.DECIMAL(10,2) },
   cambio: { type: DataTypes.DECIMAL(10,2), defaultValue: 0 },
   notas: { type: DataTypes.TEXT },
+  // Venta hecha sin internet y subida después (ver migración 068).
+  clave_offline: { type: DataTypes.STRING(40), allowNull: true },
+  sin_conexion: { type: DataTypes.BOOLEAN, allowNull: false, defaultValue: false },
 }, {
   tableName: 'pedidos',
   createdAt: 'creado_en',

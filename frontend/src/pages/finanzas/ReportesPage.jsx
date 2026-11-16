@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { ResponsiveContainer, BarChart, Bar, XAxis, YAxis, Tooltip, CartesianGrid, ReferenceLine } from 'recharts';
-import { getReporteVentasResumen, getReporteVentasProductos, getReporteVentas, getReporteFinanzasResumen, getReporteFinanzasSerie, getReporteArqueos } from '../../api/reportes';
+import { getReporteVentasResumen, getReporteVentasProductos, getReporteVentas, getReporteFinanzasResumen, getReporteFinanzasSerie, getReporteArqueos, getReporteSemanas, getReporteProductosHora } from '../../api/reportes';
 import { usePermisos } from '../../hooks/usePermisos';
 import { useMoneda } from '../../hooks/useConfig';
 import { Cargando, Encabezado, Pagina, Segmentado, SinPermiso, Vacio, Insignia } from '../../components/ui/piezas';
@@ -11,8 +11,8 @@ import { MOTIVOS_DEVOLUCION } from '../../utils/ticketDevolucion';
 import { etiquetaDestino } from '../vender/datosCatalogo';
 import { PorHora, FormasPago } from '../hoy/graficos';
 import { cx, dinero, fechaHora, hoyISO } from '../../lib/util';
+import { METODO } from '../../lib/metodosPago';
 
-const METODO = { efectivo: 'Efectivo', qr: 'QR', app_externa: 'App', mixto: 'Mixto' };
 
 function Kpi({ etiqueta, valor, tono, nota }) {
   return (
@@ -111,6 +111,104 @@ function Ranking({ productos = [], moneda, rango }) {
   );
 }
 
+const DIAS_SEMANA = ['Lun', 'Mar', 'Mié', 'Jue', 'Vie', 'Sáb', 'Dom'];
+const DIAS_LARGOS = ['lunes', 'martes', 'miércoles', 'jueves', 'viernes', 'sábado', 'domingo'];
+const fechaCorta = (f) => new Date(`${f}T12:00`).toLocaleDateString('es-BO', { day: 'numeric', month: 'short' });
+
+// Esta semana (lunes a la fecha final del rango) contra los mismos días de
+// la semana anterior. El gráfico muestra los 7 días de las dos semanas.
+function Semanas({ hasta, moneda }) {
+  const q = useQuery({ queryKey: ['rep-semanas', hasta], queryFn: () => getReporteSemanas({ hasta }) });
+  const d = q.data;
+  if (!d) return null;
+  const { actual, anterior } = d;
+  const cambio = anterior.total > 0 ? ((actual.total - anterior.total) / anterior.total) * 100 : null;
+  const tramo = d.hasta_dia === 6 ? 'semana completa' : `de lunes a ${DIAS_LARGOS[d.hasta_dia]}`;
+  const datos = DIAS_SEMANA.map((dia, i) => ({ dia, actual: actual.dias[i].total, anterior: anterior.dias[i].total }));
+  return (
+    <section className="ficha p-5 sm:p-6">
+      <div className="flex flex-wrap items-baseline gap-x-6 gap-y-1 mb-4">
+        <h2 className="font-display font-semibold text-lg mr-auto">Esta semana contra la anterior</h2>
+        <p className="text-sm text-tenue">Del {fechaCorta(actual.desde)} al {fechaCorta(actual.hasta)} · {tramo}</p>
+      </div>
+      <div className="flex flex-wrap gap-x-10 gap-y-3 mb-4">
+        <div>
+          <p className="text-[13px] text-tenue">Esta semana</p>
+          <p className="num text-2xl font-extrabold">{dinero(actual.total, moneda)}</p>
+          <p className="text-xs text-tenue">{actual.pedidos} {actual.pedidos === 1 ? 'pedido' : 'pedidos'}</p>
+        </div>
+        <div>
+          <p className="text-[13px] text-tenue">Semana anterior, mismos días</p>
+          <p className="num text-2xl font-extrabold text-tenue">{dinero(anterior.total, moneda)}</p>
+          <p className="text-xs text-tenue">{anterior.pedidos} {anterior.pedidos === 1 ? 'pedido' : 'pedidos'}</p>
+        </div>
+        {cambio != null && (
+          <div>
+            <p className="text-[13px] text-tenue">Diferencia</p>
+            <p className={cx('num text-2xl font-extrabold', cambio >= 0 ? 'text-hierba' : 'text-locoto')}>{cambio >= 0 ? '+' : '−'}{Math.abs(cambio).toFixed(0)}%</p>
+            <p className="text-xs text-tenue num">{actual.total - anterior.total >= 0 ? '+' : '−'}{dinero(Math.abs(actual.total - anterior.total), moneda)}</p>
+          </div>
+        )}
+      </div>
+      <div className="flex gap-4 text-xs text-tenue mb-2" aria-hidden>
+        <span className="inline-flex items-center gap-1.5"><span className="w-2.5 h-2.5 rounded-sm bg-aji" /> Esta semana</span>
+        <span className="inline-flex items-center gap-1.5"><span className="w-2.5 h-2.5 rounded-sm bg-tenue/40" /> Semana anterior</span>
+      </div>
+      <div className="h-56">
+        <ResponsiveContainer>
+          <BarChart data={datos} margin={{ top: 6, right: 6, left: -12, bottom: 0 }} barCategoryGap="22%" barGap={2}>
+            <CartesianGrid vertical={false} stroke="rgb(var(--linea))" />
+            <XAxis dataKey="dia" tick={{ fontSize: 11, fill: 'rgb(var(--tenue))' }} tickLine={false} axisLine={false} />
+            <YAxis tick={{ fontSize: 11, fill: 'rgb(var(--tenue))' }} tickLine={false} axisLine={false} tickFormatter={corto} width={44} />
+            <Tooltip cursor={{ fill: 'rgb(var(--hundido))' }} contentStyle={{ borderRadius: 12, border: '1px solid rgb(var(--linea))', background: 'rgb(var(--papel))' }}
+              formatter={(v, nombre) => [v == null ? 'todavía no' : dinero(v, moneda), nombre === 'actual' ? 'Esta semana' : 'Semana anterior']} />
+            <Bar dataKey="anterior" radius={[4, 4, 0, 0]} maxBarSize={28} fill="rgb(var(--tenue) / 0.4)" />
+            <Bar dataKey="actual" radius={[4, 4, 0, 0]} maxBarSize={28} fill="rgb(var(--aji))" />
+          </BarChart>
+        </ResponsiveContainer>
+      </div>
+    </section>
+  );
+}
+
+const horaTexto = (h) => `${String(h).padStart(2, '0')}:00`;
+
+// Para cada hora con ventas, los 3 productos con más unidades vendidas.
+function MasVendidoPorHora({ rango, moneda }) {
+  const q = useQuery({ queryKey: ['rep-prod-hora', rango], queryFn: () => getReporteProductosHora(rango) });
+  const horas = q.data ?? [];
+  const max = Math.max(1, ...horas.map((h) => h.monto));
+  return (
+    <section className="ficha">
+      <header className="px-5 pt-4 pb-1">
+        <h2 className="font-display font-semibold text-lg">Lo más vendido por hora</h2>
+        <p className="text-sm text-tenue">Los 3 productos con más unidades en cada hora, sumando todos los días del rango.</p>
+      </header>
+      {q.isLoading ? <div className="py-6"><Cargando /></div> : !horas.length ? <p className="px-5 py-8 text-sm text-tenue">Sin ventas en estas fechas.</p> : (
+        <ul className="px-5 py-2">
+          {horas.map((h) => (
+            <li key={h.hora} className="py-2.5 border-b border-linea last:border-0 grid grid-cols-[3.5rem_minmax(0,1fr)_auto] sm:grid-cols-[3.5rem_minmax(0,1fr)_7rem] gap-x-3 items-center">
+              <span className="num font-bold">{horaTexto(h.hora)}</span>
+              <span className="flex flex-wrap gap-1.5 min-w-0">
+                {h.productos.map((x, i) => (
+                  <span key={`${x.tipo}${x.id}`} className={cx('inline-flex items-baseline gap-1 rounded-lg px-2 py-0.5 text-sm max-w-full', i === 0 ? 'bg-aji/20 font-semibold' : 'bg-hundido')}>
+                    <span className="truncate">{x.nombre}</span>
+                    <span className="num text-tenue text-xs shrink-0">{x.cantidad}{x.unidad === 'kg' ? ' kg' : ''}</span>
+                  </span>
+                ))}
+              </span>
+              <span className="text-right">
+                <span className="num text-sm font-semibold block">{dinero(h.monto, moneda)}</span>
+                <span className="hidden sm:block mt-1 h-1 rounded-full bg-hundido"><span className="block h-full rounded-full bg-aji" style={{ width: `${(h.monto / max) * 100}%` }} /></span>
+              </span>
+            </li>
+          ))}
+        </ul>
+      )}
+    </section>
+  );
+}
+
 function Ventas({ rango, moneda }) {
   const [pagina, setPagina] = useState(1);
   const unDia = rango.desde === rango.hasta;
@@ -161,7 +259,11 @@ function Ventas({ rango, moneda }) {
         </div>
       </div>
 
+      <Semanas hasta={rango.hasta} moneda={moneda} />
+
       <Ranking productos={p.data ?? []} moneda={moneda} rango={rango} />
+
+      <MasVendidoPorHora rango={rango} moneda={moneda} />
       <section className="ficha">
         <header className="flex items-center gap-2 px-5 pt-4">
           <h2 className="font-display font-semibold text-lg flex-1">Todas las ventas <span className="text-sm text-tenue font-normal">· {l.data?.total ?? 0}</span></h2>

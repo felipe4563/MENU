@@ -11,21 +11,40 @@ export const redondear = (n) => Math.round(Number(n || 0) * 100) / 100;
 // Partes cobradas o con un QR esperando, en orden.
 export const partesVigentes = (pedido) => (pedido?.pagos ?? []).filter((p) => ESTADOS_VIGENTES.includes(p.estado));
 
-// "Juanita" o "Parte 2" (por su número entre las partes vigentes).
-export const nombreDeParte = (pago, indice) => pago.persona || `Parte ${indice + 1}`;
+// "Juanita", "Parte 2 de 4" (partes iguales) o "Parte 2" (por su número
+// entre las partes vigentes).
+export const nombreDeParte = (pago, indice) => pago.persona
+  || (pago.partes_de ? `Parte ${pago.parte_numero} de ${pago.partes_de}` : `Parte ${indice + 1}`);
+
+// La última parte igual vigente si su división sigue a medias (p. ej. se
+// cobró la 2 de 4 y se cerró la hoja): { parte_numero, partes_de } o null.
+export function divisionEnCurso(pedido) {
+  const ultima = partesVigentes(pedido).filter((p) => p.modo === 'iguales').at(-1);
+  if (!ultima?.partes_de || ultima.parte_numero >= ultima.partes_de) return null;
+  return { parte_numero: ultima.parte_numero, partes_de: ultima.partes_de };
+}
 
 export const faltaDe = (pedido) => redondear(Number(pedido?.total || 0) - Number(pedido?.pagado || 0));
+
+// Pedido abierto cuyas partes ya cubren el total (y ningún QR esperando):
+// datos viejos de antes de que se cerrara solo. Hay que cerrarlo.
+export function cuentaYaPagada(pedido) {
+  if (!pedido || !['pendiente', 'listo'].includes(pedido.estado)) return false;
+  const partes = partesVigentes(pedido);
+  return partes.some((p) => p.estado === 'completado') && !partes.some((p) => p.estado === 'pendiente') && faltaDe(pedido) <= 0.005;
+}
 
 const nombreDeDetalle = (d) => (d.combo ? d.combo.nombre : d.producto?.nombre ?? 'Producto');
 
 // Cada unidad vigente del pedido por separado (un plato con cantidad 3 son 3
-// unidades). Las que ya pagó (o reservó un QR) una parte llevan su nombre.
+// unidades). Las que ya pagó (o reservó un QR) una parte llevan su nombre;
+// `esperandoQr` marca las de un QR que todavía no se pagó.
 export function unidadesDelPedido(pedido) {
-  const pagadas = new Map(); // detalle_id -> [nombre por unidad pagada]
+  const pagadas = new Map(); // detalle_id -> [{ nombre, esperandoQr } por unidad]
   partesVigentes(pedido).forEach((pago, i) => {
     for (const item of pago.items ?? []) {
       const lista = pagadas.get(item.detalle_pedido_id) ?? [];
-      for (let k = 0; k < Number(item.cantidad); k++) lista.push(nombreDeParte(pago, i));
+      for (let k = 0; k < Number(item.cantidad); k++) lista.push({ nombre: nombreDeParte(pago, i), esperandoQr: pago.estado === 'pendiente' });
       pagadas.set(item.detalle_pedido_id, lista);
     }
   });
@@ -35,7 +54,10 @@ export function unidadesDelPedido(pedido) {
     const vigentes = Number(d.cantidad) - Number(d.cantidad_anulada || 0);
     const quien = pagadas.get(d.id) ?? [];
     for (let i = 0; i < vigentes; i++) {
-      unidades.push({ clave: `${d.id}:${i}`, detalle_id: d.id, nombre: nombreDeDetalle(d), precio: Number(d.precio), pagadaPor: quien[i] ?? null });
+      unidades.push({
+        clave: `${d.id}:${i}`, detalle_id: d.id, nombre: nombreDeDetalle(d), precio: Number(d.precio),
+        pagadaPor: quien[i]?.nombre ?? null, esperandoQr: quien[i]?.esperandoQr ?? false,
+      });
     }
   }
   return unidades;

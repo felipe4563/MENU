@@ -13,8 +13,8 @@ import Hoja from '../../components/ui/Hoja';
 import HojaAnular, { HistorialDevoluciones } from './HojaAnular';
 import { etiquetaDestino, nombreDetalle, textoOpcionesDetalle } from './datosCatalogo';
 import { cx, dinero, errorDe, hora } from '../../lib/util';
+import { METODO } from '../../lib/metodosPago';
 
-const METODO = { efectivo: 'Efectivo', qr: 'QR', app_externa: 'App', mixto: 'Mixto' };
 
 function Detalle({ id, onCerrar }) {
   const moneda = useMoneda();

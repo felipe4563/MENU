@@ -572,6 +572,16 @@ async function _cerrarVenta({ pedido, detalles, usuario_id }, transaction) {
  * libro de caja y libera la mesa si corresponde. Debe correr dentro de una
  * transacción activa.
  */
+// Propina: un monto >= 0 que no supere la cuenta (frena un dedo de más al
+// tipearla). Llega como número o texto; vacío = sin propina.
+function _propinaValida(propina, total) {
+  if (propina === undefined || propina === null || propina === '') return 0;
+  const n = Number(propina);
+  if (!Number.isFinite(n) || n < 0) throw Object.assign(new Error('La propina debe ser un monto mayor o igual a 0'), { status: 400 });
+  if (n > Number(total) + 0.005) throw Object.assign(new Error('La propina no puede ser mayor que la cuenta'), { status: 400 });
+  return Math.round(n * 100) / 100;
+}
+
 async function _finalizarVenta({ pedido, detalles, metodo_pago, monto_recibido, descuento = 0, propina = 0, usuario_id, puntos_canjear = 0, cupon_codigo, canjeYaReservado = false }, transaction) {
   const cfgFidelidad = await _configFidelidad(transaction);
 
@@ -699,7 +709,10 @@ async function emitirAnulacionCocina(pedido_id, lineasAnuladas, { devolucion_id 
 function _partesDelTicket(pedidoJSON) {
   const hechas = (pedidoJSON.pagos || []).filter((p) => p.estado === 'completado');
   if (!hechas.length) return null;
-  return hechas.map((p, i) => ({ numero: i + 1, persona: p.persona || null, metodo_pago: p.metodo_pago, monto: Number(p.monto) }));
+  return hechas.map((p, i) => ({
+    numero: i + 1, persona: p.persona || null, metodo_pago: p.metodo_pago, monto: Number(p.monto),
+    ...(p.partes_de ? { parte_numero: p.parte_numero, partes_de: p.partes_de } : {}),
+  }));
 }
 
 // `pagoParcial` (ver pagosParciales._datosComprobante): el ticket de caja es
@@ -1229,13 +1242,52 @@ async function procesarWebhookPagoQr({ event, order_id }) {
   }
 }
 
-async function crearCompleta({ tipo, mesa_id, nombre_cliente, documento_cliente, tipo_documento, notas, items, metodo_pago, monto_recibido, descuento = 0, propina = 0, sesion_caja_id, usuario_id, cliente_id, puntos_canjear = 0, cupon_codigo, mesa_sesion_id = null, origen = 'staff', direccion_entrega = null, telefono_cliente = null, origen_app = null }) {
+// Venta sin internet que ya se subió antes (misma clave): se devuelve tal cual,
+// sin imprimir. Solo la ve quien la subió.
+async function _ventaYaSubida(clave_offline, usuario_id) {
+  const ya = await Pedido.findOne({ where: { clave_offline } });
+  if (!ya) return null;
+  if (ya.usuario_id !== usuario_id) throw Object.assign(new Error('Esa venta ya la subió otra persona'), { status: 409 });
+  return { ...(await obtener(ya.id)).toJSON(), datos_impresion: null, repetida: true };
+}
+
+// Hora en que se hizo una venta sin internet. Sin hora, o con una hora del
+// futuro o de hace más de una semana (reloj de la caja mal puesto), vale la
+// hora de subida.
+const SEMANA_MS = 7 * 24 * 3600 * 1000;
+function _horaVentaSinConexion(vendido_en) {
+  const d = vendido_en ? new Date(vendido_en) : null;
+  const ahora = Date.now();
+  if (!d || Number.isNaN(d.getTime()) || d.getTime() > ahora + 60_000 || d.getTime() < ahora - SEMANA_MS) return null;
+  return d;
+}
+
+async function crearCompleta({ tipo, mesa_id, nombre_cliente, documento_cliente, tipo_documento, notas, items, metodo_pago, monto_recibido, descuento = 0, propina = 0, sesion_caja_id, usuario_id, cliente_id, puntos_canjear = 0, cupon_codigo, mesa_sesion_id = null, origen = 'staff', direccion_entrega = null, telefono_cliente = null, origen_app = null, clave_offline = null, sin_conexion = false, vendido_en = null }) {
+  // La misma venta puede llegar dos veces (se cortó la respuesta y el
+  // navegador la reintentó desde su cola): se devuelve la que ya existe.
+  if (clave_offline) {
+    const ya = await _ventaYaSubida(clave_offline, usuario_id);
+    if (ya) return ya;
+  }
+  // Venta hecha sin internet que se sube ahora: solo efectivo y para llevar
+  // (sin cliente, puntos ni cupones, que necesitan el servidor al cobrar).
+  if (sin_conexion) {
+    if (!clave_offline) throw Object.assign(new Error('Falta la clave de la venta sin internet'), { status: 400 });
+    if (tipo !== 'llevar' || metodo_pago !== 'efectivo' || cliente_id || Number(puntos_canjear) > 0 || cupon_codigo) {
+      throw Object.assign(new Error('Sin internet solo se vende en efectivo y para llevar'), { status: 400 });
+    }
+  }
   if (!sesion_caja_id) {
     throw Object.assign(new Error('No hay caja abierta. Abre la caja antes de crear una orden.'), { status: 409 });
   }
   const sesionActiva = await SesionCaja.findByPk(sesion_caja_id);
-  if (!sesionActiva || sesionActiva.estado !== 'abierta') {
+  // Una venta sin internet pudo hacerse antes de que se cerrara la caja: se
+  // acepta igual y el ingreso cae en la caja abierta (_sesionCajaParaAsiento).
+  if (!sesionActiva || (sesionActiva.estado !== 'abierta' && !sin_conexion)) {
     throw Object.assign(new Error('La sesión de caja no está abierta.'), { status: 409 });
+  }
+  if (sin_conexion && sesionActiva.usuario_id !== usuario_id) {
+    throw Object.assign(new Error('Esa caja no es tuya'), { status: 403 });
   }
   const sucursal_id = sesionActiva.sucursal_id;
 
@@ -1248,7 +1300,9 @@ async function crearCompleta({ tipo, mesa_id, nombre_cliente, documento_cliente,
     if (item.combo_id) {
       const combo = await Combo.findByPk(item.combo_id);
       if (!combo) throw Object.assign(new Error('Combo no encontrado'), { status: 404 });
-      if (!combo.activo || !estaActivoHoy(combo)) {
+      // Lo vendido sin internet ya se entregó: se registra aunque después se
+      // haya desactivado.
+      if (!sin_conexion && (!combo.activo || !estaActivoHoy(combo))) {
         throw Object.assign(new Error(`El combo "${combo.nombre}" no está disponible`), { status: 409 });
       }
       const opcionesPorProducto = await _validarOpcionesCombo(item.combo_id, item.opciones_por_producto);
@@ -1259,7 +1313,7 @@ async function crearCompleta({ tipo, mesa_id, nombre_cliente, documento_cliente,
     }
     const producto = await Producto.findByPk(item.producto_id);
     if (!producto) throw Object.assign(new Error('Producto no encontrado'), { status: 404 });
-    if (!producto.activo || !producto.es_vendible) throw Object.assign(new Error('Producto no disponible'), { status: 409 });
+    if (!sin_conexion && (!producto.activo || !producto.es_vendible)) throw Object.assign(new Error('Producto no disponible'), { status: 409 });
     const extra = await _extraPorOpciones(item.opcion_ids);
     const precioBase = await _precioConPromocion(producto);
     const linea = _datosLinea(item, producto, precioBase, extra);
@@ -1284,20 +1338,30 @@ async function crearCompleta({ tipo, mesa_id, nombre_cliente, documento_cliente,
   const { descuento: descuentoPuntos } = await _resolverCanje(cliente_id, puntos_canjear, cfgFidelidad, null, metodo_pago);
 
   const total = productos.reduce((sum, { linea }) => sum + linea.cantidad * linea.precio, 0);
+  propina = _propinaValida(propina, total);
   const itemsCupon = productos.map(({ item, combo, linea }) => ({ producto_id: combo ? null : item.producto_id, combo_id: combo ? combo.id : null, cantidad: linea.cantidad, precio: linea.precio }));
   const { descuento: descuentoCupon } = await _resolverCupon(cupon_codigo, total - parseFloat(descuento), cliente_id, undefined, itemsCupon);
   const monto_neto = Math.max(0, total - parseFloat(descuento) - descuentoPuntos - descuentoCupon + parseFloat(propina));
 
-  if (metodo_pago === 'efectivo' && _montoInsuficiente(monto_recibido, monto_neto)) {
+  if (sin_conexion) {
+    // El dinero ya se recibió con los precios que tenía la caja. Si un precio
+    // cambió mientras no había internet, la venta se registra igual (el
+    // arqueo mostrará la diferencia) en vez de quedar trabada en la cola.
+    if (_montoInsuficiente(monto_recibido, monto_neto)) monto_recibido = monto_neto;
+  } else if (metodo_pago === 'efectivo' && _montoInsuficiente(monto_recibido, monto_neto)) {
     throw Object.assign(new Error('Monto recibido insuficiente'), { status: 400 });
   }
 
   const numero_llevar = (tipo === 'llevar' || tipo === 'delivery') ? await _siguienteNumeroLlevar() : null;
   const estadoInicial = (metodo_pago === 'qr' || metodo_pago === 'diferido') ? 'pendiente' : 'completado';
-  const estado_cocina = await _estadoCocinaInicial();
+  // Lo vendido sin internet ya salió de cocina con su ticket impreso: no se
+  // agrega a la pantalla de Cocina al subirlo.
+  const estado_cocina = sin_conexion ? null : await _estadoCocinaInicial();
 
-  const pedidoId = await sequelize.transaction(async (t) => {
+  let pedidoId;
+  try { pedidoId = await sequelize.transaction(async (t) => {
     const pedido = await Pedido.create({
+      clave_offline: clave_offline || null, sin_conexion: !!sin_conexion,
       mesa_id: tipo === 'mesa' ? mesa_id : null,
       mesa_sesion_id: tipo === 'mesa' ? mesa_sesion_id : null,
       tipo, origen, origen_app, numero_llevar, usuario_id, cliente_id: cliente_id || null, sesion_caja_id, sucursal_id, notas,
@@ -1336,8 +1400,29 @@ async function crearCompleta({ tipo, mesa_id, nombre_cliente, documento_cliente,
       await _finalizarVenta({ pedido, detalles, metodo_pago, monto_recibido, descuento, propina, usuario_id, puntos_canjear, cupon_codigo }, t);
     }
 
+    // La venta sin internet queda con la hora en que se hizo (no la de
+    // subida), para que caiga en su día y su hora en los reportes.
+    const vendida = sin_conexion ? _horaVentaSinConexion(vendido_en) : null;
+    if (vendida) {
+      await sequelize.query('UPDATE pedidos SET creado_en = ? WHERE id = ?', { replacements: [vendida, pedido.id], transaction: t });
+    }
+
     return pedido.id;
-  });
+  }); } catch (err) {
+    // Dos envíos de la misma venta a la vez: el segundo choca con la clave
+    // única y devuelve la que guardó el primero.
+    if (clave_offline && err?.name === 'SequelizeUniqueConstraintError') {
+      const ya = await _ventaYaSubida(clave_offline, usuario_id);
+      if (ya) return ya;
+    }
+    throw err;
+  }
+
+  if (sin_conexion) {
+    // El ticket ya se imprimió en la caja cuando se vendió: no se reimprime.
+    emitir('restaurante:actualizar', { tipo: 'pedido_cobrado' }, sucursal_id);
+    return { ...(await obtener(pedidoId)).toJSON(), datos_impresion: null };
+  }
 
   if (metodo_pago === 'qr') {
     const pedidoPendiente = await Pedido.findByPk(pedidoId);
@@ -1523,6 +1608,7 @@ async function cobrar(pedido_id, usuario_id, { metodo_pago, monto_recibido, desc
   if (!pedido) throw Object.assign(new Error('Pedido no encontrado'), { status: 404 });
   _verificarAlcance(pedido, alcance);
   if (!['pendiente', 'listo'].includes(pedido.estado)) throw Object.assign(new Error('El pedido no puede cobrarse'), { status: 409 });
+  propina = _propinaValida(propina, pedido.total);
 
   // Con partes ya cobradas (o un QR de parte esperando) se cobra solo lo que falta.
   const loQueFalta = await require('./pagosParciales.service').cobrarLoQueFalta(

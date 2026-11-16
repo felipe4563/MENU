@@ -40,9 +40,9 @@ async function abrir(req, res, next) {
 
 async function registrarGasto(req, res, next) {
   try {
-    const { descripcion, monto } = req.body;
+    const { descripcion, monto, categoria } = req.body;
     if (!descripcion || monto === undefined) return res.status(400).json({ ok: false, mensaje: 'descripcion y monto son requeridos' });
-    res.status(201).json({ ok: true, datos: await svc.registrarGasto(req.params.id, req.usuario.id, { descripcion, monto }, _alcance(req)) });
+    res.status(201).json({ ok: true, datos: await svc.registrarGasto(req.params.id, req.usuario.id, { descripcion, monto, categoria }, _alcance(req)) });
   } catch (err) { next(err); }
 }
 

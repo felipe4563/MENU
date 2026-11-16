@@ -15,6 +15,7 @@ import Hoja from '../ui/Hoja';
 import CambioContrasena from './CambioContrasena';
 import CocinaPendienteBT from './CocinaPendienteBT';
 import ImpresoraDispositivo from './ImpresoraDispositivo';
+import VentasSinConexion from './VentasSinConexion';
 import { useEnLinea } from '../../hooks/useEnLinea';
 
 function Marca({ compacto }) {
@@ -158,11 +159,7 @@ export default function Shell() {
           </header>
         )}
 
-        {!enLinea && (
-          <div className="bg-locoto text-white text-[13px] text-center py-1.5 px-4">
-            Sin conexión. Puedes ver el menú, pero no se registran ventas hasta que vuelva el internet.
-          </div>
-        )}
+        <VentasSinConexion />
 
         <main className={cx('flex-1 min-h-0', ajustada ? 'overflow-hidden' : 'overflow-y-auto', !inmersiva && (ajustada ? 'pb-16 md:pb-0' : 'pb-20 md:pb-0'))}>
           <Outlet />

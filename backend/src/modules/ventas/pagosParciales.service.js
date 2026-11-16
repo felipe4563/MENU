@@ -187,8 +187,8 @@ const _hayAjuste = (v) => (typeof v === 'string' ? v.trim() !== '' && Number(v) 
 
 // Datos del comprobante de una parte (`pago_parcial` del ticket de caja).
 // `pedido` viene de ventasService.obtener (con detalles y pagos por id). Su
-// número es el que tenía al crearse: las partes vigentes hasta ella. El
-// "1 de N" de partes iguales no se guarda, así que va null.
+// número es el que tenía al crearse: las partes vigentes hasta ella. En
+// partes iguales lleva además "parte_numero de partes_de" (si se guardó).
 function _datosComprobante(pedido, pago_id) {
   const vigentes = (pedido.pagos || []).filter((p) => ['pendiente', 'completado'].includes(p.estado));
   const indice = vigentes.findIndex((p) => p.id === pago_id);
@@ -210,7 +210,8 @@ function _datosComprobante(pedido, pago_id) {
     cambio: Number(pago.cambio || 0),
     pagado: Number(pedido.pagado),
     falta: falta(pedido),
-    partes_iguales_de: null,
+    parte_numero: pago.parte_numero ?? null,
+    partes_iguales_de: pago.partes_de ?? null,
     items,
   };
 }
@@ -239,15 +240,28 @@ async function imprimirParte(pedido, pago_id, completado, { sinEmitir = false } 
   }
 }
 
+// "Parte 2 de 4" de una parte igual: los dos números o ninguno (null, null).
+function _parteDe(parte_numero, partes_de) {
+  const vacio = (v) => v === undefined || v === null || v === '';
+  if (vacio(parte_numero) && vacio(partes_de)) return { parte_numero: null, partes_de: null };
+  const k = Number(parte_numero);
+  const n = Number(partes_de);
+  if (!Number.isInteger(k) || !Number.isInteger(n) || k < 1 || n < 2 || k > n || n > 50) {
+    throw error('Número de parte inválido', 400);
+  }
+  return { parte_numero: k, partes_de: n };
+}
+
 // Con `saldoCompleto` (cobro de la cuenta completa con pagos hechos) la parte
 // es exactamente lo que falta, leído con el pedido bloqueado.
-async function cobrarParte(pedido_id, usuario_id, { metodo_pago, monto_recibido, persona, modo, monto, items, descuento, cupon_codigo, puntos_canjear, propina } = {}, alcance, { saldoCompleto = false } = {}) {
+async function cobrarParte(pedido_id, usuario_id, { metodo_pago, monto_recibido, persona, modo, monto, items, parte_numero, partes_de, descuento, cupon_codigo, puntos_canjear, propina } = {}, alcance, { saldoCompleto = false } = {}) {
   if (!MODOS.includes(modo)) throw error("modo debe ser 'platos' o 'iguales'", 400);
   if (_hayAjuste(descuento) || (cupon_codigo && String(cupon_codigo).trim() !== '') || _hayAjuste(puntos_canjear) || _hayAjuste(propina)) {
     throw error('Con pagos parciales no se aplican descuentos, cupones ni puntos', 400);
   }
   if (!METODOS.includes(metodo_pago)) throw error("metodo_pago debe ser 'efectivo' o 'qr'", 400);
   const esQr = metodo_pago === 'qr';
+  const deN = modo === 'iguales' && !saldoCompleto ? _parteDe(parte_numero, partes_de) : { parte_numero: null, partes_de: null };
 
   const resultado = await sequelize.transaction(async (t) => {
     const pedido = await Pedido.findByPk(pedido_id, { transaction: t, lock: t.LOCK.UPDATE });
@@ -290,7 +304,7 @@ async function cobrarParte(pedido_id, usuario_id, { metodo_pago, monto_recibido,
 
     const pago = await PedidoPago.create({
       pedido_id: pedido.id, usuario_id, sesion_caja_id, metodo_pago, monto: montoParte, monto_recibido: recibido, cambio,
-      persona: nombre || null, modo, estado: esQr ? 'pendiente' : 'completado',
+      persona: nombre || null, modo, ...deN, estado: esQr ? 'pendiente' : 'completado',
     }, { transaction: t });
     // Las unidades de un QR pendiente quedan reservadas (ver unidadesPagadas).
     if (lineas.length) {

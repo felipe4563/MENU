@@ -1,8 +1,9 @@
 import { useEffect, useState } from 'react';
 import { Link, useLocation } from 'react-router-dom';
 import { Bluetooth, BluetoothOff, Loader2, Printer, Unlink, CheckCircle2 } from 'lucide-react';
-import { emparejar, impresoraGuardada, olvidar, soportaBluetooth } from '../../utils/bluetoothDirecto';
+import { emparejar, impresoraGuardada, olvidar, soportaBluetooth, viaGuardada } from '../../utils/bluetoothDirecto';
 import { imprimirPrueba } from '../../utils/rawbt';
+import EstadoBt from './EstadoBt';
 import { useConfigPublica } from '../../hooks/useConfig';
 import { Segmentado } from '../ui/piezas';
 import { avisar } from '../ui/Aviso';
@@ -70,13 +71,18 @@ export default function ImpresoraDispositivo({ compacto = false }) {
 
   return (
     <div className="space-y-3">
+      {viaGuardada() === 'serial' && (
+        <p className="rounded-xl bg-cielo/10 px-3 py-2.5 text-[13px]">
+          Este dispositivo imprime por el <b>puerto COM</b> (Bluetooth clásico). Se cambia en Probar impresora › Si no conecta o no imprime.
+        </p>
+      )}
       {impresora ? (
         <div className="rounded-xl border border-linea p-4">
           <div className="flex items-center gap-3">
             <span className="w-10 h-10 rounded-xl bg-hierba/15 text-hierba grid place-items-center shrink-0"><Bluetooth className="w-5 h-5" /></span>
             <div className="min-w-0 flex-1">
               <p className="text-[13px] text-tenue flex items-center gap-1"><CheckCircle2 className="w-3.5 h-3.5 text-hierba" /> Conectada en este dispositivo</p>
-              <p className="font-semibold truncate">{impresora.nombre}</p>
+              <p className="font-semibold truncate flex items-center gap-2">{impresora.nombre} <EstadoBt /></p>
             </div>
           </div>
           <div className={cx('mt-3 grid gap-2', compacto ? 'grid-cols-1' : 'sm:grid-cols-3')}>
@@ -120,7 +126,7 @@ export default function ImpresoraDispositivo({ compacto = false }) {
             : resultado.errorLogo ? `Se mandó sin logo: ${resultado.errorLogo}` : 'Se mandó el ticket sin logo.'}
         </p>
       )}
-      <p className="text-[12px] text-tenue">Funciona con impresoras térmicas Bluetooth BLE. Si la tuya no aparece en la lista, usa la conexión con la app RawBT.</p>
+      <p className="text-[12px] text-tenue">Funciona con impresoras térmicas Bluetooth BLE. Si la tuya no aparece, conecta pero no imprime o sale cortada, pruébala en Probar impresora › Si no conecta o no imprime.</p>
       {!enPruebas && <Link to="/impresora" className="text-[13px] font-semibold text-aji hover:underline inline-block">¿Sale mal la ñ o las tildes? Probar impresora</Link>}
     </div>
   );

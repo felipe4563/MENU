@@ -165,9 +165,9 @@ export default function GananciaPlatosPage() {
             <section className="ficha p-5">
               <div className="flex flex-wrap items-baseline gap-3 mb-1">
                 <h2 className="font-display font-semibold text-lg mr-auto">Sin costo todavía</h2>
-                {tiene('insumos', 'ver') && <Link to="/inventario/insumos" className="text-sm font-semibold underline underline-offset-2">Cargar recetas</Link>}
+                {tiene('insumos', 'ver') && <Link to="/menu/productos" className="text-sm font-semibold underline underline-offset-2">Cargar recetas</Link>}
               </div>
-              <p className="text-sm text-tenue mb-3">Para calcularlos, carga su receta en Inventario › Insumos y registra las compras de sus ingredientes. Si se compran hechos, registra su compra.</p>
+              <p className="text-sm text-tenue mb-3">Para calcularlos, carga su receta en Menú › Productos (en cada plato) y registra las compras de sus ingredientes. Si se compran hechos, registra su compra.</p>
               {sinCostoVisibles.length > 0 && (
                 <ul className="divide-y divide-dashed divide-linea">
                   {sinCostoVisibles.map((p) => (

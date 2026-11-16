@@ -67,6 +67,29 @@ test('una parte sin platos dice "Parte de la cuenta" y por QR no lleva recibido 
   assert.ok(t.lineas.every((l) => l.length <= 32));
 });
 
+test('una parte igual con "k de N" dice "Parte 2 de 4"', () => {
+  const t = new EscPrueba(32);
+  ticket.pagoParcial(t, datos({
+    pago_id: 3, numero: 3, persona: null, modo: 'iguales', monto: 25, metodo_pago: 'efectivo',
+    monto_recibido: 25, cambio: 0, pagado: 50, falta: 50, parte_numero: 2, partes_iguales_de: 4, items: [],
+  }));
+  const s = t.texto;
+  assert.match(s, /Parte 2 de 4/);
+  assert.match(s, /Dividida en 4 partes iguales/);
+  assert.doesNotMatch(s, /Parte 3/);
+  assert.ok(t.lineas.every((l) => l.length <= 32));
+});
+
+test('bloquePartes muestra "Parte k de N" en las partes iguales', () => {
+  const t = new EscPrueba(48);
+  ticket.bloquePartes(t, [
+    { numero: 1, persona: null, metodo_pago: 'efectivo', monto: 50, parte_numero: 1, partes_de: 2 },
+    { numero: 2, persona: null, metodo_pago: 'qr', monto: 50, parte_numero: 2, partes_de: 2 },
+  ], 'Bs.');
+  assert.match(t.texto, /Parte 1 de 2 - Efectivo\s+Bs\. 50\.00/);
+  assert.match(t.texto, /Parte 2 de 2 - QR\s+Bs\. 50\.00/);
+});
+
 test('bloquePartes lista una línea por parte', () => {
   const t = new EscPrueba(48);
   ticket.bloquePartes(t, [
