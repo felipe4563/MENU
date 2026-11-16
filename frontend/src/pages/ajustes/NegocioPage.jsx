@@ -4,6 +4,7 @@ import { Cargando, Campo, Pagina, Encabezado, SinPermiso } from '../../component
 import { SubirImagen, urlImagen } from '../../components/ui/formulario';
 import { useConfiguracion, Seccion } from './comun';
 import { cx, iniciales } from '../../lib/util';
+import InstalarApp from '../../components/shell/InstalarApp';
 
 const COLORES = ['#F2B705', '#E4572E', '#8A0000', '#2F9E6B', '#2F6FD2', '#7B4AE2', '#D73382', '#17262B'];
 const CLAVES = ['nombre_negocio', 'telefono', 'direccion', 'moneda', 'simbolo_moneda', 'color_primario', 'logo', 'portada', 'pie_ticket', 'alerta_costo_pct'];
@@ -70,6 +71,9 @@ function Formulario({ config, guardar, editar }) {
           </Seccion>
           <Seccion titulo="Ticket" texto="Mensaje al final de cada ticket de venta.">
             <textarea rows={2} className="campo max-w-3xl" {...campo('pie_ticket')} placeholder="¡Gracias por su preferencia!" />
+          </Seccion>
+          <Seccion titulo="Instalar la app" texto="En el celular, la tablet o la computadora: queda con el logo y el nombre de tu negocio. Cada persona la instala en su dispositivo desde Mi perfil.">
+            <InstalarApp />
           </Seccion>
         </div>
 

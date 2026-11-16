@@ -8,6 +8,7 @@ import { useConfigPublica } from '../../hooks/useConfig';
 import { Segmentado } from '../ui/piezas';
 import { avisar } from '../ui/Aviso';
 import { cx } from '../../lib/util';
+import { esApple } from '../../lib/instalarApp';
 
 const CLAVE_ANCHO = 'rusoft-impresora-bt-ancho';
 const leerAncho = () => { try { return localStorage.getItem(CLAVE_ANCHO) || '80mm'; } catch { return '80mm'; } };
@@ -24,9 +25,6 @@ function useImpresora() {
 
 // Conectar la impresora Bluetooth de ESTE celular o computadora. El navegador
 // recuerda el permiso por dispositivo: cada aparato que vende lo hace una vez.
-// iPhone o iPad (el iPad se presenta como Mac, pero con pantalla táctil).
-const esApple = () => /iPhone|iPad|iPod/.test(navigator.userAgent) || (/Macintosh/.test(navigator.userAgent) && navigator.maxTouchPoints > 1);
-
 export default function ImpresoraDispositivo({ compacto = false }) {
   const impresora = useImpresora();
   const enPruebas = useLocation().pathname === '/impresora';
