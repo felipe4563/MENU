@@ -196,7 +196,7 @@ export default function VenderPage() {
   };
 
   const vaciar = async () => {
-    if (await confirmar({ titulo: '¿Vaciar la comanda?', texto: 'Se quitan todos los productos que agregaste.', confirmar: 'Vaciar', peligro: true })) limpiar();
+    if (await confirmar({ titulo: '¿Borrar todo?', texto: 'Se quitan todos los productos de la comanda.', confirmar: 'Borrar todo', peligro: true })) limpiar();
   };
 
   const panelComanda = (
@@ -205,7 +205,11 @@ export default function VenderPage() {
         <div className="flex items-center gap-2">
           <h2 className="font-display font-bold text-xl flex-1">Comanda</h2>
           <span className="text-xs text-tenue">{caja.sesion.caja_nombre}</span>
-          {lineas.length > 0 && <button className="btn-icono btn-fantasma h-8 w-8" onClick={vaciar} aria-label="Vaciar comanda"><Trash2 className="w-4 h-4" /></button>}
+          {lineas.length > 0 && (
+            <button className="inline-flex items-center gap-1 h-8 px-2.5 rounded-lg text-sm font-semibold text-locoto hover:bg-locoto/10" onClick={vaciar}>
+              <Trash2 className="w-4 h-4" /> Borrar todo
+            </button>
+          )}
         </div>
         <DestinoChips
           destino={destino}

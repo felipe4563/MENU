@@ -1,7 +1,6 @@
 import { useMemo, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { Link } from 'react-router-dom';
-import { Boxes, ArrowDownToLine, ArrowUpFromLine, ClipboardCheck, History, ScrollText } from 'lucide-react';
+import { Boxes, ArrowDownToLine, ArrowUpFromLine, ClipboardCheck, History } from 'lucide-react';
 import { getProductos } from '../../api/productos';
 import { getInventario, registrarEntrada, registrarSalida, registrarAjuste } from '../../api/inventario';
 import { usePermisos } from '../../hooks/usePermisos';
@@ -58,9 +57,7 @@ export default function StockPage() {
     <Pagina>
       <Encabezado titulo="Stock" texto="Productos que se cuentan por unidad (bebidas, empaquetados). La comida preparada no lleva stock."
         acciones={<>
-          <Segmentado valor={vista} onCambio={setVista} opciones={[{ valor: 'stock', etiqueta: 'Existencias', Icono: Boxes }, { valor: 'movimientos', etiqueta: 'Movimientos', Icono: History }]} />
-          {tiene('inventario', 'ver') && <Link className="btn-borde" to="/inventario/kardex"><ScrollText className="w-4 h-4" /> Kardex valorizado</Link>}
-        </>} />
+          <Segmentado valor={vista} onCambio={setVista} opciones={[{ valor: 'stock', etiqueta: 'Existencias', Icono: Boxes }, { valor: 'movimientos', etiqueta: 'Movimientos', Icono: History }]} />        </>} />
       {vista === 'stock' ? (
         <>
           <Buscador valor={q} onCambio={setQ} placeholder="Buscar producto" className="mb-4 max-w-md" />

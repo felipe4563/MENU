@@ -17,6 +17,7 @@ async function listar({ buscar } = {}) {
     where[Op.or] = [
       { nombre: { [Op.like]: `%${buscar}%` } },
       { numero_documento: { [Op.like]: `%${buscar}%` } },
+      { telefono: { [Op.like]: `%${buscar}%` } },
     ];
   }
   const clientes = await Cliente.findAll({ where, order: [['nombre', 'ASC']] });

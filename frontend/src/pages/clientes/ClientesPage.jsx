@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { Plus, Users, Star, Cake, Phone, KeyRound, Search, Loader2, Clock, Disc3, Ticket, MessageCircle } from 'lucide-react';
+import { Plus, Users, Star, Cake, Phone, KeyRound, Search, Loader2, Clock, Disc3, Ticket, MessageCircle, ChevronDown } from 'lucide-react';
 import { getClientes, crearCliente, actualizarCliente, buscarClientePorDocumento, resetearPinCliente, getFichaCliente } from '../../api/clientes';
 import { getVentas } from '../../api/ventas';
 import { usePermisos } from '../../hooks/usePermisos';
@@ -62,7 +62,9 @@ function HojaCliente({ c, onCerrar }) {
 }
 
 function Caja({ valor, texto }) {
-  return <div className="rounded-xl bg-hundido px-3 py-2.5 min-w-0"><p className="num text-lg font-bold truncate">{valor}</p><p className="text-xs text-tenue">{texto}</p></div>;
+  // Montos largos ("Bs. 3,115.00") bajan de tamaño para entrar completos.
+  const largo = String(valor).length > 9;
+  return <div className="rounded-xl bg-hundido px-3 py-2.5 min-w-0"><p className={cx('num font-bold whitespace-nowrap', largo ? 'text-sm leading-7' : 'text-lg')}>{valor}</p><p className="text-xs text-tenue">{texto}</p></div>;
 }
 
 // Ficha del cliente: resumen, lo que más pide, cupones, ruleta, puntos y compras.
@@ -185,7 +187,7 @@ function Detalle({ c, onEditar, onCerrar }) {
 
           {tab === 'compras' && (!tiene('ventas', 'ver') ? <p className="text-sm text-tenue">No tienes permiso para ver ventas.</p> : compras.isLoading ? <Cargando /> : (compras.data ?? []).length === 0 ? <p className="text-sm text-tenue">Sin compras registradas.</p> : (
             <ul className="divide-y divide-linea text-sm">
-              {compras.data.slice(0, 15).map((p) => <li key={p.id} className="py-2 flex gap-3"><span className="text-tenue w-16">{fechaCorta(p.creado_en)}</span><span className="flex-1">{etiquetaDestino(p)}</span><span className="num">{dinero(p.total, moneda)}</span></li>)}
+              {compras.data.slice(0, 30).map((p) => <Compra key={p.id} p={p} moneda={moneda} />)}
             </ul>
           ))}
         </>
@@ -197,6 +199,56 @@ function Detalle({ c, onEditar, onCerrar }) {
       </div>
       {confirmacion}
     </Hoja>
+  );
+}
+
+// Una compra del cliente: al tocarla se abre lo que pidió (platos, opciones,
+// notas). Lo anulado no se muestra; lo anulado en parte, con lo que quedó.
+function Compra({ p, moneda }) {
+  const [abierta, setAbierta] = useState(false);
+  const lineas = (p.detalles ?? [])
+    .map((d) => ({ ...d, vigente: Number(d.cantidad) - Number(d.cantidad_anulada || 0) }))
+    .filter((d) => d.vigente > 0);
+  return (
+    <li>
+      <button className="w-full py-2 flex items-center gap-3 text-left hover:bg-hundido/50 rounded-lg" onClick={() => setAbierta(!abierta)} aria-expanded={abierta}>
+        <span className="text-tenue w-16">{fechaCorta(p.creado_en)}</span>
+        <span className="flex-1">{etiquetaDestino(p)}</span>
+        <span className="num">{dinero(p.total, moneda)}</span>
+        <ChevronDown className={cx('w-4 h-4 text-tenue transition-transform', abierta && 'rotate-180')} />
+      </button>
+      {abierta && (
+        <div className="ml-16 mb-3 rounded-xl bg-hundido/60 px-3 py-2">
+          {lineas.length === 0 ? <p className="text-xs text-tenue">Sin detalle.</p> : (
+            <ul className="space-y-1.5">
+              {lineas.map((d) => {
+                const opciones = [
+                  ...(d.opciones ?? []).map((o) => o.nombre),
+                  ...(d.combo_opciones ?? []).map((o) => o.opcion?.nombre).filter(Boolean),
+                ];
+                return (
+                  <li key={d.id} className="flex gap-2">
+                    <span className="num text-tenue w-7 shrink-0">{d.peso ? `${Number(d.peso)}kg` : `${d.vigente}×`}</span>
+                    <span className="flex-1 min-w-0">
+                      {d.producto?.nombre ?? d.combo?.nombre ?? 'Producto'}
+                      {opciones.length > 0 && <span className="block text-xs text-tenue">{opciones.join(', ')}</span>}
+                      {d.nota && <span className="block text-xs italic text-tinta/70">“{d.nota}”</span>}
+                    </span>
+                    <span className="num">{dinero(Number(d.precio) * d.vigente, moneda)}</span>
+                  </li>
+                );
+              })}
+            </ul>
+          )}
+          {(Number(p.descuento) > 0 || Number(p.descuento_cupon) > 0 || Number(p.propina) > 0) && (
+            <div className="mt-2 pt-2 border-t border-linea text-xs text-tenue space-y-0.5">
+              {Number(p.descuento) + Number(p.descuento_cupon || 0) > 0 && <p className="flex justify-between"><span>Descuento</span><span className="num">−{dinero(Number(p.descuento) + Number(p.descuento_cupon || 0), moneda)}</span></p>}
+              {Number(p.propina) > 0 && <p className="flex justify-between"><span>Propina</span><span className="num">{dinero(p.propina, moneda)}</span></p>}
+            </div>
+          )}
+        </div>
+      )}
+    </li>
   );
 }
 
@@ -222,16 +274,17 @@ export default function ClientesPage() {
     <Pagina>
       <Encabezado titulo="Clientes" texto={`${filas.length} ${buscar ? 'encontrados' : 'registrados'}`}
         acciones={tiene('clientes', 'crear') && <button className="btn-aji" onClick={() => setEditar('nuevo')}><Plus className="w-4 h-4" /> Nuevo cliente</button>} />
-      <Buscador valor={q} onCambio={setQ} placeholder="Buscar por nombre o CI" className="mb-4 max-w-md" />
+      <Buscador valor={q} onCambio={setQ} placeholder="Buscar por nombre, CI o teléfono" className="mb-4 max-w-md" />
       {lista.isLoading ? <Cargando /> : filas.length === 0 ? <Vacio Icono={Users} titulo={buscar ? 'Nadie coincide' : 'Aún no hay clientes'} texto={!buscar ? 'Se registran al cobrar o desde aquí. Con puntos activados, vuelven más.' : undefined} /> : (
-        <ul className="ficha divide-y divide-linea">
+        <ul className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3 2xl:grid-cols-4">
           {filas.slice(0, 200).map((c) => (
             <li key={c.id}>
-              <button className="w-full flex items-center gap-3 px-4 py-3 text-left hover:bg-hundido" onClick={() => setVer(c)}>
-                <span className="w-10 h-10 rounded-full bg-hundido grid place-items-center font-display font-bold text-sm">{iniciales(c.nombre)}</span>
+              <button className="ficha w-full h-full p-4 flex items-center gap-3 text-left transition-colors hover:border-tinta/30 hover:bg-hundido/40" onClick={() => setVer(c)}>
+                <span className="w-12 h-12 shrink-0 rounded-full bg-hundido grid place-items-center font-display font-bold">{iniciales(c.nombre)}</span>
                 <div className="flex-1 min-w-0">
                   <p className="font-semibold truncate">{c.nombre}</p>
-                  <p className="text-xs text-tenue">{c.numero_documento ? `${c.tipo_documento} ${c.numero_documento}` : 'Sin documento'}{c.telefono ? ` · ${c.telefono}` : ''}</p>
+                  <p className="text-xs text-tenue truncate">{c.numero_documento ? `${c.tipo_documento} ${c.numero_documento}` : 'Sin documento'}</p>
+                  {c.telefono && <p className="text-xs text-tenue flex items-center gap-1 mt-0.5"><Phone className="w-3 h-3" /> {c.telefono}</p>}
                 </div>
                 {c.puntos > 0 && <Insignia tono="alerta"><Star className="w-3 h-3" /> {c.puntos}</Insignia>}
               </button>
