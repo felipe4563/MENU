@@ -7,8 +7,8 @@ const { convertirEnPedido } = require('../modules/reservas/convertir.service');
 const push = require('../modules/push/push.service');
 
 const MIN = 60000;
-// Solo las reservas de las últimas 24 horas: una pendiente vieja no se manda
-// a cocina ni avisa.
+// El aviso de "no llegó" mira solo las últimas 24 horas: de una pendiente
+// vieja no se avisa. A cocina sale sola solo dentro de su horario (enHorario).
 const VENTANA = 24 * 60 * MIN;
 // La duración más larga de una reserva (10 horas).
 const DURACION_MAX = 600 * MIN;
