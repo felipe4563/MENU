@@ -1,7 +1,9 @@
 import api from './cliente';
 
 export const getEstadoCajas = (sucursal_id) =>
-  api.get('/caja/estado', { params: sucursal_id ? { sucursal_id } : {} }).then(r => r.data.datos).catch(() => []);
+  api.get('/caja/estado', { params: sucursal_id ? { sucursal_id } : {} }).then(r => r.data.datos)
+    // Sin conexión el error sigue: así queda lo último guardado en vez de "no hay cajas".
+    .catch((e) => { if (!e.response) throw e; return []; });
 
 export const getSesiones = () =>
   api.get('/caja').then(r => r.data.datos);

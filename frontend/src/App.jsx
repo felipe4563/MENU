@@ -1,18 +1,14 @@
 import { useEffect } from 'react';
 import { RouterProvider } from 'react-router-dom';
-import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
+import { PersistQueryClientProvider } from '@tanstack/react-query-persist-client';
 import { router } from './router';
 import { Avisos } from './components/ui/Aviso';
 import { useTemaStore } from './store/temaStore';
 import { useConfigPublica } from './hooks/useConfig';
 import ActualizarApp from './components/shell/ActualizarApp';
 import { hexACanales, tintaSobre } from './lib/util';
+import { opcionesPersistencia, queryClient } from './lib/queryClient';
 
-const queryClient = new QueryClient({
-  defaultOptions: {
-    queries: { staleTime: 20_000, refetchOnWindowFocus: true, retry: 1 },
-  },
-});
 
 // Aplica claro/oscuro y el color de marca del negocio.
 function Tema() {
@@ -60,13 +56,22 @@ function iconoPestana(cfg) {
   }
 }
 
+// Al tocar una notificación con la app abierta, el service worker pide ir a su pantalla.
+if ('serviceWorker' in navigator) {
+  navigator.serviceWorker.addEventListener('message', (e) => {
+    if (e.data?.tipo !== 'ir') return;
+    const u = new URL(e.data.url, window.location.origin);
+    router.navigate(u.pathname + u.search);
+  });
+}
+
 export default function App() {
   return (
-    <QueryClientProvider client={queryClient}>
+    <PersistQueryClientProvider client={queryClient} persistOptions={opcionesPersistencia}>
       <Tema />
       <RouterProvider router={router} future={{ v7_startTransition: true }} />
       <Avisos />
       <ActualizarApp />
-    </QueryClientProvider>
+    </PersistQueryClientProvider>
   );
 }

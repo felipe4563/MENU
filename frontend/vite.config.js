@@ -21,6 +21,8 @@ export default defineConfig(({ mode }) => {
         // logo de cada restaurante (ver index.html y backend/src/modules/pwa).
         manifest: false,
         workbox: {
+          // Notificaciones push (public/sw-push.js).
+          importScripts: ['/sw-push.js'],
           globPatterns: ['**/*.{js,css,html,ico,png,svg,woff,woff2}'],
           maximumFileSizeToCacheInBytes: 4 * 1024 * 1024,
           navigateFallback: '/index.html',
@@ -62,6 +64,9 @@ export default defineConfig(({ mode }) => {
     // En desarrollo el manifest y los íconos se piden al backend como si
     // fuera el mismo dominio (en producción lo hace nginx).
     server: { host: true, port: 5173, proxy: { '/api/v1/pwa': 'http://localhost:3001' } },
+    // Para probar la app instalable y sin internet en la máquina (npm run build
+    // && npx vite preview): el service worker solo existe en el build.
+    preview: { port: 4173, proxy: { '/api': 'http://localhost:3001', '/uploads': 'http://localhost:3001', '/socket.io': { target: 'http://localhost:3001', ws: true } } },
     build: {
       rollupOptions: {
         output: {

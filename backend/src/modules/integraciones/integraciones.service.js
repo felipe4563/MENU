@@ -5,6 +5,7 @@ const { listarProductos } = require('../productos/productos.service');
 const { listarActivos: listarCombosActivos } = require('../combos/combos.service');
 const { listarActivas: listarPromocionesActivas } = require('../promociones/promociones.service');
 const { obtenerPublica: obtenerConfigPublica } = require('../configuracion/configuracion.service');
+const push = require('../push/push.service');
 
 async function obtenerMenu(sucursal_id) {
   const alcance = { sucursal_id, acceso_todas: false };
@@ -61,7 +62,7 @@ async function crearPedido(sucursal_id, { items, tipo, direccion_entrega, telefo
     throw Object.assign(new Error('El local no está tomando pedidos en este momento.'), { status: 409 });
   }
 
-  return ventasService.crearCompleta({
+  const creado = await ventasService.crearCompleta({
     tipo,
     items,
     direccion_entrega,
@@ -74,6 +75,14 @@ async function crearPedido(sucursal_id, { items, tipo, direccion_entrega, telefo
     origen_app,
     cupon_codigo,
   });
+  const p = creado?.pedido ?? creado;
+  push.avisar(async () => push.aPermiso({ modulo: 'pedidos_externos', accion: 'ver', sucursal_id }, {
+    titulo: `Nuevo pedido de ${origen_app || 'delivery'}`,
+    cuerpo: `${nombre_cliente || 'Cliente'} · ${await push.dinero(p?.total)}${pago === 'prepago' ? ' · ya pagado' : ''}`,
+    url: '/externos',
+    etiqueta: p?.id ? `externo-${p.id}` : undefined,
+  }));
+  return creado;
 }
 
 // Mismo motivo que autoservicio.service.js:consultarEstadoPedido — la

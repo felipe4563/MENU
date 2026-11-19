@@ -1,6 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
 import { NavLink, Outlet, useLocation, useNavigate } from 'react-router-dom';
-import { useQueryClient } from '@tanstack/react-query';
 import { MoreHorizontal, Search, LogOut, Moon, Sun, Monitor, UserRound, Clock, WifiOff, Bluetooth, ArrowLeft } from 'lucide-react';
 import { useAuthStore } from '../../store/authStore';
 import { useTemaStore } from '../../store/temaStore';
@@ -16,6 +15,8 @@ import CambioContrasena from './CambioContrasena';
 import CocinaPendienteBT from './CocinaPendienteBT';
 import ImpresoraDispositivo from './ImpresoraDispositivo';
 import VentasSinConexion from './VentasSinConexion';
+import { desvincularPush } from '../../lib/push';
+import { limpiarDatos } from '../../lib/queryClient';
 import { useEnLinea } from '../../hooks/useEnLinea';
 
 function Marca({ compacto }) {
@@ -44,7 +45,6 @@ function MenuUsuario({ onCerrar }) {
   const logout = useAuthStore((s) => s.logout);
   const { modo, setModo } = useTemaStore();
   const navigate = useNavigate();
-  const qc = useQueryClient();
   const ir = (to) => { onCerrar(); navigate(to); };
   const [verImpresora, setVerImpresora] = useState(false);
 
@@ -81,7 +81,7 @@ function MenuUsuario({ onCerrar }) {
       </div>
       <button
         className="btn-borde w-full mt-5 text-locoto"
-        onClick={() => { logout(); qc.clear(); navigate('/login'); }}
+        onClick={async () => { await desvincularPush(); logout(); await limpiarDatos(); navigate('/login'); }}
       >
         <LogOut className="w-4 h-4" /> Cerrar sesión
       </button>

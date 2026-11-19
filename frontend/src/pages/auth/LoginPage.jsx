@@ -6,6 +6,8 @@ import { useAuthStore } from '../../store/authStore';
 import { logoSrc } from '../../api/configuracion';
 import { useConfigPublica } from '../../hooks/useConfig';
 import { primeraRuta } from '../../components/shell/navegacion';
+import { vincularPush } from '../../lib/push';
+import { limpiarDatos } from '../../lib/queryClient';
 import { errorDe, iniciales } from '../../lib/util';
 
 function useReloj() {
@@ -160,8 +162,10 @@ export default function LoginPage() {
     if (window.location.search) window.history.replaceState({}, '', '/login');
   }, []);
 
-  function entrar(datos) {
+  async function entrar(datos) {
+    await limpiarDatos(); // lo guardado del usuario anterior no se le muestra a este
     setAuth(datos);
+    vincularPush();
     navigate(primeraRuta(datos.usuario?.permisos), { replace: true });
   }
 

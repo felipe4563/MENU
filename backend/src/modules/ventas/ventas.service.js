@@ -13,6 +13,7 @@ const { estaActivoHoy } = require('../../utils/disponibilidad');
 const { resolver: _resolverCupon } = require('../cupones/cupones.service');
 const mesasService = require('../mesas/mesas.service');
 const { cantidadVigente } = require('../devoluciones/calculo');
+const push = require('../push/push.service');
 
 // Rango del día calendario en hora de Bolivia (-04:00), sin depender de la
 // zona horaria del proceso de Node/VPS. Por defecto usa el momento actual;
@@ -1093,6 +1094,12 @@ async function _confirmarPagoQr(pagoQrInicial, { confirmado_por = null } = {}) {
       mesa: completado.mesa?.nombre ?? null,
       monto: parseFloat(completado.total),
     }, completado.sucursal_id);
+    push.avisar(async () => push.aPermiso({ modulo: 'ventas', accion: 'crear', sucursal_id: completado.sucursal_id }, {
+      titulo: `Pedido desde la mesa${completado.mesa?.nombre ? ' ' + completado.mesa.nombre : ''}`,
+      cuerpo: `Pagado con QR · ${await push.dinero(completado.total)}`,
+      url: `/vender/pedido/${completado.id}`,
+      etiqueta: `pedido-${completado.id}`,
+    }));
   }
   await _emitirImpresion(completado, 'qr', 0, completado.sucursal_id);
   return completado;
@@ -1730,6 +1737,15 @@ async function marcarListo(pedido_id, alcance) {
   });
   const listo = await obtener(pedido_id);
   emitir('restaurante:actualizar', { tipo: 'pedido_listo' });
+  // Al que tomó el pedido (el mesero o el cajero), aunque tenga la app cerrada.
+  if (listo.origen !== 'app_externa' && listo.origen !== 'autoservicio') {
+    push.avisar(() => push.aUsuarios([listo.usuario_id], {
+      titulo: 'Pedido listo',
+      cuerpo: listo.tipo === 'mesa' ? `${listo.mesa?.nombre ?? 'Mesa'} · ${listo.nombre_cliente || ''}`.replace(/ · $/, '') : `Para llevar #${listo.numero_llevar ?? listo.id} · ${listo.nombre_cliente || 'Cliente'}`,
+      url: `/vender/pedido/${listo.id}`,
+      etiqueta: `listo-${listo.id}`,
+    }));
+  }
   return listo;
 }
 

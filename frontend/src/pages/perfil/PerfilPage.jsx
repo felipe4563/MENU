@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import InstalarApp from '../../components/shell/InstalarApp';
+import Notificaciones from '../../components/shell/Notificaciones';
 import { useMutation, useQuery } from '@tanstack/react-query';
 import { getPerfil, actualizarPerfil, cambiarContrasena } from '../../api/perfil';
 import { useAuthStore } from '../../store/authStore';
@@ -108,6 +109,11 @@ export default function PerfilPage() {
         {q.data && <Datos perfil={q.data} />}
         <Clave />
         <Apariencia />
+        <section className="ficha p-5 sm:p-6 lg:col-span-2">
+          <h2 className="font-display font-semibold text-lg">Notificaciones</h2>
+          <p className="text-[13px] text-tenue mt-1 mb-4">Avisos en este dispositivo aunque tengas la app cerrada.</p>
+          <Notificaciones />
+        </section>
         <section className="ficha p-5 sm:p-6 lg:col-span-2">
           <h2 className="font-display font-semibold text-lg">Instalar la app</h2>
           <p className="text-[13px] text-tenue mt-1 mb-4">Para abrir el sistema desde un ícono, como cualquier otra app.</p>

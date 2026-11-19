@@ -32,7 +32,10 @@ export function haceMinutos(fecha) {
 }
 
 export function errorDe(err, porDefecto = 'Algo salió mal. Intenta de nuevo.') {
-  return err?.response?.data?.mensaje ?? (err?.message === 'Network Error' ? 'Sin conexión con el servidor.' : porDefecto);
+  if (err?.response?.data?.mensaje) return err.response.data.mensaje;
+  // Sin respuesta del servidor: no hay internet (o se cayó la conexión con él).
+  if (err?.isAxiosError && !err.response && err.code !== 'ERR_CANCELED') return 'Sin internet: no se pudo guardar. Inténtalo cuando vuelva la conexión.';
+  return porDefecto;
 }
 
 // "#d97706" -> "217 119 6"

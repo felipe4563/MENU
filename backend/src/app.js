@@ -42,6 +42,7 @@ const pwaRoutes = require('./modules/pwa/pwa.routes');
 const devolucionesRoutes = require('./modules/devoluciones/devoluciones.routes');
 const personalRoutes = require('./modules/personal/personal.routes');
 const sueldosRoutes = require('./modules/sueldos/sueldos.routes');
+const pushRoutes = require('./modules/push/push.routes');
 const kardexRoutes = require('./modules/kardex/kardex.routes');
 const reservasRoutes = require('./modules/reservas/reservas.routes');
 
@@ -109,6 +110,7 @@ app.use('/api/v1/pwa', pwaRoutes);
 app.use('/api/v1/uploads', uploadsRoutes);
 app.use('/api/v1/personal', personalRoutes);
 app.use('/api/v1/sueldos', sueldosRoutes);
+app.use('/api/v1/push', pushRoutes);
 app.use('/api/v1/kardex', kardexRoutes);
 app.use('/api/v1/reservas', reservasRoutes);
 app.use('/api/v1/devoluciones', devolucionesRoutes);

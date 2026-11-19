@@ -1,5 +1,6 @@
 import axios from 'axios';
 import { useAuthStore } from '../store/authStore';
+import { marcarServidor } from '../hooks/useEnLinea';
 
 const api = axios.create({
   baseURL: import.meta.env.VITE_API_URL ?? 'http://localhost:3001/api/v1',
@@ -16,8 +17,11 @@ api.interceptors.request.use((config) => {
 
 // Refresh automático en 401
 api.interceptors.response.use(
-  (response) => response,
+  (response) => { marcarServidor(true); return response; },
   async (error) => {
+    // Sin respuesta: el servidor no se alcanza (sin internet). Con respuesta, aunque sea un error, sí hay conexión.
+    if (error.response) marcarServidor(true);
+    else if (error.code !== 'ERR_CANCELED') marcarServidor(false);
     const config = error.config;
     if (error.response?.status === 401 && !config._reintentado) {
       config._reintentado = true;

@@ -44,6 +44,7 @@ const LibroCaja = require('./LibroCaja');
 const CategoriaFlujo = require('./CategoriaFlujo');
 const SueldoPersonal = require('./SueldoPersonal');
 const PagoPersonal = require('./PagoPersonal');
+const PushSuscripcion = require('./PushSuscripcion');
 const AusenciaPersonal = require('./AusenciaPersonal');
 const Devolucion = require('./Devolucion');
 const DevolucionItem = require('./DevolucionItem');
@@ -274,6 +275,7 @@ module.exports = {
   Proveedor, Compra, DetalleCompra,
   RegistroInventario,
   Configuracion,
+  PushSuscripcion,
   Sucursal,
   ProductoStockSucursal,
   Caja,
