@@ -27,6 +27,8 @@ const Usuario = require('./Usuario');
 const Area = require('./Area');
 const Mesa = require('./Mesa');
 const Reserva = require('./Reserva');
+const ReservaItem = require('./ReservaItem');
+const ReservaPago = require('./ReservaPago');
 const MesaSesion = require('./MesaSesion');
 const Categoria = require('./Categoria');
 const Producto = require('./Producto');
@@ -99,6 +101,12 @@ Mesa.hasMany(MesaSesion, { foreignKey: 'mesa_id', as: 'sesiones' });
 MesaSesion.belongsTo(Mesa, { foreignKey: 'mesa_id', as: 'mesa' });
 Reserva.belongsTo(Mesa, { foreignKey: 'mesa_id', as: 'mesa' });
 Reserva.belongsTo(Usuario, { foreignKey: 'usuario_id', as: 'usuario' });
+Reserva.belongsTo(Pedido, { foreignKey: 'pedido_id', as: 'pedido' });
+Reserva.hasMany(ReservaItem, { as: 'items', foreignKey: 'reserva_id' });
+Reserva.hasMany(ReservaPago, { as: 'pagos', foreignKey: 'reserva_id' });
+ReservaItem.belongsTo(Reserva, { as: 'reserva', foreignKey: 'reserva_id' });
+ReservaPago.belongsTo(Reserva, { as: 'reserva', foreignKey: 'reserva_id' });
+ReservaPago.belongsTo(Usuario, { as: 'usuario', foreignKey: 'usuario_id' });
 MesaSesion.belongsTo(Sucursal, { foreignKey: 'sucursal_id', as: 'sucursal' });
 
 // Productos
@@ -286,5 +294,5 @@ module.exports = {
   Insumo, InsumoStockSucursal, InsumoMovimiento, CocinaTiempo, RecetaInsumo, DetallePedidoOpcion, DetallePedidoComboOpcion,
   IntegracionApiKey,
   HorarioPersonal, MarcacionPersonal,
-  Reserva,
+  Reserva, ReservaItem, ReservaPago,
 };

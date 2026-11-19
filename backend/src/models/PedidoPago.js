@@ -12,7 +12,7 @@ const PedidoPago = sequelize.define('PedidoPago', {
   monto_recibido: { type: DataTypes.DECIMAL(10, 2) },
   cambio: { type: DataTypes.DECIMAL(10, 2), allowNull: false, defaultValue: 0 },
   persona: { type: DataTypes.STRING(80) },
-  modo: { type: DataTypes.ENUM('platos', 'iguales'), allowNull: false },
+  modo: { type: DataTypes.ENUM('platos', 'iguales', 'adelanto'), allowNull: false },
   // Partes iguales: "Parte parte_numero de partes_de" (null por platos).
   parte_numero: { type: DataTypes.TINYINT.UNSIGNED },
   partes_de: { type: DataTypes.TINYINT.UNSIGNED },

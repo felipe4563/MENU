@@ -15,6 +15,13 @@ const Reserva = sequelize.define('Reserva', {
   duracion_min: { type: DataTypes.SMALLINT.UNSIGNED, allowNull: false, defaultValue: 120 },
   notas: { type: DataTypes.STRING(255), allowNull: true },
   estado: { type: DataTypes.ENUM(...ESTADOS), allowNull: false, defaultValue: 'pendiente', validate: { isIn: [ESTADOS] } },
+  // Pedido en que se convirtió la reserva (con platos) y cuándo se mandó a cocina.
+  pedido_id: { type: DataTypes.INTEGER.UNSIGNED, allowNull: true },
+  envio_cocina: { type: DataTypes.ENUM('al_llegar', 'antes', 'manual'), allowNull: true },
+  enviada_cocina_en: { type: DataTypes.DATE, allowNull: true },
+  // Qué pasó con el adelanto que no se usó en un pedido.
+  destino_adelanto: { type: DataTypes.ENUM('retenido', 'devuelto'), allowNull: true },
+  aviso_no_vino_en: { type: DataTypes.DATE, allowNull: true },
 }, {
   tableName: 'reservas',
   createdAt: 'creado_en',

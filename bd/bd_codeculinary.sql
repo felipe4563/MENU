@@ -125,12 +125,12 @@ CREATE TABLE `categorias_flujo` (
   `actualizado_en` datetime NOT NULL DEFAULT current_timestamp() ON UPDATE current_timestamp(),
   PRIMARY KEY (`id`),
   UNIQUE KEY `uq_categorias_flujo_clave` (`clave`)
-) ENGINE=InnoDB AUTO_INCREMENT=27 DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+) ENGINE=InnoDB AUTO_INCREMENT=28 DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 /*!40101 SET character_set_client = @saved_cs_client */;
 
 LOCK TABLES `categorias_flujo` WRITE;
 /*!40000 ALTER TABLE `categorias_flujo` DISABLE KEYS */;
-INSERT INTO `categorias_flujo` VALUES (1,'ventas','Ventas','ingresos',NULL,0,1,1,1,10,'2026-11-16 12:50:49','2026-11-16 12:50:49'),(2,'inyeccion','Inyección de efectivo','ingresos','Plata que pone el dueño o un préstamo',0,0,0,1,20,'2026-11-16 12:50:49','2026-11-16 12:50:49'),(3,'otro_ingreso','Otros ingresos','ingresos',NULL,0,0,1,1,900,'2026-11-16 12:50:49','2026-11-16 12:50:49'),(4,'compras','Compras de insumos y bebidas','costo_variable',NULL,0,1,1,1,10,'2026-11-16 12:50:49','2026-11-16 12:50:49'),(5,'materia_prima','Compras al paso (sin registrar en Compras)','costo_variable','Mercado, sin pasar por Inventario › Compras',0,0,0,1,20,'2026-11-16 12:50:49','2026-11-16 12:50:49'),(6,'sueldos','Sueldos y mano de obra','costo_fijo','En el detalle va el nombre de la persona',1,0,1,1,10,'2026-11-16 12:50:49','2026-11-16 12:50:49'),(7,'bonos','Bonos y extras','costo_fijo',NULL,1,0,0,1,20,'2026-11-16 12:50:49','2026-11-16 12:50:49'),(8,'luz','Electricidad','costo_fijo',NULL,0,0,0,1,30,'2026-11-16 12:50:49','2026-11-16 12:50:49'),(9,'gas','Gas','costo_fijo',NULL,0,0,0,1,40,'2026-11-16 12:50:49','2026-11-16 12:50:49'),(10,'agua','Agua','costo_fijo',NULL,0,0,0,1,50,'2026-11-16 12:50:49','2026-11-16 12:50:49'),(11,'internet','Internet y teléfono','costo_fijo',NULL,0,0,0,1,60,'2026-11-16 12:50:49','2026-11-16 12:50:49'),(12,'alquiler','Alquiler','costo_fijo',NULL,0,0,0,1,70,'2026-11-16 12:50:49','2026-11-16 12:50:49'),(13,'emergencia','Emergencias','costo_fijo',NULL,0,0,0,1,80,'2026-11-16 12:50:49','2026-11-16 12:50:49'),(14,'gastos_caja','Gastos de caja','otros_gastos',NULL,0,1,1,1,10,'2026-11-16 12:50:49','2026-11-16 12:50:49'),(15,'limpieza','Limpieza y desechables','otros_gastos',NULL,0,0,0,1,20,'2026-11-16 12:50:49','2026-11-16 12:50:49'),(16,'combustible','Combustible','otros_gastos',NULL,0,0,0,1,30,'2026-11-16 12:50:49','2026-11-16 12:50:49'),(17,'mantenimiento','Mantenimiento','otros_gastos',NULL,0,0,0,1,40,'2026-11-16 12:50:49','2026-11-16 12:50:49'),(18,'pasanaku','Pasanaku','otros_gastos',NULL,0,0,0,1,50,'2026-11-16 12:50:49','2026-11-16 12:50:49'),(19,'banco','Banco y comisiones','otros_gastos',NULL,0,0,0,1,60,'2026-11-16 12:50:49','2026-11-16 12:50:49'),(20,'viveres','Víveres de casa','otros_gastos',NULL,0,0,0,1,70,'2026-11-16 12:50:49','2026-11-16 12:50:49'),(21,'devoluciones','Devoluciones a clientes','otros_gastos',NULL,0,1,1,1,80,'2026-11-16 12:50:49','2026-11-16 12:50:49'),(22,'otro_gasto','Otros gastos','otros_gastos',NULL,0,0,1,1,900,'2026-11-16 12:50:49','2026-11-16 12:50:49'),(23,'asociacion','Gastos de asociación','no_operativo',NULL,0,0,0,1,10,'2026-11-16 12:50:49','2026-11-16 12:50:49'),(24,'retiro','Retiro y uso familiar','no_operativo',NULL,0,0,0,1,20,'2026-11-16 12:50:49','2026-11-16 12:50:49'),(25,'traspaso','Traspaso','traspaso',NULL,0,0,1,1,10,'2026-11-16 12:50:49','2026-11-16 12:50:49'),(26,'ajuste','Saldo inicial o ajuste','ajuste','Para cargar con cuánto se empieza o corregir una diferencia',0,0,1,1,10,'2026-11-16 12:50:49','2026-11-16 12:50:49');
+INSERT INTO `categorias_flujo` VALUES (1,'ventas','Ventas','ingresos',NULL,0,1,1,1,10,'2026-11-16 12:50:49','2026-11-16 12:50:49'),(2,'inyeccion','Inyección de efectivo','ingresos','Plata que pone el dueño o un préstamo',0,0,0,1,20,'2026-11-16 12:50:49','2026-11-16 12:50:49'),(3,'otro_ingreso','Otros ingresos','ingresos',NULL,0,0,1,1,900,'2026-11-16 12:50:49','2026-11-16 12:50:49'),(4,'compras','Compras de insumos y bebidas','costo_variable',NULL,0,1,1,1,10,'2026-11-16 12:50:49','2026-11-16 12:50:49'),(5,'materia_prima','Compras al paso (sin registrar en Compras)','costo_variable','Mercado, sin pasar por Inventario › Compras',0,0,0,1,20,'2026-11-16 12:50:49','2026-11-16 12:50:49'),(6,'sueldos','Sueldos y mano de obra','costo_fijo','En el detalle va el nombre de la persona',1,0,1,1,10,'2026-11-16 12:50:49','2026-11-16 12:50:49'),(7,'bonos','Bonos y extras','costo_fijo',NULL,1,0,0,1,20,'2026-11-16 12:50:49','2026-11-16 12:50:49'),(8,'luz','Electricidad','costo_fijo',NULL,0,0,0,1,30,'2026-11-16 12:50:49','2026-11-16 12:50:49'),(9,'gas','Gas','costo_fijo',NULL,0,0,0,1,40,'2026-11-16 12:50:49','2026-11-16 12:50:49'),(10,'agua','Agua','costo_fijo',NULL,0,0,0,1,50,'2026-11-16 12:50:49','2026-11-16 12:50:49'),(11,'internet','Internet y teléfono','costo_fijo',NULL,0,0,0,1,60,'2026-11-16 12:50:49','2026-11-16 12:50:49'),(12,'alquiler','Alquiler','costo_fijo',NULL,0,0,0,1,70,'2026-11-16 12:50:49','2026-11-16 12:50:49'),(13,'emergencia','Emergencias','costo_fijo',NULL,0,0,0,1,80,'2026-11-16 12:50:49','2026-11-16 12:50:49'),(14,'gastos_caja','Gastos de caja','otros_gastos',NULL,0,1,1,1,10,'2026-11-16 12:50:49','2026-11-16 12:50:49'),(15,'limpieza','Limpieza y desechables','otros_gastos',NULL,0,0,0,1,20,'2026-11-16 12:50:49','2026-11-16 12:50:49'),(16,'combustible','Combustible','otros_gastos',NULL,0,0,0,1,30,'2026-11-16 12:50:49','2026-11-16 12:50:49'),(17,'mantenimiento','Mantenimiento','otros_gastos',NULL,0,0,0,1,40,'2026-11-16 12:50:49','2026-11-16 12:50:49'),(18,'pasanaku','Pasanaku','otros_gastos',NULL,0,0,0,1,50,'2026-11-16 12:50:49','2026-11-16 12:50:49'),(19,'banco','Banco y comisiones','otros_gastos',NULL,0,0,0,1,60,'2026-11-16 12:50:49','2026-11-16 12:50:49'),(20,'viveres','Víveres de casa','otros_gastos',NULL,0,0,0,1,70,'2026-11-16 12:50:49','2026-11-16 12:50:49'),(21,'devoluciones','Devoluciones a clientes','otros_gastos',NULL,0,1,1,1,80,'2026-11-16 12:50:49','2026-11-16 12:50:49'),(22,'otro_gasto','Otros gastos','otros_gastos',NULL,0,0,1,1,900,'2026-11-16 12:50:49','2026-11-16 12:50:49'),(23,'asociacion','Gastos de asociación','no_operativo',NULL,0,0,0,1,10,'2026-11-16 12:50:49','2026-11-16 12:50:49'),(24,'retiro','Retiro y uso familiar','no_operativo',NULL,0,0,0,1,20,'2026-11-16 12:50:49','2026-11-16 12:50:49'),(25,'traspaso','Traspaso','traspaso',NULL,0,0,1,1,10,'2026-11-16 12:50:49','2026-11-16 12:50:49'),(26,'ajuste','Saldo inicial o ajuste','ajuste','Para cargar con cuánto se empieza o corregir una diferencia',0,0,1,1,10,'2026-11-16 12:50:49','2026-11-16 12:50:49'),(27,'adelantos_reserva','Adelantos de reservas','ingresos',NULL,0,1,1,1,15,'2026-11-19 12:00:00','2026-11-19 12:00:00');
 /*!40000 ALTER TABLE `categorias_flujo` ENABLE KEYS */;
 UNLOCK TABLES;
 DROP TABLE IF EXISTS `cliente_pin_verificaciones`;
@@ -785,7 +785,7 @@ CREATE TABLE `migraciones` (
 
 LOCK TABLES `migraciones` WRITE;
 /*!40000 ALTER TABLE `migraciones` DISABLE KEYS */;
-INSERT INTO `migraciones` VALUES ('001_roles_permisos','2026-11-16 16:50:48'),('002_usuarios','2026-11-16 16:50:48'),('003_areas_mesas','2026-11-16 16:50:48'),('004_categorias_productos','2026-11-16 16:50:48'),('005_clientes','2026-11-16 16:50:48'),('006_sesiones_caja','2026-11-16 16:50:48'),('007_pedidos','2026-11-16 16:50:48'),('008_inventario','2026-11-16 16:50:48'),('009_compras','2026-11-16 16:50:48'),('010_caja_libro','2026-11-16 16:50:48'),('011_reservaciones_config','2026-11-16 16:50:48'),('012_sucursales','2026-11-16 16:50:48'),('013_sucursal_operativa','2026-11-16 16:50:48'),('014_cajas','2026-11-16 16:50:48'),('015_pagos_qr','2026-11-16 16:50:48'),('016_produccion_sucursal_shinahota','2026-11-16 16:50:48'),('017_opciones_producto','2026-11-16 16:50:48'),('018_productos_pesables','2026-11-16 16:50:48'),('019_opciones_multipaso','2026-11-16 16:50:48'),('020_debe_cambiar_contrasena','2026-11-16 16:50:48'),('021_avatar_usuario','2026-11-16 16:50:48'),('022_precio_opciones','2026-11-16 16:50:48'),('023_combos_promociones','2026-11-16 16:50:48'),('024_fidelidad','2026-11-16 16:50:48'),('025_cupones','2026-11-16 16:50:48'),('026_fidelidad_canje_metodos','2026-11-16 16:50:48'),('027_cupones_multiuso','2026-11-16 16:50:48'),('028_cumpleanos','2026-11-16 16:50:48'),('029_productos_quitar_campos_no_usados','2026-11-16 16:50:48'),('030_ruleta_premios','2026-11-16 16:50:48'),('031_ruleta_premios_producto_combo','2026-11-16 16:50:48'),('032_cupon_productos','2026-11-16 16:50:48'),('033_promocion_productos','2026-11-16 16:50:48'),('034_ruleta_premios_probabilidad','2026-11-16 16:50:48'),('035_impresion_movil','2026-11-16 16:50:48'),('036_ancho_papel_bluetooth','2026-11-16 16:50:48'),('037_insumos_recetas','2026-11-16 16:50:48'),('038_autoservicio_qr','2026-11-16 16:50:48'),('039_clientes_pin','2026-11-16 16:50:48'),('040_recuperar_pin','2026-11-16 16:50:48'),('041_impresion_dedicada','2026-11-16 16:50:48'),('042_ticket_cliente_por_caja','2026-11-16 16:50:48'),('043_opciones_combo','2026-11-16 16:50:48'),('044_integracion_pedidos_externos','2026-11-16 16:50:48'),('045_libro_caja_metodo_pago_app_externa','2026-11-16 16:50:48'),('046_sucursal_ubicacion_negocio_portada','2026-11-16 16:50:48'),('047_disponibilidad_diaria_productos','2026-11-16 16:50:48'),('048_estado_cocina_independiente','2026-11-16 16:50:48'),('049_estado_cocina_backfill_pedidos_abiertos','2026-11-16 16:50:48'),('050_permiso_dashboard','2026-11-16 16:50:48'),('051_control_personal','2026-11-16 16:50:48'),('052_cierre_caja_ciego','2026-11-16 12:50:49'),('053_sesion_unica','2026-11-16 12:50:49'),('054_permiso_pedidos_externos','2026-11-16 12:50:49'),('055_devoluciones','2026-11-16 12:50:49'),('056_proveedores_qr','2026-11-16 12:50:49'),('057_permiso_cobro_qr','2026-11-16 12:50:49'),('058_tiempos_cocina','2026-11-16 12:50:49'),('059_conexion_bluetooth','2026-11-16 12:50:49'),('060_caja_imprimir_logo','2026-11-16 12:50:49'),('061_cupon_combo','2026-11-16 12:50:49'),('062_cupon_aviso_vencimiento','2026-11-16 12:50:49'),('063_compra_pagada_desde_caja','2026-11-16 12:50:49'),('064_dividir_cuenta','2026-11-16 12:50:49'),('065_parte_k_de_n','2026-11-16 12:50:49'),('066_insumo_stock_minimo','2026-11-16 12:50:49'),('067_reservas','2026-11-16 12:50:49'),('068_ventas_sin_conexion','2026-11-16 12:50:49'),('069_libro_caja_flujo','2026-11-16 12:50:49'),('070_categorias_flujo','2026-11-16 12:50:49'),('071_sueldos_personal','2026-11-16 12:50:49'),('072_push_suscripciones','2026-11-18 23:00:00');
+INSERT INTO `migraciones` VALUES ('001_roles_permisos','2026-11-16 16:50:48'),('002_usuarios','2026-11-16 16:50:48'),('003_areas_mesas','2026-11-16 16:50:48'),('004_categorias_productos','2026-11-16 16:50:48'),('005_clientes','2026-11-16 16:50:48'),('006_sesiones_caja','2026-11-16 16:50:48'),('007_pedidos','2026-11-16 16:50:48'),('008_inventario','2026-11-16 16:50:48'),('009_compras','2026-11-16 16:50:48'),('010_caja_libro','2026-11-16 16:50:48'),('011_reservaciones_config','2026-11-16 16:50:48'),('012_sucursales','2026-11-16 16:50:48'),('013_sucursal_operativa','2026-11-16 16:50:48'),('014_cajas','2026-11-16 16:50:48'),('015_pagos_qr','2026-11-16 16:50:48'),('016_produccion_sucursal_shinahota','2026-11-16 16:50:48'),('017_opciones_producto','2026-11-16 16:50:48'),('018_productos_pesables','2026-11-16 16:50:48'),('019_opciones_multipaso','2026-11-16 16:50:48'),('020_debe_cambiar_contrasena','2026-11-16 16:50:48'),('021_avatar_usuario','2026-11-16 16:50:48'),('022_precio_opciones','2026-11-16 16:50:48'),('023_combos_promociones','2026-11-16 16:50:48'),('024_fidelidad','2026-11-16 16:50:48'),('025_cupones','2026-11-16 16:50:48'),('026_fidelidad_canje_metodos','2026-11-16 16:50:48'),('027_cupones_multiuso','2026-11-16 16:50:48'),('028_cumpleanos','2026-11-16 16:50:48'),('029_productos_quitar_campos_no_usados','2026-11-16 16:50:48'),('030_ruleta_premios','2026-11-16 16:50:48'),('031_ruleta_premios_producto_combo','2026-11-16 16:50:48'),('032_cupon_productos','2026-11-16 16:50:48'),('033_promocion_productos','2026-11-16 16:50:48'),('034_ruleta_premios_probabilidad','2026-11-16 16:50:48'),('035_impresion_movil','2026-11-16 16:50:48'),('036_ancho_papel_bluetooth','2026-11-16 16:50:48'),('037_insumos_recetas','2026-11-16 16:50:48'),('038_autoservicio_qr','2026-11-16 16:50:48'),('039_clientes_pin','2026-11-16 16:50:48'),('040_recuperar_pin','2026-11-16 16:50:48'),('041_impresion_dedicada','2026-11-16 16:50:48'),('042_ticket_cliente_por_caja','2026-11-16 16:50:48'),('043_opciones_combo','2026-11-16 16:50:48'),('044_integracion_pedidos_externos','2026-11-16 16:50:48'),('045_libro_caja_metodo_pago_app_externa','2026-11-16 16:50:48'),('046_sucursal_ubicacion_negocio_portada','2026-11-16 16:50:48'),('047_disponibilidad_diaria_productos','2026-11-16 16:50:48'),('048_estado_cocina_independiente','2026-11-16 16:50:48'),('049_estado_cocina_backfill_pedidos_abiertos','2026-11-16 16:50:48'),('050_permiso_dashboard','2026-11-16 16:50:48'),('051_control_personal','2026-11-16 16:50:48'),('052_cierre_caja_ciego','2026-11-16 12:50:49'),('053_sesion_unica','2026-11-16 12:50:49'),('054_permiso_pedidos_externos','2026-11-16 12:50:49'),('055_devoluciones','2026-11-16 12:50:49'),('056_proveedores_qr','2026-11-16 12:50:49'),('057_permiso_cobro_qr','2026-11-16 12:50:49'),('058_tiempos_cocina','2026-11-16 12:50:49'),('059_conexion_bluetooth','2026-11-16 12:50:49'),('060_caja_imprimir_logo','2026-11-16 12:50:49'),('061_cupon_combo','2026-11-16 12:50:49'),('062_cupon_aviso_vencimiento','2026-11-16 12:50:49'),('063_compra_pagada_desde_caja','2026-11-16 12:50:49'),('064_dividir_cuenta','2026-11-16 12:50:49'),('065_parte_k_de_n','2026-11-16 12:50:49'),('066_insumo_stock_minimo','2026-11-16 12:50:49'),('067_reservas','2026-11-16 12:50:49'),('068_ventas_sin_conexion','2026-11-16 12:50:49'),('069_libro_caja_flujo','2026-11-16 12:50:49'),('070_categorias_flujo','2026-11-16 12:50:49'),('071_sueldos_personal','2026-11-16 12:50:49'),('072_push_suscripciones','2026-11-18 23:00:00'),('073_reservas_platos_adelanto','2026-11-19 12:00:00');
 /*!40000 ALTER TABLE `migraciones` ENABLE KEYS */;
 UNLOCK TABLES;
 DROP TABLE IF EXISTS `opciones`;
@@ -908,7 +908,7 @@ CREATE TABLE `pedido_pagos` (
   `monto_recibido` decimal(10,2) DEFAULT NULL,
   `cambio` decimal(10,2) NOT NULL DEFAULT 0.00,
   `persona` varchar(80) DEFAULT NULL,
-  `modo` enum('platos','iguales') NOT NULL,
+  `modo` enum('platos','iguales','adelanto') NOT NULL,
   `parte_numero` tinyint(3) unsigned DEFAULT NULL,
   `partes_de` tinyint(3) unsigned DEFAULT NULL,
   `estado` enum('pendiente','completado','anulado') NOT NULL DEFAULT 'completado',
@@ -1224,13 +1224,20 @@ CREATE TABLE `reservas` (
   `duracion_min` smallint(5) unsigned NOT NULL DEFAULT 120,
   `notas` varchar(255) DEFAULT NULL,
   `estado` enum('pendiente','llego','cancelada','no_vino') NOT NULL DEFAULT 'pendiente',
+  `pedido_id` int(10) unsigned DEFAULT NULL,
+  `envio_cocina` enum('al_llegar','antes','manual') DEFAULT NULL,
+  `enviada_cocina_en` datetime DEFAULT NULL,
+  `destino_adelanto` enum('retenido','devuelto') DEFAULT NULL,
+  `aviso_no_vino_en` datetime DEFAULT NULL,
   `creado_en` datetime NOT NULL DEFAULT current_timestamp(),
   `actualizado_en` datetime NOT NULL DEFAULT current_timestamp() ON UPDATE current_timestamp(),
   PRIMARY KEY (`id`),
   KEY `reservas_sucursal_fecha_idx` (`sucursal_id`,`fecha_hora`),
   KEY `reservas_mesa_idx` (`mesa_id`),
   KEY `reservas_usuario_fk` (`usuario_id`),
+  KEY `reservas_pedido_fk` (`pedido_id`),
   CONSTRAINT `reservas_mesa_fk` FOREIGN KEY (`mesa_id`) REFERENCES `mesas` (`id`) ON DELETE SET NULL,
+  CONSTRAINT `reservas_pedido_fk` FOREIGN KEY (`pedido_id`) REFERENCES `pedidos` (`id`) ON DELETE SET NULL,
   CONSTRAINT `reservas_sucursal_fk` FOREIGN KEY (`sucursal_id`) REFERENCES `sucursales` (`id`),
   CONSTRAINT `reservas_usuario_fk` FOREIGN KEY (`usuario_id`) REFERENCES `usuarios` (`id`) ON DELETE SET NULL
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
@@ -1239,6 +1246,67 @@ CREATE TABLE `reservas` (
 LOCK TABLES `reservas` WRITE;
 /*!40000 ALTER TABLE `reservas` DISABLE KEYS */;
 /*!40000 ALTER TABLE `reservas` ENABLE KEYS */;
+UNLOCK TABLES;
+DROP TABLE IF EXISTS `reserva_items`;
+/*!40101 SET @saved_cs_client     = @@character_set_client */;
+/*!40101 SET character_set_client = utf8 */;
+CREATE TABLE `reserva_items` (
+  `id` int(10) unsigned NOT NULL AUTO_INCREMENT,
+  `reserva_id` int(10) unsigned NOT NULL,
+  `producto_id` int(10) unsigned DEFAULT NULL,
+  `combo_id` int(10) unsigned DEFAULT NULL,
+  `cantidad` int(10) unsigned NOT NULL DEFAULT 1,
+  `peso` decimal(10,3) DEFAULT NULL,
+  `nota` varchar(255) DEFAULT NULL,
+  `opcion_ids` longtext CHARACTER SET utf8mb4 COLLATE utf8mb4_bin DEFAULT NULL CHECK (json_valid(`opcion_ids`)),
+  `opciones_por_producto` longtext CHARACTER SET utf8mb4 COLLATE utf8mb4_bin DEFAULT NULL CHECK (json_valid(`opciones_por_producto`)),
+  `precio` decimal(10,2) NOT NULL,
+  `nombre` varchar(150) NOT NULL,
+  `creado_en` datetime NOT NULL DEFAULT current_timestamp(),
+  `actualizado_en` datetime NOT NULL DEFAULT current_timestamp() ON UPDATE current_timestamp(),
+  PRIMARY KEY (`id`),
+  KEY `reserva_items_reserva_idx` (`reserva_id`),
+  KEY `reserva_items_producto_fk` (`producto_id`),
+  KEY `reserva_items_combo_fk` (`combo_id`),
+  CONSTRAINT `reserva_items_combo_fk` FOREIGN KEY (`combo_id`) REFERENCES `combos` (`id`),
+  CONSTRAINT `reserva_items_producto_fk` FOREIGN KEY (`producto_id`) REFERENCES `productos` (`id`),
+  CONSTRAINT `reserva_items_reserva_fk` FOREIGN KEY (`reserva_id`) REFERENCES `reservas` (`id`) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+/*!40101 SET character_set_client = @saved_cs_client */;
+
+LOCK TABLES `reserva_items` WRITE;
+/*!40000 ALTER TABLE `reserva_items` DISABLE KEYS */;
+/*!40000 ALTER TABLE `reserva_items` ENABLE KEYS */;
+UNLOCK TABLES;
+DROP TABLE IF EXISTS `reserva_pagos`;
+/*!40101 SET @saved_cs_client     = @@character_set_client */;
+/*!40101 SET character_set_client = utf8 */;
+CREATE TABLE `reserva_pagos` (
+  `id` int(10) unsigned NOT NULL AUTO_INCREMENT,
+  `reserva_id` int(10) unsigned NOT NULL,
+  `usuario_id` int(10) unsigned NOT NULL,
+  `sesion_caja_id` int(10) unsigned DEFAULT NULL,
+  `tipo` enum('adelanto','devolucion') NOT NULL,
+  `metodo_pago` enum('efectivo','qr') NOT NULL,
+  `monto` decimal(10,2) NOT NULL,
+  `monto_recibido` decimal(10,2) DEFAULT NULL,
+  `cambio` decimal(10,2) NOT NULL DEFAULT 0.00,
+  `estado` enum('completado','anulado') NOT NULL DEFAULT 'completado',
+  `creado_en` datetime NOT NULL DEFAULT current_timestamp(),
+  `actualizado_en` datetime NOT NULL DEFAULT current_timestamp() ON UPDATE current_timestamp(),
+  PRIMARY KEY (`id`),
+  KEY `reserva_pagos_reserva_idx` (`reserva_id`),
+  KEY `reserva_pagos_usuario_fk` (`usuario_id`),
+  KEY `reserva_pagos_sesion_fk` (`sesion_caja_id`),
+  CONSTRAINT `reserva_pagos_reserva_fk` FOREIGN KEY (`reserva_id`) REFERENCES `reservas` (`id`) ON DELETE CASCADE,
+  CONSTRAINT `reserva_pagos_sesion_fk` FOREIGN KEY (`sesion_caja_id`) REFERENCES `sesiones_caja` (`id`),
+  CONSTRAINT `reserva_pagos_usuario_fk` FOREIGN KEY (`usuario_id`) REFERENCES `usuarios` (`id`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+/*!40101 SET character_set_client = @saved_cs_client */;
+
+LOCK TABLES `reserva_pagos` WRITE;
+/*!40000 ALTER TABLE `reserva_pagos` DISABLE KEYS */;
+/*!40000 ALTER TABLE `reserva_pagos` ENABLE KEYS */;
 UNLOCK TABLES;
 DROP TABLE IF EXISTS `roles`;
 /*!40101 SET @saved_cs_client     = @@character_set_client */;
