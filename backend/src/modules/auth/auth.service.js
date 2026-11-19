@@ -1,22 +1,32 @@
 const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
+const { Op } = require('sequelize');
 const { Usuario, Rol, Permiso, Sucursal } = require('../../models');
 
-// Incrementar sesion_version acá (el único lugar que de verdad emite un
-// par de tokens funcional) invalida, en el próximo request, cualquier token
-// emitido antes para este usuario en otro dispositivo — así solo queda
-// activa la sesión más reciente. Sin esto, los pasos intermedios del login
-// (ej. pre_token de selección de sucursal) también la bumpearían sin haber
-// completado un login real.
-async function emitirSesion(usuario, sucursalId, sucursalNombre) {
-  await usuario.increment('sesion_version');
-  await usuario.reload();
+const MAX_INTENTOS_PIN = 5;
+const MSG_DISPOSITIVO = 'Este aparato ya no está habilitado: entra con tu correo';
+const MSG_OTRA_SUCURSAL = 'Ese usuario no es de esta sucursal';
+const MSG_PIN_BLOQUEADO = 'PIN bloqueado: entra con tu correo';
+
+// Con `nuevaVersion` (login con correo) se incrementa sesion_version acá (el
+// único lugar que de verdad emite un par de tokens funcional): eso invalida,
+// en el próximo request, cualquier token emitido antes para este usuario en
+// otro dispositivo — así solo queda activa la sesión más reciente. Sin esto,
+// los pasos intermedios del login (ej. pre_token de selección de sucursal)
+// también la bumpearían sin haber completado un login real.
+// Entrar con PIN usa `nuevaVersion: false`: firma con la versión actual para
+// no cerrar la sesión del mismo usuario en su otro aparato.
+async function emitirSesion(usuario, sucursalId, sucursalNombre, { nuevaVersion = true } = {}) {
+  if (nuevaVersion) {
+    await usuario.increment('sesion_version');
+    await usuario.reload();
+  }
 
   const payload = { id: usuario.id, sucursal_id: sucursalId, sesion_version: usuario.sesion_version };
   const token = jwt.sign(payload, process.env.JWT_SECRET, { expiresIn: process.env.JWT_EXPIRES_IN });
   const refresh_token = jwt.sign(payload, process.env.JWT_REFRESH_SECRET, { expiresIn: process.env.JWT_REFRESH_EXPIRES_IN });
 
-  return {
+  const sesion = {
     token,
     refresh_token,
     usuario: {
@@ -31,6 +41,16 @@ async function emitirSesion(usuario, sucursalId, sucursalNombre) {
       sucursal_activa: { id: sucursalId, nombre: sucursalNombre },
     },
   };
+  // Aparato habilitado: solo con una sucursal concreta (no "Todas las
+  // sucursales"). Sin id de usuario: no sirve como token de acceso.
+  if (sucursalId !== null && sucursalId !== undefined) {
+    sesion.dispositivo_token = jwt.sign(
+      { tipo: 'dispositivo', sucursal_id: Number(sucursalId) },
+      process.env.JWT_SECRET,
+      { expiresIn: '30d' }
+    );
+  }
+  return sesion;
 }
 
 async function buscarUsuarioCompleto(where) {
@@ -120,6 +140,10 @@ async function refresh(refresh_token) {
   } catch {
     throw Object.assign(new Error('Refresh token inválido'), { status: 401 });
   }
+  // Un refresh token de verdad no trae `tipo` (pre_login, dispositivo, cliente).
+  if (payload.tipo !== undefined || !payload.id) {
+    throw Object.assign(new Error('Refresh token inválido'), { status: 401 });
+  }
   const usuario = await Usuario.findOne({ where: { id: payload.id, activo: 1 } });
   if (!usuario) throw Object.assign(new Error('Usuario inactivo o no existe'), { status: 401 });
   // Mismo chequeo de sesión única que el middleware de auth: un refresh
@@ -136,4 +160,80 @@ async function refresh(refresh_token) {
   return { token };
 }
 
-module.exports = { login, loginConSucursal, refresh };
+// Sucursal del aparato habilitado; cualquier problema con el token ⇒ 401.
+async function sucursalDelDispositivo(dispositivo_token) {
+  let payload;
+  try {
+    payload = jwt.verify(String(dispositivo_token || ''), process.env.JWT_SECRET);
+  } catch {
+    throw Object.assign(new Error(MSG_DISPOSITIVO), { status: 401 });
+  }
+  if (payload.tipo !== 'dispositivo' || !Number.isInteger(payload.sucursal_id)) {
+    throw Object.assign(new Error(MSG_DISPOSITIVO), { status: 401 });
+  }
+  const sucursal = await Sucursal.findOne({ where: { id: payload.sucursal_id, activo: 1 } });
+  if (!sucursal) throw Object.assign(new Error(MSG_DISPOSITIVO), { status: 401 });
+  return sucursal;
+}
+
+// Personal que puede entrar con PIN en este aparato: activo, con PIN, sin
+// bloqueo, y asignado a la sucursal o con acceso a todas.
+async function usuariosConPin(dispositivo_token) {
+  const sucursal = await sucursalDelDispositivo(dispositivo_token);
+  const asignados = await sucursal.getUsuarios({ attributes: ['id'], joinTableAttributes: [] });
+  const usuarios = await Usuario.findAll({
+    attributes: ['id', 'nombre', 'avatar'],
+    where: {
+      activo: 1,
+      pin: { [Op.ne]: null },
+      pin_bloqueado: 0,
+      [Op.or]: [
+        { acceso_todas_sucursales: 1 },
+        { id: asignados.map(u => u.id) },
+      ],
+    },
+    order: [['nombre', 'ASC']],
+  });
+  return usuarios.map(u => ({ id: u.id, nombre: u.nombre, avatar: u.avatar || null }));
+}
+
+async function entrarConPin(dispositivo_token, usuario_id, pin) {
+  const sucursal = await sucursalDelDispositivo(dispositivo_token);
+
+  if (typeof pin !== 'string' || !/^\d{4}$/.test(pin)) {
+    throw Object.assign(new Error('El PIN son 4 números'), { status: 400 });
+  }
+  const id = Number(usuario_id);
+  if (!Number.isInteger(id) || id <= 0) {
+    throw Object.assign(new Error(MSG_OTRA_SUCURSAL), { status: 403 });
+  }
+
+  // Inactivo o inexistente se responde igual que "de otra sucursal".
+  const usuario = await buscarUsuarioCompleto({ id, activo: 1 });
+  const esDeLaSucursal = usuario && (usuario.acceso_todas_sucursales
+    || (usuario.sucursales || []).some(s => s.id === sucursal.id));
+  if (!esDeLaSucursal) throw Object.assign(new Error(MSG_OTRA_SUCURSAL), { status: 403 });
+
+  if (usuario.pin_bloqueado) throw Object.assign(new Error(MSG_PIN_BLOQUEADO), { status: 423 });
+  if (!usuario.pin) throw Object.assign(new Error('Ese usuario no tiene PIN: entra con tu correo'), { status: 400 });
+
+  const valido = await bcrypt.compare(pin, usuario.pin);
+  if (!valido) {
+    // increment es atómico en SQL: dos intentos a la vez cuentan los dos.
+    await usuario.increment('pin_intentos');
+    await usuario.reload();
+    if (usuario.pin_intentos >= MAX_INTENTOS_PIN) {
+      await usuario.update({ pin_bloqueado: 1 });
+      throw Object.assign(new Error(MSG_PIN_BLOQUEADO), { status: 423 });
+    }
+    throw Object.assign(new Error('PIN incorrecto'), {
+      status: 401,
+      intentos_restantes: MAX_INTENTOS_PIN - usuario.pin_intentos,
+    });
+  }
+
+  if (usuario.pin_intentos) await usuario.update({ pin_intentos: 0 });
+  return await emitirSesion(usuario, sucursal.id, sucursal.nombre, { nuevaVersion: false });
+}
+
+module.exports = { login, loginConSucursal, refresh, usuariosConPin, entrarConPin };

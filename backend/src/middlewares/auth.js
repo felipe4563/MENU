@@ -12,7 +12,9 @@ async function auth(req, res, next) {
   try {
     const payload = jwt.verify(token, process.env.JWT_SECRET);
 
-    if (payload.tipo === 'pre_login') {
+    // Solo sirve un token de sesión: los otros firmados con el mismo secreto
+    // (pre_login, dispositivo, cliente) traen `tipo` y se rechazan.
+    if (payload.tipo !== undefined || !payload.id) {
       return res.status(401).json({ ok: false, mensaje: 'Token inválido o expirado' });
     }
 
@@ -46,6 +48,7 @@ async function auth(req, res, next) {
       permisos: usuario.rol.permisos.map(p => `${p.modulo}.${p.accion}`),
       sucursal_id: sucursalId,
       acceso_todas: sucursalId === null,
+      tiene_pin: !!usuario.pin,
     };
 
     next();

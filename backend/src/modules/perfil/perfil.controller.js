@@ -1,16 +1,22 @@
 const bcrypt = require('bcryptjs');
-const { Usuario, Rol } = require('../../models');
+const { Usuario, Rol, sequelize } = require('../../models');
+
+// El hash del PIN no se lee de la base: solo si existe, como tiene_pin.
+const ATRIBUTOS_PERFIL = {
+  exclude: ['contrasena', 'pin'],
+  include: [[sequelize.literal('`Usuario`.`pin` IS NOT NULL'), 'tiene_pin']],
+};
 
 // Devuelve el usuario sin el hash del PIN, con tiene_pin en su lugar.
 function conTienePin(u) {
-  const { pin, ...resto } = u.toJSON();
-  return { ...resto, tiene_pin: !!pin };
+  const { pin, tiene_pin, ...resto } = u.toJSON();
+  return { ...resto, tiene_pin: !!(tiene_pin ?? pin) };
 }
 
 async function obtener(req, res, next) {
   try {
     const u = await Usuario.findByPk(req.usuario.id, {
-      attributes: { exclude: ['contrasena'] },
+      attributes: ATRIBUTOS_PERFIL,
       include: [{ model: Rol, as: 'rol', attributes: ['id', 'nombre'] }],
     });
     res.json({ ok: true, datos: conTienePin(u) });
@@ -38,7 +44,7 @@ async function actualizar(req, res, next) {
     await u.update(datos);
     // Return updated user without sensitive fields
     const actualizado = await Usuario.findByPk(u.id, {
-      attributes: { exclude: ['contrasena'] },
+      attributes: ATRIBUTOS_PERFIL,
       include: [{ model: Rol, as: 'rol', attributes: ['id', 'nombre'] }],
     });
     res.json({ ok: true, datos: conTienePin(actualizado) });

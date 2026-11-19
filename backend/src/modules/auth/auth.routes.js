@@ -1,5 +1,5 @@
 const { Router } = require('express');
-const { login, loginSucursal, refresh, yo } = require('./auth.controller');
+const { login, loginSucursal, refresh, yo, usuariosPin, entrarPin } = require('./auth.controller');
 const auth = require('../../middlewares/auth');
 const limitador = require('../../middlewares/limitador');
 
@@ -13,6 +13,14 @@ const limitePorIp = limitador({ ventanaMs: 15 * 60_000, maximo: 100, mensaje: me
 
 router.post('/login', limitePorIp, limitePorCuenta, login);
 router.post('/login/sucursal', limitePorIp, loginSucursal);
+
+// Entrar con PIN en un aparato habilitado: mismos topes que el login, pero
+// contando por usuario_id (el PIN son solo 4 números).
+const mensajePin = 'Demasiados intentos con PIN. Espera 15 minutos o entra con tu correo.';
+const limitePinPorIp = limitador({ ventanaMs: 15 * 60_000, maximo: 100, mensaje: mensajePin });
+const limitePinPorUsuario = limitador({ ventanaMs: 15 * 60_000, maximo: 10, mensaje: mensajePin, clave: (req) => String(req.body?.usuario_id ?? '').trim() });
+router.post('/pin/usuarios', limitePinPorIp, usuariosPin);
+router.post('/pin', limitePinPorIp, limitePinPorUsuario, entrarPin);
 router.post('/refresh', limitador({ ventanaMs: 15 * 60_000, maximo: 60, mensaje: 'Demasiados pedidos. Espera unos minutos.' }), refresh);
 router.get('/yo', auth, yo);
 

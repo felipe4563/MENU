@@ -40,8 +40,31 @@ async function refresh(req, res, next) {
   }
 }
 
+async function usuariosPin(req, res, next) {
+  try {
+    const datos = await authService.usuariosConPin(req.body?.dispositivo_token);
+    res.json({ ok: true, datos });
+  } catch (err) {
+    next(err);
+  }
+}
+
+async function entrarPin(req, res, next) {
+  try {
+    const { dispositivo_token, usuario_id, pin } = req.body || {};
+    const datos = await authService.entrarConPin(dispositivo_token, usuario_id, pin);
+    res.json({ ok: true, datos });
+  } catch (err) {
+    // PIN incorrecto: se avisa cuántos intentos quedan antes del bloqueo.
+    if (err.status === 401 && err.intentos_restantes !== undefined) {
+      return res.status(401).json({ ok: false, mensaje: err.message, intentos_restantes: err.intentos_restantes });
+    }
+    next(err);
+  }
+}
+
 function yo(req, res) {
   res.json({ ok: true, datos: req.usuario });
 }
 
-module.exports = { login, loginSucursal, refresh, yo };
+module.exports = { login, loginSucursal, refresh, yo, usuariosPin, entrarPin };

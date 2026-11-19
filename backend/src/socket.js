@@ -30,7 +30,8 @@ async function identificar(socket, next) {
   if (token) {
     try {
       const payload = jwt.verify(token, process.env.JWT_SECRET);
-      if (payload.tipo === 'pre_login') throw new Error('pre_login');
+      // Solo tokens de sesión: pre_login, dispositivo o cliente traen `tipo`.
+      if (payload.tipo !== undefined || !payload.id) throw new Error('tipo');
       const { Usuario } = require('./models');
       const usuario = await Usuario.findOne({ where: { id: payload.id, activo: 1 }, attributes: ['id', 'sesion_version'] });
       if (!usuario || (payload.sesion_version ?? 0) !== usuario.sesion_version) throw new Error('sesion');
