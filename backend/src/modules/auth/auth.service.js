@@ -283,14 +283,25 @@ async function entrarConPinMismo(sesion, pin) {
   }
   const usuario = await buscarUsuarioCompleto({ id: sesion.id, activo: 1 });
   if (!usuario) throw Object.assign(new Error('Usuario no encontrado'), { status: 401 });
-  await comprobarPin(usuario, pin);
 
+  // Cambiar sus sucursales no cierra la sesión: se revisa aquí que siga
+  // teniendo acceso, antes de gastar un intento (si no, cada desbloqueo
+  // alargaría un acceso que ya no tiene).
   const sucursalId = sesion.sucursal_id ?? null;
-  if (sucursalId === null) {
+  let sucursal = null;
+  if (sucursalId !== null) {
+    sucursal = await Sucursal.findOne({ where: { id: sucursalId, activo: 1 } });
+  }
+  const tieneAcceso = sucursalId === null
+    ? Boolean(usuario.acceso_todas_sucursales)
+    : Boolean(sucursal) && (usuario.acceso_todas_sucursales
+      || (usuario.sucursales || []).some(s => s.id === sucursal.id));
+  if (!tieneAcceso) throw Object.assign(new Error(MSG_OTRA_SUCURSAL), { status: 403 });
+
+  await comprobarPin(usuario, pin);
+  if (sucursal === null) {
     return await emitirSesion(usuario, null, 'Todas las sucursales', { nuevaVersion: false });
   }
-  const sucursal = await Sucursal.findOne({ where: { id: sucursalId, activo: 1 } });
-  if (!sucursal) throw Object.assign(new Error('No tienes acceso a esa sucursal'), { status: 403 });
   return await emitirSesion(usuario, sucursal.id, sucursal.nombre, { nuevaVersion: false });
 }
 

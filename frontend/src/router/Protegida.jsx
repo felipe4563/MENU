@@ -1,7 +1,7 @@
 import { useEffect } from 'react';
 import { Navigate, useLocation } from 'react-router-dom';
 import { useAuthStore } from '../store/authStore';
-import { marcarDesbloqueado, useBloqueado } from '../lib/bloqueo';
+import { bloqueadoAMano, marcarDesbloqueado, useBloqueado } from '../lib/bloqueo';
 import { useEnLinea } from '../hooks/useEnLinea';
 import PantallaBloqueo from '../components/shell/PantallaBloqueo';
 
@@ -12,9 +12,10 @@ export default function Protegida({ children }) {
   const bloqueado = useBloqueado();
   const enLinea = useEnLinea();
   const loc = useLocation();
-  // Sin internet, quien no tiene PIN no podría desbloquear: sigue usando la app
-  // (con internet, la regla normal vuelve en la próxima pestaña nueva).
-  const pasaSinPin = Boolean(token && bloqueado && !enLinea && usuario && !usuario.tiene_pin);
+  // Al abrir sin internet, quien no tiene PIN no podría desbloquear: sigue
+  // usando la app (con internet, la regla normal vuelve en la próxima pestaña
+  // nueva). Un bloqueo a propósito (Bloquear o inactividad) no se salta.
+  const pasaSinPin = Boolean(token && bloqueado && !enLinea && usuario && !usuario.tiene_pin && !bloqueadoAMano());
   useEffect(() => { if (pasaSinPin) marcarDesbloqueado(); }, [pasaSinPin]);
 
   // Aparato habilitado: si la sesión se perdió, se pide el PIN (no se va a /login).

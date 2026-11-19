@@ -9,6 +9,9 @@
 import { useSyncExternalStore } from 'react';
 
 const MARCA = 'rusoft-desbloqueado';
+// Bloqueo a propósito (botón Bloquear o inactividad) en esta pestaña: sin esta
+// marca, el bloqueo viene del arranque (pestaña nueva).
+const MARCA_A_MANO = 'rusoft-bloqueado-a-mano';
 const CLAVE_LOCAL = 'rusoft-pin-local';
 const ITERACIONES = 150000;
 const MAX_INTENTOS_LOCALES = 5;
@@ -22,13 +25,24 @@ export function estaDesbloqueado() {
 }
 
 export function marcarDesbloqueado() {
-  try { sessionStorage.setItem(MARCA, '1'); } catch { /* sin sessionStorage */ }
+  try {
+    sessionStorage.setItem(MARCA, '1');
+    sessionStorage.removeItem(MARCA_A_MANO);
+  } catch { /* sin sessionStorage */ }
   avisar();
 }
 
 export function bloquear() {
-  try { sessionStorage.removeItem(MARCA); } catch { /* sin sessionStorage */ }
+  try {
+    sessionStorage.removeItem(MARCA);
+    sessionStorage.setItem(MARCA_A_MANO, '1');
+  } catch { /* sin sessionStorage */ }
   avisar();
+}
+
+/** ¿El bloqueo de esta pestaña fue a propósito (y no al abrirla)? */
+export function bloqueadoAMano() {
+  try { return sessionStorage.getItem(MARCA_A_MANO) === '1'; } catch { return false; }
 }
 
 export function useBloqueado() {

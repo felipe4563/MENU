@@ -392,6 +392,33 @@ describe('Desbloquear con PIN la sesión propia', () => {
     expect(todas.pin_bloqueado).toBe(1);
   });
 
+  it('quitado de la sucursal del token ⇒ 403 y no gasta intento', async () => {
+    await todas.update({ pin_intentos: 0, pin_bloqueado: 0, acceso_todas_sucursales: 0 });
+    await todas.addSucursal(sucursal);
+    const r = await request(app).post('/api/v1/auth/login').send({ email: todas.email, contrasena: 'clave123' });
+    const token = r.body.datos.token;
+    expect(r.body.datos.usuario.sucursal_activa.id).toBe(sucursal.id);
+    expect((await mismo(token, '1234')).status).toBe(200);
+    await todas.removeSucursal(sucursal);
+    const m = await mismo(token, '9999');
+    expect(m.status).toBe(403);
+    expect(m.body.mensaje).toBe('Ese usuario no es de esta sucursal');
+    await todas.reload();
+    expect(todas.pin_intentos).toBe(0);
+    await todas.update({ acceso_todas_sucursales: 1 });
+  });
+
+  it("'Todas las sucursales' tras quitarle acceso a todas ⇒ 403", async () => {
+    const s = await sesionTodas();
+    await todas.update({ acceso_todas_sucursales: 0 });
+    const m = await mismo(s.token, '1234');
+    expect(m.status).toBe(403);
+    expect(m.body.mensaje).toBe('Ese usuario no es de esta sucursal');
+    await todas.reload();
+    expect(todas.pin_intentos).toBe(0);
+    await todas.update({ acceso_todas_sucursales: 1 });
+  });
+
   it('PIN que no son 4 números ⇒ 400; sin token ⇒ 401', async () => {
     await todas.update({ pin_intentos: 0, pin_bloqueado: 0 });
     const s = await sesionTodas();
