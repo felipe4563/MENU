@@ -110,16 +110,15 @@ describe('Convertir la reserva en pedido', () => {
 
   it('cobrar lo que falta no cuenta dos veces el adelanto', async () => {
     const { reserva, pedido } = convertida;
+    // La caja imprime el ticket del cliente: así la respuesta trae su ticket.
+    await caja.update({ imprimir_ticket_cliente: 1 });
     const res = await request(app).post(`/api/v1/ventas/${pedido.id}/cobrar`).set(auth()).send({ metodo_pago: 'efectivo', monto_recibido: 60 });
     expect(res.status).toBe(200);
     // El ticket final muestra el adelanto como la primera parte pagada.
-    const partes = res.body.datos.datos_impresion?.caja?.partes;
-    if (partes) {
-      expect(partes).toEqual([
-        { numero: 1, persona: 'Adelanto reserva', metodo_pago: 'efectivo', monto: 40 },
-        { numero: 2, persona: null, metodo_pago: 'efectivo', monto: 60 },
-      ]);
-    }
+    expect(res.body.datos.datos_impresion.caja.partes).toEqual([
+      { numero: 1, persona: 'Adelanto reserva', metodo_pago: 'efectivo', monto: 40 },
+      { numero: 2, persona: null, metodo_pago: 'efectivo', monto: 60 },
+    ]);
     const final = await Pedido.findByPk(pedido.id);
     expect(final.estado).toBe('completado');
     expect(Number(final.pagado)).toBe(100);
@@ -273,6 +272,30 @@ describe('Convertir la reserva en pedido', () => {
       await Reserva.destroy({ where: { id: r.id } });
     } finally {
       await Sucursal.destroy({ where: { id: otra.id } });
+    }
+  });
+
+  it('si falla después de crear el pedido, lo cancela y avisa a cocina que lo anule', async () => {
+    const ventas = require('../src/modules/ventas/ventas.service');
+    const r = await nueva({ items: [{ producto_id: plato.id, cantidad: 2 }] });
+    await request(app).post(`/api/v1/reservas/${r.id}/adelantos`).set(auth()).send({ metodo_pago: 'efectivo', monto: 10 });
+    const original = PedidoPago.create.bind(PedidoPago);
+    const crearPago = jest.spyOn(PedidoPago, 'create').mockImplementation((v, o) => (v?.modo === 'adelanto' ? Promise.reject(new Error('Falla de prueba')) : original(v, o)));
+    const anular = jest.spyOn(ventas, 'emitirAnulacionCocina');
+    try {
+      await expect(convertir.convertirEnPedido(r.id, usuario.id)).rejects.toThrow('Falla de prueba');
+      const [creado] = await Pedido.findAll({ where: delReserva(r.id) });
+      expect(creado.estado).toBe('cancelado');
+      expect((await Reserva.findByPk(r.id)).pedido_id).toBeNull();
+      const detalles = await DetallePedido.findAll({ where: { pedido_id: creado.id } });
+      expect(anular).toHaveBeenCalledWith(
+        creado.id,
+        detalles.map((d) => ({ detalle_pedido_id: d.id, cantidad: 2 })),
+        { devolucion_id: `reserva-${r.id}`, estadoCocinaPrevio: 'pendiente' },
+      );
+    } finally {
+      crearPago.mockRestore();
+      anular.mockRestore();
     }
   });
 

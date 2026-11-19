@@ -3,7 +3,7 @@
 // caja el día que se cobró (adelantos.service): acá solo se anota como parte
 // pagada del pedido, sin otro ingreso, para que nunca se cuente dos veces.
 const sequelize = require('../../config/database');
-const { Reserva, ReservaItem, ReservaPago, Pedido, PedidoPago, Mesa, Area, SesionCaja } = require('../../models');
+const { Reserva, ReservaItem, ReservaPago, Pedido, PedidoPago, DetallePedido, Mesa, Area, SesionCaja } = require('../../models');
 const { emitir } = require('../../socket');
 const ventasService = require('../ventas/ventas.service');
 const reservasService = require('./reservas.service');
@@ -54,6 +54,26 @@ function _adelantosPorMetodo(pagos) {
     if (monto > 0) partes.push({ metodo_pago: f.metodo_pago, monto, sesion_caja_id: f.primero.sesion_caja_id, usuario_id: f.primero.usuario_id });
   }
   return partes;
+}
+
+// Cancela el pedido recién creado cuando la conversión falla después de
+// crearlo. Su comanda ya pudo imprimirse: se avisa a cocina que la anule,
+// igual que al cerrar una reserva en cocina (reservas.service _cerrar).
+async function _deshacerPedido(pedido_id, reserva_id, usuario_id) {
+  try {
+    const previo = await Pedido.findByPk(pedido_id, { attributes: ['estado_cocina'] });
+    const detalles = await DetallePedido.findAll({ where: { pedido_id } });
+    await ventasService.cancelar(pedido_id, usuario_id, TODAS);
+    try {
+      await ventasService.emitirAnulacionCocina(pedido_id, detalles.map((d) => ({ detalle_pedido_id: d.id, cantidad: Number(d.cantidad) })), {
+        devolucion_id: `reserva-${reserva_id}`, estadoCocinaPrevio: previo?.estado_cocina ?? null,
+      });
+    } catch (e) {
+      console.error('Error avisando anulación a cocina:', e.message);
+    }
+  } catch (e) {
+    console.error(`[reservas] No se pudo cancelar el pedido #${pedido_id} de la reserva #${reserva_id}:`, e.message);
+  }
 }
 
 // Crea el pedido de la reserva (con su fila bloqueada mientras tanto, así el
@@ -118,10 +138,7 @@ async function convertirEnPedido(reserva_id, usuario_id, { mesa_id, alcance } = 
       return { r, pedido_id: pedido.id, nuevo: true };
     });
   } catch (err) {
-    if (creadoId) {
-      await ventasService.cancelar(creadoId, usuario_id, TODAS)
-        .catch((e) => console.error(`[reservas] No se pudo cancelar el pedido #${creadoId} de la reserva #${reserva_id}:`, e.message));
-    }
+    if (creadoId) await _deshacerPedido(creadoId, reserva_id, usuario_id);
     throw err;
   }
 
