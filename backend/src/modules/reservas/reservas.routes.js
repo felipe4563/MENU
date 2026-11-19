@@ -19,6 +19,7 @@ router.get('/', verificarPermiso('ventas', 'ver'), ctrl.listar);
 router.get('/hoy/platos', ventasOCocina, ctrl.platosDelDia);
 router.get('/:id', verificarPermiso('ventas', 'ver'), ctrl.obtener);
 router.post('/', verificarPermiso('ventas', 'crear'), requiereSucursalActiva, ctrl.crear);
+router.post('/:id/adelantos', verificarPermiso('ventas', 'crear'), requiereSucursalActiva, ctrl.cobrarAdelanto);
 router.put('/:id', verificarPermiso('ventas', 'crear'), ctrl.actualizar);
 router.put('/:id/estado', verificarPermiso('ventas', 'crear'), ctrl.cambiarEstado);
 
