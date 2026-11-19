@@ -1,13 +1,19 @@
 const bcrypt = require('bcryptjs');
 const { Usuario, Rol } = require('../../models');
 
+// Devuelve el usuario sin el hash del PIN, con tiene_pin en su lugar.
+function conTienePin(u) {
+  const { pin, ...resto } = u.toJSON();
+  return { ...resto, tiene_pin: !!pin };
+}
+
 async function obtener(req, res, next) {
   try {
     const u = await Usuario.findByPk(req.usuario.id, {
       attributes: { exclude: ['contrasena'] },
       include: [{ model: Rol, as: 'rol', attributes: ['id', 'nombre'] }],
     });
-    res.json({ ok: true, datos: u });
+    res.json({ ok: true, datos: conTienePin(u) });
   } catch (err) { next(err); }
 }
 
@@ -35,7 +41,7 @@ async function actualizar(req, res, next) {
       attributes: { exclude: ['contrasena'] },
       include: [{ model: Rol, as: 'rol', attributes: ['id', 'nombre'] }],
     });
-    res.json({ ok: true, datos: actualizado });
+    res.json({ ok: true, datos: conTienePin(actualizado) });
   } catch (err) { next(err); }
 }
 
@@ -60,4 +66,20 @@ async function cambiarContrasena(req, res, next) {
   } catch (err) { next(err); }
 }
 
-module.exports = { obtener, actualizar, cambiarContrasena };
+async function guardarPin(req, res, next) {
+  try {
+    const { contrasena, pin } = req.body;
+    if (typeof pin !== 'string' || !/^\d{4}$/.test(pin)) {
+      return res.status(400).json({ ok: false, mensaje: 'El PIN son 4 números' });
+    }
+    const u = await Usuario.findByPk(req.usuario.id);
+    const valida = typeof contrasena === 'string' && await bcrypt.compare(contrasena, u.contrasena);
+    if (!valida) {
+      return res.status(401).json({ ok: false, mensaje: 'La contraseña no es correcta' });
+    }
+    await u.update({ pin: await bcrypt.hash(pin, 10), pin_intentos: 0, pin_bloqueado: 0 });
+    res.json({ ok: true, datos: { tiene_pin: true } });
+  } catch (err) { next(err); }
+}
+
+module.exports = { obtener, actualizar, cambiarContrasena, guardarPin };

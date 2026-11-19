@@ -1,7 +1,7 @@
 const bcrypt = require('bcryptjs');
 const { Usuario, Rol, Sucursal } = require('../../models');
 
-const ATTRS_PUBLICOS = { exclude: ['contrasena'] };
+const ATTRS_PUBLICOS = { exclude: ['contrasena', 'pin'] };
 const INCLUDE_RELS = [
   { model: Rol, as: 'rol', attributes: ['id', 'nombre'] },
   { model: Sucursal, as: 'sucursales', attributes: ['id', 'nombre'], through: { attributes: [] } },
@@ -39,6 +39,13 @@ async function actualizar(id, { nombre, email, contrasena, rol_id, activo }) {
   return obtener(id);
 }
 
+// Reinicia el PIN: lo borra y limpia el bloqueo (el usuario crea uno nuevo).
+async function reiniciarPin(id) {
+  const u = await Usuario.findByPk(id);
+  if (!u) throw Object.assign(new Error('Usuario no encontrado'), { status: 404 });
+  await u.update({ pin: null, pin_intentos: 0, pin_bloqueado: 0 });
+}
+
 async function eliminar(id, solicitante_id) {
   if (Number(id) === Number(solicitante_id)) {
     throw Object.assign(new Error('No puedes desactivar tu propio usuario'), { status: 409 });
@@ -57,4 +64,4 @@ async function actualizarSucursales(id, sucursalIds = [], accesoTodas = false) {
   return obtener(id);
 }
 
-module.exports = { listar, obtener, crear, actualizar, eliminar, actualizarSucursales };
+module.exports = { listar, obtener, crear, actualizar, eliminar, actualizarSucursales, reiniciarPin };

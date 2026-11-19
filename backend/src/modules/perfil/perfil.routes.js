@@ -8,5 +8,6 @@ router.use(auth);
 router.get('/', ctrl.obtener);
 router.put('/', ctrl.actualizar);
 router.put('/contrasena', ctrl.cambiarContrasena);
+router.put('/pin', ctrl.guardarPin);
 
 module.exports = router;

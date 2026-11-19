@@ -40,4 +40,11 @@ async function actualizarSucursales(req, res, next) {
   } catch (err) { next(err); }
 }
 
-module.exports = { listar, obtener, crear, actualizar, eliminar, actualizarSucursales };
+async function reiniciarPin(req, res, next) {
+  try {
+    await svc.reiniciarPin(req.params.id);
+    res.json({ ok: true, datos: null });
+  } catch (err) { next(err); }
+}
+
+module.exports = { listar, obtener, crear, actualizar, eliminar, actualizarSucursales, reiniciarPin };

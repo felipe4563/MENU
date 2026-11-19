@@ -27,6 +27,7 @@ async function emitirSesion(usuario, sucursalId, sucursalNombre) {
       rol: usuario.rol.nombre,
       permisos: usuario.rol.permisos.map(p => `${p.modulo}.${p.accion}`),
       debe_cambiar_contrasena: !!usuario.debe_cambiar_contrasena,
+      tiene_pin: !!usuario.pin,
       sucursal_activa: { id: sucursalId, nombre: sucursalNombre },
     },
   };
@@ -48,6 +49,11 @@ async function login(email, contrasena) {
 
   const valida = await bcrypt.compare(contrasena, usuario.contrasena);
   if (!valida) throw Object.assign(new Error('Credenciales inválidas'), { status: 401 });
+
+  // Entrar con correo y contraseña reinicia el conteo y el bloqueo del PIN.
+  if (usuario.pin_intentos || usuario.pin_bloqueado) {
+    await usuario.update({ pin_intentos: 0, pin_bloqueado: 0 });
+  }
 
   let sucursalesDisponibles;
   if (usuario.acceso_todas_sucursales) {
