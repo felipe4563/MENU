@@ -1,7 +1,7 @@
 const { Op } = require('sequelize');
 const {
   Pedido, DetallePedido, Mesa, Producto, Cliente, SesionCaja, Caja, LibroCaja, Configuracion, PagoQr, Opcion, Combo, ComboProducto, Promocion, Cupon,
-  RecetaInsumo, DetallePedidoOpcion, DetallePedidoComboOpcion, Devolucion, DevolucionItem, Usuario, CocinaTiempo, PedidoPago, PedidoPagoItem, sequelize,
+  RecetaInsumo, DetallePedidoOpcion, DetallePedidoComboOpcion, Devolucion, DevolucionItem, Usuario, CocinaTiempo, PedidoPago, PedidoPagoItem, Area, sequelize,
 } = require('../../models');
 const { emitir } = require('../../socket');
 const { ajustarStockSucursal } = require('../inventario/stock.service');
@@ -1292,7 +1292,7 @@ async function precioLinea(item, { sin_conexion = false } = {}) {
   return { producto, nombre: producto.nombre, ..._datosLinea(item, producto, precioBase, extra) };
 }
 
-async function crearCompleta({ tipo, mesa_id, nombre_cliente, documento_cliente, tipo_documento, notas, items, metodo_pago, monto_recibido, descuento = 0, propina = 0, sesion_caja_id, usuario_id, cliente_id, puntos_canjear = 0, cupon_codigo, mesa_sesion_id = null, origen = 'staff', direccion_entrega = null, telefono_cliente = null, origen_app = null, clave_offline = null, sin_conexion = false, vendido_en = null }) {
+async function crearCompleta({ tipo, mesa_id, nombre_cliente, documento_cliente, tipo_documento, notas, items, metodo_pago, monto_recibido, descuento = 0, propina = 0, sesion_caja_id, usuario_id, cliente_id, puntos_canjear = 0, cupon_codigo, mesa_sesion_id = null, origen = 'staff', direccion_entrega = null, telefono_cliente = null, origen_app = null, clave_offline = null, sin_conexion = false, vendido_en = null, precios_fijos = null }) {
   // La misma venta puede llegar dos veces (se cortó la respuesta y el
   // navegador la reintentó desde su cola): se devuelve la que ya existe.
   if (clave_offline) {
@@ -1326,9 +1326,12 @@ async function crearCompleta({ tipo, mesa_id, nombre_cliente, documento_cliente,
   }
 
   const productos = [];
-  for (const item of items) {
+  for (const [i, item] of items.entries()) {
     const { combo, producto, opcionesPorProducto, cantidad, precio, peso } = await precioLinea(item, { sin_conexion });
-    const linea = { cantidad, precio, peso };
+    // Uso interno (nunca desde HTTP): el precio unitario ya congelado de una
+    // reserva reemplaza al de hoy.
+    const fijo = Array.isArray(precios_fijos) && precios_fijos[i] != null ? Number(precios_fijos[i]) : null;
+    const linea = { cantidad, precio: fijo != null && Number.isFinite(fijo) && fijo >= 0 ? fijo : precio, peso };
     productos.push(combo ? { item, combo, linea, opcionesPorProducto } : { item, producto, linea });
   }
 
@@ -1717,6 +1720,29 @@ async function cancelar(pedido_id, usuario_id, alcance) {
   return cancelado;
 }
 
+// Pedido de una reserva que salió a cocina para llevar (su mesa estaba
+// ocupada): cuando el cliente llega se lo pasa a una mesa libre. No hay
+// "cambiar mesa" general en ventas; esto es solo para esos pedidos.
+async function asignarMesaReserva(pedido_id, mesa_id) {
+  const sucursal_id = await sequelize.transaction(async (t) => {
+    const pedido = await Pedido.findByPk(pedido_id, { transaction: t, lock: t.LOCK.UPDATE });
+    if (!pedido) throw Object.assign(new Error('Pedido no encontrado'), { status: 404 });
+    if (!['pendiente', 'listo'].includes(pedido.estado) || pedido.tipo !== 'llevar' || !String(pedido.notas || '').startsWith('Reserva #')) {
+      throw Object.assign(new Error('Este pedido no se puede pasar a una mesa'), { status: 409 });
+    }
+    const mesa = await Mesa.findByPk(mesa_id, {
+      include: [{ model: Area, as: 'area', attributes: ['sucursal_id'] }], transaction: t, lock: t.LOCK.UPDATE,
+    });
+    if (!mesa || mesa.area?.sucursal_id !== pedido.sucursal_id) throw Object.assign(new Error('Mesa no encontrada'), { status: 404 });
+    if (mesa.estado !== 'disponible') throw Object.assign(new Error('Mesa ya ocupada'), { status: 409 });
+    await pedido.update({ tipo: 'mesa', mesa_id: mesa.id }, { transaction: t });
+    await Mesa.update({ estado: 'ocupada' }, { where: { id: mesa.id }, transaction: t });
+    return pedido.sucursal_id;
+  });
+  emitir('restaurante:actualizar', { tipo: 'pedido_mesa' }, sucursal_id);
+  return obtener(pedido_id);
+}
+
 async function _recalcularTotal(pedido_id, { transaction } = {}) {
   const [result] = await sequelize.query(
     'SELECT COALESCE(SUM((cantidad - cantidad_anulada) * precio), 0) as total FROM detalle_pedidos WHERE pedido_id = ?',
@@ -1774,7 +1800,7 @@ async function marcarEntregado(pedido_id, alcance) {
 module.exports = {
   _emitirImpresion, _numeroOrdenDiarioOriginal,
   listar, listarCocina, obtener, misVentasHoy, reimprimir, crear, crearCompleta, precioLinea, agregarItem, actualizarItem, eliminarItem,
-  cobrar, cancelar, marcarListo, marcarEntregado,
+  cobrar, cancelar, marcarListo, marcarEntregado, asignarMesaReserva,
   consultarEstadoPagoQr, cancelarPagoQr, procesarWebhookPagoQr, revertirPagosQrVencidos,
   procesarNotificacionBaneco, confirmarPagoQrManual, listarPagosQrPorConfirmar,
   _asentarIngreso, _cerrarVenta, _sesionCajaParaAsiento, iniciarPagoQr,

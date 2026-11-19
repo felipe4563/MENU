@@ -1,5 +1,6 @@
 const svc = require('./reservas.service');
 const adelantos = require('./adelantos.service');
+const convertir = require('./convertir.service');
 
 const _alcance = (req) => ({ sucursal_id: req.usuario.sucursal_id, acceso_todas: req.usuario.acceso_todas });
 
@@ -24,11 +25,18 @@ async function actualizar(req, res, next) {
 }
 
 async function cambiarEstado(req, res, next) {
-  try { res.json({ ok: true, datos: await svc.cambiarEstado(req.params.id, req.body?.estado, _alcance(req)) }); } catch (e) { next(e); }
+  try {
+    const { estado, mesa_id } = req.body || {};
+    res.json({ ok: true, datos: await svc.cambiarEstado(req.params.id, estado, _alcance(req), { mesa_id, usuario_id: req.usuario.id }) });
+  } catch (e) { next(e); }
+}
+
+async function enviarCocina(req, res, next) {
+  try { res.json({ ok: true, datos: await convertir.convertirEnPedido(req.params.id, req.usuario.id, { alcance: _alcance(req) }) }); } catch (e) { next(e); }
 }
 
 async function cobrarAdelanto(req, res, next) {
   try { res.status(201).json({ ok: true, datos: await adelantos.cobrarAdelanto(req.params.id, req.usuario.id, req.body || {}, _alcance(req)) }); } catch (e) { next(e); }
 }
 
-module.exports = { cobrarAdelanto, listar, obtener, platosDelDia, crear, actualizar, cambiarEstado };
+module.exports = { cobrarAdelanto, enviarCocina, listar, obtener, platosDelDia, crear, actualizar, cambiarEstado };

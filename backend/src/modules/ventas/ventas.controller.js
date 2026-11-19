@@ -40,7 +40,10 @@ async function crearCompleta(req, res, next) {
     if (!tipo) return res.status(400).json({ ok: false, mensaje: "tipo es requerido ('mesa' o 'llevar')" });
     if (!items || !items.length) return res.status(400).json({ ok: false, mensaje: 'items es requerido y no puede estar vacío' });
     if (!metodo_pago) return res.status(400).json({ ok: false, mensaje: 'metodo_pago es requerido (efectivo|qr)' });
+    // `precios_fijos` es solo para uso interno (reservas): desde afuera el
+    // precio siempre sale de la BD.
     const datos = { ...req.body, usuario_id: req.usuario.id };
+    delete datos.precios_fijos;
     res.status(201).json({ ok: true, datos: await svc.crearCompleta(datos) });
   } catch (err) { next(err); }
 }

@@ -253,11 +253,24 @@ async function actualizar(id, entrada, alcance) {
   return _json(await _cargar(id));
 }
 
-async function cambiarEstado(id, estado, alcance) {
+// "Llegó" manda los platos a cocina si todavía no salieron (en `mesa_id` si
+// está libre) y, si ya salieron para llevar, pasa el pedido a esa mesa.
+async function cambiarEstado(id, estado, alcance, { mesa_id, usuario_id } = {}) {
   if (!Reserva.ESTADOS.includes(estado)) throw error('Estado no válido');
   const r = await Reserva.findByPk(id);
   if (!r) throw error('Reserva no encontrada', 404);
   _verificarAlcance(r, alcance);
+  if (estado === 'llego') {
+    // Recién convertido ya usó la mesa si estaba libre (si no, salió para llevar).
+    if (!r.pedido_id) {
+      await require('./convertir.service').convertirEnPedido(r.id, usuario_id, { mesa_id, alcance });
+    } else if (mesa_id) {
+      const pedido = await ventasService.obtener(r.pedido_id);
+      if (pedido.tipo === 'llevar' && !pedido.mesa_id && ['pendiente', 'listo'].includes(pedido.estado)) {
+        await ventasService.asignarMesaReserva(r.pedido_id, Number(mesa_id));
+      }
+    }
+  }
   // Volver a "pendiente" una cancelada vuelve a ocupar su horario.
   if (estado === 'pendiente' && !ACTIVAS.includes(r.estado)) {
     await _verificarCruce({ mesa_id: r.mesa_id, fecha_hora: new Date(r.fecha_hora), duracion_min: r.duracion_min }, r.sucursal_id, r.id);
