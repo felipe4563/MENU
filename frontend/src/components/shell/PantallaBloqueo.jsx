@@ -143,15 +143,16 @@ export default function PantallaBloqueo() {
     try {
       const datos = await entrarConPin({ dispositivo_token: dispositivoToken, usuario_id: elegido.id, pin: valor });
       // Lo del usuario anterior no se le muestra al que entra (la cola de ventas sin internet sí se queda).
-      await desvincularPush();
+      await desvincularPush({ sinRefrescar: true });
       await limpiarDatos();
       useCarrito.getState().limpiar();
       borrarVerificador();
       setAuth(datos);
       await guardarVerificador(datos.usuario.id, valor);
       vincularPush();
-      marcarDesbloqueado();
+      // Primero la ruta del que entra: la pantalla anterior no se llega a mostrar con su usuario.
       navigate(primeraRuta(datos.usuario?.permisos), { replace: true });
+      marcarDesbloqueado();
     } catch (err) {
       if (!err?.response) return fallar('Para cambiar de usuario necesitas internet');
       tratarError(err);

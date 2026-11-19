@@ -79,9 +79,12 @@ export async function vincularPush() {
   } catch { /* sin internet: se vincula la próxima vez */ }
 }
 
-export async function desvincularPush() {
+// sinRefrescar: al cambiar de usuario en la pantalla de bloqueo la sesión del
+// anterior puede estar vencida; un 401 acá no debe refrescar ni cerrar la
+// sesión del que acaba de entrar (api/cliente.js salta el refresco con _reintentado).
+export async function desvincularPush({ sinRefrescar = false } = {}) {
   try {
     const sub = await suscripcionActual();
-    if (sub) await api.delete('/push/suscripcion', { data: { endpoint: sub.endpoint }, timeout: 4000 });
+    if (sub) await api.delete('/push/suscripcion', { data: { endpoint: sub.endpoint }, timeout: 4000, ...(sinRefrescar && { _reintentado: true }) });
   } catch { /* sin internet: el servidor la sigue teniendo hasta que entre otro */ }
 }

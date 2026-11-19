@@ -21,7 +21,7 @@ async function obtenerTodo() {
 }
 
 async function obtenerPublica() {
-  const claves = ['nombre_negocio', 'logo', 'portada', 'moneda', 'simbolo_moneda', 'color_primario', 'color_secundario', 'fidelidad_activa', 'fidelidad_canje_qr', 'qr_proveedor'];
+  const claves = ['nombre_negocio', 'logo', 'portada', 'moneda', 'simbolo_moneda', 'color_primario', 'color_secundario', 'fidelidad_activa', 'fidelidad_canje_qr', 'qr_proveedor', 'bloqueo_inactividad_min'];
   const configs = await Configuracion.findAll({ where: { clave: claves } });
   return configs.reduce((obj, c) => {
     obj[c.clave] = c.valor;
