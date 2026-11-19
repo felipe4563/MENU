@@ -1,7 +1,7 @@
 // Cada minuto: manda a cocina las reservas "antes" cuando llega su hora y
 // avisa (una sola vez) de las que no llegaron.
 const { Op } = require('sequelize');
-const { Reserva, ReservaItem } = require('../models');
+const { Reserva, ReservaItem, Pedido } = require('../models');
 const reservasService = require('../modules/reservas/reservas.service');
 const { convertirEnPedido } = require('../modules/reservas/convertir.service');
 const push = require('../modules/push/push.service');
@@ -10,13 +10,15 @@ const MIN = 60000;
 // Solo las reservas de las últimas 24 horas: una pendiente vieja no se manda
 // a cocina ni avisa.
 const VENTANA = 24 * 60 * MIN;
+// La duración más larga de una reserva (10 horas).
+const DURACION_MAX = 600 * MIN;
 const _horaLocal = (f) => new Date(new Date(f).getTime() - 4 * 3600000).toISOString().slice(11, 16);
 
 async function _enviar(ahora, cfg) {
   const candidatas = await Reserva.findAll({
     where: {
       estado: 'pendiente', pedido_id: null,
-      fecha_hora: { [Op.between]: [new Date(ahora.getTime() - VENTANA), new Date(ahora.getTime() + 1440 * MIN)] },
+      fecha_hora: { [Op.between]: [new Date(ahora.getTime() - DURACION_MAX), new Date(ahora.getTime() + 1440 * MIN)] },
     },
     include: [{ model: ReservaItem, as: 'items', attributes: ['id'], required: true }],
     order: [['fecha_hora', 'ASC'], ['id', 'ASC']],
@@ -26,6 +28,8 @@ async function _enviar(ahora, cfg) {
   for (const r of candidatas) {
     if ((r.envio_cocina ?? cfg.envio_cocina) !== 'antes') continue;
     if (new Date(r.fecha_hora).getTime() - cfg.minutos_antes * MIN > ahora.getTime()) continue;
+    // Pasado su horario ya no sale sola (la de anoche no va a cocina).
+    if (!reservasService.enHorario(r, ahora)) continue;
     try {
       const { pedido } = await convertirEnPedido(r.id, r.usuario_id);
       if (pedido) enviadas += 1;
@@ -47,6 +51,8 @@ async function _avisarNoLlego(ahora, cfg) {
   });
   let avisadas = 0;
   for (const r of vencidas) {
+    // Con su pedido en cocina (no cancelado) el cliente ya está siendo atendido.
+    if (r.pedido_id && (await Pedido.findByPk(r.pedido_id, { attributes: ['estado'] }))?.estado !== 'cancelado') continue;
     // Se marca primero y solo quien lo logra avisa: una vez por reserva.
     const [marcadas] = await Reserva.update({ aviso_no_vino_en: ahora }, { where: { id: r.id, estado: 'pendiente', aviso_no_vino_en: null } });
     if (!marcadas) continue;

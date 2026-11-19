@@ -90,6 +90,10 @@ async function configReservas() {
   };
 }
 
+// La reserva todavía no terminó su horario (fecha_hora + duración): solo así
+// sale sola a cocina.
+const enHorario = (r, ahora = new Date()) => ahora.getTime() < new Date(r.fecha_hora).getTime() + r.duracion_min * 60000;
+
 // Si la reserva sale a cocina antes de la hora y ya llegó el momento de
 // mandarla, la manda ahora (después de guardar, nunca dentro de su transacción).
 // Si no se puede (sin caja, plato desactivado...) queda guardada y el job lo
@@ -101,6 +105,7 @@ async function _enviarSiYaEsHora(id, usuario_id) {
     const cfg = await configReservas();
     if ((r.envio_cocina ?? cfg.envio_cocina) !== 'antes') return;
     if (new Date(r.fecha_hora).getTime() - cfg.minutos_antes * 60000 > Date.now()) return;
+    if (!enHorario(r)) return;
     await require('./convertir.service').convertirEnPedido(r.id, usuario_id);
   } catch (err) {
     if (err.status === 409) console.warn(`[reservas] Reserva #${id} no salió a cocina al guardar: ${err.message}`);
@@ -387,4 +392,4 @@ async function cambiarEstado(id, estado, alcance, { mesa_id, usuario_id, destino
   return _json(await _cargar(r.id));
 }
 
-module.exports = { configReservas, listar, obtener, platosDelDia, crear, actualizar, cambiarEstado };
+module.exports = { configReservas, enHorario, listar, obtener, platosDelDia, crear, actualizar, cambiarEstado };

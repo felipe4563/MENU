@@ -136,6 +136,40 @@ describe('Job de reservas', () => {
     expect(res.avisadas).toBe(0);
   });
 
+  it('no manda a cocina la reserva cuyo horario ya terminó', async () => {
+    // Hace 3 horas, de 120 minutos: terminó hace 1 hora.
+    const vieja = await nuevaLuego(-180, { duracion_min: 120 });
+    // Todavía en su horario (empezó hace 1 hora): sí sale.
+    const enCurso = await nuevaLuego(-60, { duracion_min: 120 });
+    const warn = jest.spyOn(console, 'warn').mockImplementation(() => {});
+    const res = await procesarReservas();
+    expect(res.enviadas).toBe(1);
+    expect(warn).not.toHaveBeenCalled();
+    warn.mockRestore();
+    expect((await recargar(vieja.id)).pedido_id).toBeNull();
+    expect((await recargar(enCurso.id)).pedido_id).toBeTruthy();
+  });
+
+  it('al editar una reserva que ya terminó su horario no sale a cocina', async () => {
+    const r = await nueva(24 * 60, { duracion_min: 120 });
+    const res = await request(app).put(`/api/v1/reservas/${r.id}`).set(auth()).send({ fecha_hora: local(new Date(Date.now() - 180 * MIN)) });
+    expect(res.status).toBe(200);
+    expect((await recargar(r.id)).pedido_id).toBeNull();
+  });
+
+  it('no avisa "no llegó" de la reserva con su pedido en cocina; sí si el pedido se canceló', async () => {
+    await config('antes', 30, 10);
+    const r = await nuevaLuego(5);
+    expect((await procesarReservas()).enviadas).toBe(1);
+    const { pedido_id } = await recargar(r.id);
+    expect(pedido_id).toBeTruthy();
+    const despues = new Date(Date.now() + 20 * MIN);
+    expect((await procesarReservas(despues)).avisadas).toBe(0);
+    expect((await recargar(r.id)).aviso_no_vino_en).toBeNull();
+    await Pedido.update({ estado: 'cancelado' }, { where: { id: pedido_id } });
+    expect((await procesarReservas(new Date(despues.getTime() + MIN))).avisadas).toBe(1);
+  });
+
   it('sin caja abierta no falla y queda para después', async () => {
     await sesion.update({ estado: 'cerrada' });
     const r = await nuevaLuego(20);
