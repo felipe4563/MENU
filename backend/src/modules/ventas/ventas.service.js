@@ -1269,6 +1269,29 @@ function _horaVentaSinConexion(vendido_en) {
   return d;
 }
 
+// Valida una línea (producto o combo) y calcula su precio unitario con
+// promoción y extras, siempre desde la BD. Lo usan la venta completa y los
+// platos de una reserva. `sin_conexion`: lo vendido sin internet ya se
+// entregó y se registra aunque después se haya desactivado.
+async function precioLinea(item, { sin_conexion = false } = {}) {
+  if (item.combo_id) {
+    const combo = await Combo.findByPk(item.combo_id);
+    if (!combo) throw Object.assign(new Error('Combo no encontrado'), { status: 404 });
+    if (!sin_conexion && (!combo.activo || !estaActivoHoy(combo))) {
+      throw Object.assign(new Error(`El combo "${combo.nombre}" no está disponible`), { status: 409 });
+    }
+    const opcionesPorProducto = await _validarOpcionesCombo(item.combo_id, item.opciones_por_producto);
+    const extraCombo = await _extraPorOpciones(opcionesPorProducto.flatMap((o) => o.opcion_ids || []));
+    return { combo, opcionesPorProducto, nombre: combo.nombre, cantidad: item.cantidad ?? 1, precio: parseFloat(combo.precio) + extraCombo, peso: null };
+  }
+  const producto = await Producto.findByPk(item.producto_id);
+  if (!producto) throw Object.assign(new Error('Producto no encontrado'), { status: 404 });
+  if (!sin_conexion && (!producto.activo || !producto.es_vendible)) throw Object.assign(new Error('Producto no disponible'), { status: 409 });
+  const extra = await _extraPorOpciones(item.opcion_ids);
+  const precioBase = await _precioConPromocion(producto);
+  return { producto, nombre: producto.nombre, ..._datosLinea(item, producto, precioBase, extra) };
+}
+
 async function crearCompleta({ tipo, mesa_id, nombre_cliente, documento_cliente, tipo_documento, notas, items, metodo_pago, monto_recibido, descuento = 0, propina = 0, sesion_caja_id, usuario_id, cliente_id, puntos_canjear = 0, cupon_codigo, mesa_sesion_id = null, origen = 'staff', direccion_entrega = null, telefono_cliente = null, origen_app = null, clave_offline = null, sin_conexion = false, vendido_en = null }) {
   // La misma venta puede llegar dos veces (se cortó la respuesta y el
   // navegador la reintentó desde su cola): se devuelve la que ya existe.
@@ -1304,27 +1327,9 @@ async function crearCompleta({ tipo, mesa_id, nombre_cliente, documento_cliente,
 
   const productos = [];
   for (const item of items) {
-    if (item.combo_id) {
-      const combo = await Combo.findByPk(item.combo_id);
-      if (!combo) throw Object.assign(new Error('Combo no encontrado'), { status: 404 });
-      // Lo vendido sin internet ya se entregó: se registra aunque después se
-      // haya desactivado.
-      if (!sin_conexion && (!combo.activo || !estaActivoHoy(combo))) {
-        throw Object.assign(new Error(`El combo "${combo.nombre}" no está disponible`), { status: 409 });
-      }
-      const opcionesPorProducto = await _validarOpcionesCombo(item.combo_id, item.opciones_por_producto);
-      const extraCombo = await _extraPorOpciones(opcionesPorProducto.flatMap((o) => o.opcion_ids || []));
-      const linea = { cantidad: item.cantidad ?? 1, precio: parseFloat(combo.precio) + extraCombo, peso: null };
-      productos.push({ item, combo, linea, opcionesPorProducto });
-      continue;
-    }
-    const producto = await Producto.findByPk(item.producto_id);
-    if (!producto) throw Object.assign(new Error('Producto no encontrado'), { status: 404 });
-    if (!sin_conexion && (!producto.activo || !producto.es_vendible)) throw Object.assign(new Error('Producto no disponible'), { status: 409 });
-    const extra = await _extraPorOpciones(item.opcion_ids);
-    const precioBase = await _precioConPromocion(producto);
-    const linea = _datosLinea(item, producto, precioBase, extra);
-    productos.push({ item, producto, linea });
+    const { combo, producto, opcionesPorProducto, cantidad, precio, peso } = await precioLinea(item, { sin_conexion });
+    const linea = { cantidad, precio, peso };
+    productos.push(combo ? { item, combo, linea, opcionesPorProducto } : { item, producto, linea });
   }
 
   let mesa = null;
@@ -1768,7 +1773,7 @@ async function marcarEntregado(pedido_id, alcance) {
 
 module.exports = {
   _emitirImpresion, _numeroOrdenDiarioOriginal,
-  listar, listarCocina, obtener, misVentasHoy, reimprimir, crear, crearCompleta, agregarItem, actualizarItem, eliminarItem,
+  listar, listarCocina, obtener, misVentasHoy, reimprimir, crear, crearCompleta, precioLinea, agregarItem, actualizarItem, eliminarItem,
   cobrar, cancelar, marcarListo, marcarEntregado,
   consultarEstadoPagoQr, cancelarPagoQr, procesarWebhookPagoQr, revertirPagosQrVencidos,
   procesarNotificacionBaneco, confirmarPagoQrManual, listarPagosQrPorConfirmar,
