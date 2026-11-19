@@ -2,7 +2,7 @@
 // el resto del sistema: "2026-11-20T20:00" sin zona se toma como 20:00 local.
 const { Op } = require('sequelize');
 const sequelize = require('../../config/database');
-const { Reserva, ReservaItem, ReservaPago, Mesa, Area, Usuario, Pedido, PedidoPago, DetallePedido } = require('../../models');
+const { Reserva, ReservaItem, ReservaPago, Mesa, Area, Usuario, Pedido, PedidoPago, DetallePedido, Configuracion } = require('../../models');
 const { emitir } = require('../../socket');
 const ventasService = require('../ventas/ventas.service');
 const { round2 } = require('../devoluciones/calculo');
@@ -76,6 +76,36 @@ function _envioCocina(valor) {
   if (valor == null || valor === '') return null;
   if (!ENVIOS_COCINA.includes(valor)) throw error('La forma de mandar a cocina no es válida');
   return valor;
+}
+
+// Ajustes de reservas (tabla configuraciones) con sus valores por defecto.
+async function configReservas() {
+  const filas = await Configuracion.findAll({ where: { clave: ['reservas_envio_cocina', 'reservas_minutos_antes', 'reservas_tolerancia_no_vino'] } });
+  const v = Object.fromEntries(filas.map((f) => [f.clave, f.valor]));
+  const entero = (valor, defecto) => (valor !== '' && valor != null && Number.isInteger(Number(valor)) ? Number(valor) : defecto);
+  return {
+    envio_cocina: ENVIOS_COCINA.includes(v.reservas_envio_cocina) ? v.reservas_envio_cocina : 'al_llegar',
+    minutos_antes: entero(v.reservas_minutos_antes, 30),
+    tolerancia_no_vino: entero(v.reservas_tolerancia_no_vino, 30),
+  };
+}
+
+// Si la reserva sale a cocina antes de la hora y ya llegó el momento de
+// mandarla, la manda ahora (después de guardar, nunca dentro de su transacción).
+// Si no se puede (sin caja, plato desactivado...) queda guardada y el job lo
+// reintenta cada minuto.
+async function _enviarSiYaEsHora(id, usuario_id) {
+  try {
+    const r = await Reserva.findByPk(id, { include: [{ model: ReservaItem, as: 'items', attributes: ['id'] }] });
+    if (!r || r.estado !== 'pendiente' || r.pedido_id || !r.items.length) return;
+    const cfg = await configReservas();
+    if ((r.envio_cocina ?? cfg.envio_cocina) !== 'antes') return;
+    if (new Date(r.fecha_hora).getTime() - cfg.minutos_antes * 60000 > Date.now()) return;
+    await require('./convertir.service').convertirEnPedido(r.id, usuario_id);
+  } catch (err) {
+    if (err.status === 409) console.warn(`[reservas] Reserva #${id} no salió a cocina al guardar: ${err.message}`);
+    else console.error(`[reservas] No se pudo mandar a cocina la reserva #${id}:`, err.message);
+  }
 }
 
 function _fecha(valor) {
@@ -210,6 +240,7 @@ async function crear(entrada, usuario_id, sucursal_id) {
     return r.id;
   });
   emitir('restaurante:actualizar', { tipo: 'reserva' }, sucursal_id);
+  await _enviarSiYaEsHora(id, usuario_id);
   return _json(await _cargar(id));
 }
 
@@ -250,6 +281,7 @@ async function actualizar(id, entrada, alcance) {
     }
   });
   emitir('restaurante:actualizar', { tipo: 'reserva' }, previa.sucursal_id);
+  await _enviarSiYaEsHora(id, previa.usuario_id);
   return _json(await _cargar(id));
 }
 
@@ -355,4 +387,4 @@ async function cambiarEstado(id, estado, alcance, { mesa_id, usuario_id, destino
   return _json(await _cargar(r.id));
 }
 
-module.exports = { listar, obtener, platosDelDia, crear, actualizar, cambiarEstado };
+module.exports = { configReservas, listar, obtener, platosDelDia, crear, actualizar, cambiarEstado };

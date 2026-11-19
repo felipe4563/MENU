@@ -7,6 +7,7 @@ const { sequelize } = require('./models');
 const { generarCuponesCumpleanos } = require('./jobs/cumpleanos.job');
 const { avisarCuponesPorVencer } = require('./jobs/avisoCupones.job');
 const { expirarPagosQrVencidos } = require('./jobs/expirarPagosQr.job');
+const { procesarReservas } = require('./jobs/reservas.job');
 const { resetDisponibilidadDiaria } = require('./jobs/resetDisponibilidad.job');
 const { cerrarMarcacionesAbandonadas } = require('./jobs/cierreAutomaticoPersonal.job');
 
@@ -31,6 +32,12 @@ function _correrJobExpirarPagosQr() {
   expirarPagosQrVencidos()
     .then(({ revertidos }) => { if (revertidos > 0) console.log(`Pagos QR vencidos revertidos: ${revertidos}`); })
     .catch(err => console.error('Error revirtiendo pagos QR vencidos:', err));
+}
+
+function _correrJobReservas() {
+  procesarReservas()
+    .then(({ enviadas, avisadas }) => { if (enviadas > 0 || avisadas > 0) console.log(`Reservas: ${enviadas} a cocina, ${avisadas} sin llegar`); })
+    .catch(err => console.error('Error procesando reservas:', err));
 }
 
 function _correrJobResetDisponibilidad() {
@@ -64,6 +71,8 @@ sequelize.authenticate()
     // Corre cada 5 minutos para limpiar pagos QR vencidos. No depende de
     // hora de negocio, así que corre siempre sin timezone.
     cron.schedule('*/5 * * * *', _correrJobExpirarPagosQr);
+    // Reservas: mandar a cocina antes de la hora y avisar las que no llegaron.
+    cron.schedule('* * * * *', _correrJobReservas);
 
     // Corre todas las noches a las 06:00 hora Bolivia para resetear la
     // disponibilidad diaria de todos los productos. A diferencia de los

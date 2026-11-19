@@ -29,10 +29,27 @@ async function obtenerPublica() {
   }, {});
 }
 
+// Ajustes de reservas: se validan al guardar para que el job nunca lea basura.
+const ENVIOS_RESERVA = ['al_llegar', 'antes', 'manual'];
+function _validarReservas(pares) {
+  const malo = (mensaje) => Object.assign(new Error(mensaje), { status: 400 });
+  const entero = (clave, min, max, texto) => {
+    if (!(clave in pares)) return;
+    const n = Number(pares[clave]);
+    if (pares[clave] === '' || pares[clave] == null || !Number.isInteger(n) || n < min || n > max) throw malo(texto);
+  };
+  if ('reservas_envio_cocina' in pares && !ENVIOS_RESERVA.includes(pares.reservas_envio_cocina)) {
+    throw malo('La forma de mandar a cocina las reservas no es válida');
+  }
+  entero('reservas_minutos_antes', 0, 1440, 'Los minutos antes de la hora deben ser entre 0 y 1440');
+  entero('reservas_tolerancia_no_vino', 5, 600, 'La tolerancia para avisar que no llegó debe ser entre 5 y 600 minutos');
+}
+
 async function actualizar(pares) {
   if (Object.keys(pares).some(SOLO_COBRO_QR)) {
     throw Object.assign(new Error('El cobro con QR se cambia en Ajustes › Cobro con QR.'), { status: 403 });
   }
+  _validarReservas(pares);
   for (const [clave, valor] of Object.entries(pares)) {
     await Configuracion.upsert({ clave, valor });
   }
