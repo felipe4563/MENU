@@ -1,7 +1,7 @@
 const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
 const { Op } = require('sequelize');
-const { Usuario, Rol, Permiso, Sucursal } = require('../../models');
+const { sequelize, Usuario, Rol, Permiso, Sucursal } = require('../../models');
 
 const MAX_INTENTOS_PIN = 5;
 const MSG_DISPOSITIVO = 'Este aparato ya no está habilitado: entra con tu correo';
@@ -197,16 +197,42 @@ async function usuariosConPin(dispositivo_token) {
   return usuarios.map(u => ({ id: u.id, nombre: u.nombre, avatar: u.avatar || null }));
 }
 
+// Id de usuario tal como lo manda el aparato: número entero positivo o su
+// texto decimal sin ceros a la izquierda. "05", "5.0", "0x5" o "5e0" no
+// valen (si no, cada forma contaría aparte en el limitador por usuario).
+function usuarioIdCanonico(valor) {
+  if (typeof valor === 'number') return Number.isSafeInteger(valor) && valor > 0 ? valor : null;
+  if (typeof valor === 'string' && /^[1-9]\d{0,15}$/.test(valor)) {
+    const n = Number(valor);
+    return Number.isSafeInteger(n) ? n : null;
+  }
+  return null;
+}
+
+// Suma un intento de PIN con la fila bloqueada y devuelve el número de este
+// intento (1..5), o null si ya está bloqueado o sin intentos.
+async function reservarIntentoPin(id) {
+  return sequelize.transaction(async (transaction) => {
+    const u = await Usuario.findByPk(id, {
+      attributes: ['id', 'pin_intentos', 'pin_bloqueado'],
+      lock: transaction.LOCK.UPDATE,
+      transaction,
+    });
+    if (!u || u.pin_bloqueado || u.pin_intentos >= MAX_INTENTOS_PIN) return null;
+    const intento = u.pin_intentos + 1;
+    await Usuario.update({ pin_intentos: intento }, { where: { id }, transaction });
+    return intento;
+  });
+}
+
 async function entrarConPin(dispositivo_token, usuario_id, pin) {
   const sucursal = await sucursalDelDispositivo(dispositivo_token);
 
   if (typeof pin !== 'string' || !/^\d{4}$/.test(pin)) {
     throw Object.assign(new Error('El PIN son 4 números'), { status: 400 });
   }
-  const id = Number(usuario_id);
-  if (!Number.isInteger(id) || id <= 0) {
-    throw Object.assign(new Error(MSG_OTRA_SUCURSAL), { status: 403 });
-  }
+  const id = usuarioIdCanonico(usuario_id);
+  if (id === null) throw Object.assign(new Error('Usuario no válido'), { status: 400 });
 
   // Inactivo o inexistente se responde igual que "de otra sucursal".
   const usuario = await buscarUsuarioCompleto({ id, activo: 1 });
@@ -217,23 +243,29 @@ async function entrarConPin(dispositivo_token, usuario_id, pin) {
   if (usuario.pin_bloqueado) throw Object.assign(new Error(MSG_PIN_BLOQUEADO), { status: 423 });
   if (!usuario.pin) throw Object.assign(new Error('Ese usuario no tiene PIN: entra con tu correo'), { status: 400 });
 
+  // Se reserva el intento ANTES de comparar (bcrypt es lento): así una
+  // ráfaga de pedidos en paralelo no puede probar más de 5 PIN. La fila se
+  // bloquea solo lo que dura leer y sumar, no durante el bcrypt.
+  const intento = await reservarIntentoPin(id);
+  if (intento === null) throw Object.assign(new Error(MSG_PIN_BLOQUEADO), { status: 423 });
+
   const valido = await bcrypt.compare(pin, usuario.pin);
   if (!valido) {
-    // increment es atómico en SQL: dos intentos a la vez cuentan los dos.
-    await usuario.increment('pin_intentos');
-    await usuario.reload();
-    if (usuario.pin_intentos >= MAX_INTENTOS_PIN) {
-      await usuario.update({ pin_bloqueado: 1 });
+    if (intento >= MAX_INTENTOS_PIN) {
+      await Usuario.update({ pin_bloqueado: 1 }, { where: { id } });
       throw Object.assign(new Error(MSG_PIN_BLOQUEADO), { status: 423 });
     }
     throw Object.assign(new Error('PIN incorrecto'), {
       status: 401,
-      intentos_restantes: MAX_INTENTOS_PIN - usuario.pin_intentos,
+      intentos_restantes: MAX_INTENTOS_PIN - intento,
     });
   }
 
-  if (usuario.pin_intentos) await usuario.update({ pin_intentos: 0 });
+  // PIN bien: se reinicia el conteo solo si otro pedido no lo bloqueó entretanto.
+  const [cambiadas] = await Usuario.update({ pin_intentos: 0 }, { where: { id, pin_bloqueado: 0 } });
+  if (cambiadas === 0) throw Object.assign(new Error(MSG_PIN_BLOQUEADO), { status: 423 });
+  usuario.pin_intentos = 0;
   return await emitirSesion(usuario, sucursal.id, sucursal.nombre, { nuevaVersion: false });
 }
 
-module.exports = { login, loginConSucursal, refresh, usuariosConPin, entrarConPin };
+module.exports = { login, loginConSucursal, refresh, usuariosConPin, entrarConPin, usuarioIdCanonico };

@@ -243,6 +243,51 @@ describe('Entrar con PIN en un aparato habilitado', () => {
     expect(b.status).toBe(423);
   });
 
+  it('PIN mal en ráfaga: no se prueban más de 5 y queda bloqueado', async () => {
+    await mozoA.update({ pin_intentos: 0, pin_bloqueado: 0 });
+    const rs = await Promise.all(Array.from({ length: 8 }, () => entrar(mozoA.id, '0000')));
+    const estados = rs.map(r => r.status);
+    for (const e of estados) expect([401, 423]).toContain(e);
+    // A lo más 4 "PIN incorrecto"; el 5.º y los que sobran, bloqueados.
+    expect(estados.filter(e => e === 401).length).toBeLessThanOrEqual(4);
+    expect(estados.filter(e => e === 423).length).toBeGreaterThanOrEqual(4);
+    await mozoA.reload();
+    expect(mozoA.pin_bloqueado).toBe(1);
+    expect(mozoA.pin_intentos).toBeLessThanOrEqual(5);
+  });
+
+  it('PIN correcto en paralelo con PIN mal no entra si se bloqueó', async () => {
+    await mozoA.update({ pin_intentos: 4, pin_bloqueado: 0 });
+    // Un PIN mal llega primero y usa el último intento; el correcto, a la vez.
+    const [mal, bien] = await Promise.all([entrar(mozoA.id, '0000'), entrar(mozoA.id, '1234')]);
+    await mozoA.reload();
+    if (bien.status === 200) {
+      // El correcto reservó el último intento: el mal no pudo probar nada.
+      expect(mal.status).toBe(423);
+      expect(mozoA.pin_bloqueado).toBe(0);
+    } else {
+      expect(bien.status).toBe(423);
+      expect(mal.status).toBe(423);
+      expect(mozoA.pin_bloqueado).toBe(1);
+    }
+    // Ya bloqueado: ni en paralelo entra el correcto.
+    await mozoA.update({ pin_intentos: 5, pin_bloqueado: 1 });
+    const rs = await Promise.all([entrar(mozoA.id, '1234'), entrar(mozoA.id, '0000'), entrar(mozoA.id, '1234')]);
+    for (const r of rs) expect(r.status).toBe(423);
+    await mozoA.update({ pin_intentos: 0, pin_bloqueado: 0 });
+  });
+
+  it('usuario_id no canónico ("05", "5.0", "0x5") ⇒ 400', async () => {
+    for (const id of [`0${mozoA.id}`, `${mozoA.id}.0`, `0x${mozoA.id.toString(16)}`, `${mozoA.id}e0`, ' 5', -1, 1.5, true]) {
+      const r = await entrar(id, '1234');
+      expect(r.status).toBe(400);
+      expect(r.body.mensaje).toBe('Usuario no válido');
+    }
+    // El número y su texto canónico sí valen.
+    expect((await entrar(String(mozoA.id), '1234')).status).toBe(200);
+    expect((await entrar(mozoA.id, '1234')).status).toBe(200);
+  });
+
   it('dispositivo_token vencido o de tipo distinto ⇒ 401', async () => {
     const msg = 'Este aparato ya no está habilitado: entra con tu correo';
     const vencido = jwt.sign({ tipo: 'dispositivo', sucursal_id: sucA.id }, process.env.JWT_SECRET, { expiresIn: '-1s' });
