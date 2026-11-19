@@ -2,7 +2,7 @@
 // el resto del sistema: "2026-11-20T20:00" sin zona se toma como 20:00 local.
 const { Op } = require('sequelize');
 const sequelize = require('../../config/database');
-const { Reserva, ReservaItem, ReservaPago, Mesa, Area, Usuario } = require('../../models');
+const { Reserva, ReservaItem, ReservaPago, Mesa, Area, Usuario, Pedido, PedidoPago, DetallePedido } = require('../../models');
 const { emitir } = require('../../socket');
 const ventasService = require('../ventas/ventas.service');
 const { round2 } = require('../devoluciones/calculo');
@@ -253,13 +253,75 @@ async function actualizar(id, entrada, alcance) {
   return _json(await _cargar(id));
 }
 
+// Pedido de la reserva que ya salió a cocina: se anula su parte del adelanto
+// (la plata sigue siendo de la reserva) y se cancela, liberando la mesa.
+// Todo en la transacción `t`, con la reserva ya bloqueada (mismo orden que al
+// convertir: reserva, luego pedido). Devuelve lo que cocina debe anular.
+async function _cancelarPedido(pedido_id, usuario_id, t) {
+  const pedido = await Pedido.findByPk(pedido_id, { transaction: t, lock: t.LOCK.UPDATE });
+  if (!pedido || pedido.estado === 'cancelado') return null;
+  if (pedido.estado === 'completado') throw error('Esta reserva ya se cobró', 409);
+  if (!['pendiente', 'listo'].includes(pedido.estado)) throw error('Esta reserva está cobrándose: espera el QR', 409);
+  const detalles = await DetallePedido.findAll({ where: { pedido_id }, transaction: t });
+  await PedidoPago.update({ estado: 'anulado' }, { where: { pedido_id, modo: 'adelanto', estado: 'completado' }, transaction: t });
+  await pedido.update({ pagado: 0 }, { transaction: t });
+  await ventasService.cancelar(pedido_id, usuario_id, { acceso_todas: true }, { transaction: t });
+  return {
+    pedido_id,
+    estadoCocinaPrevio: pedido.estado_cocina,
+    lineas: detalles.map((d) => ({ detalle_pedido_id: d.id, cantidad: Number(d.cantidad) - Number(d.cantidad_anulada || 0) }))
+      .filter((l) => l.cantidad > 0),
+  };
+}
+
+// No vino o cancelada: con adelanto hay que elegir si se queda (retenido) o
+// se devuelve (sale de la caja de quien devuelve; requiere ventas.anular). La
+// reserva queda bloqueada todo el cierre, así no se cruza con el paso a cocina.
+async function _cerrar(r, estado, alcance, { usuario_id, destino_adelanto, metodo_devolucion, puede_anular }) {
+  if (destino_adelanto != null && !['retenido', 'devuelto'].includes(destino_adelanto)) throw error('Elige si te quedas el adelanto o lo devuelves');
+  const cocina = await sequelize.transaction(async (t) => {
+    const bloqueada = await Reserva.findByPk(r.id, { transaction: t, lock: t.LOCK.UPDATE });
+    const pagos = await ReservaPago.findAll({ where: { reserva_id: r.id }, transaction: t });
+    const adelantado = _adelantado(pagos);
+    // Si ya estaba cerrada reteniendo, no hace falta volver a elegir.
+    const destino = adelantado > 0 ? (destino_adelanto || bloqueada.destino_adelanto) : bloqueada.destino_adelanto;
+    if (adelantado > 0 && !destino) throw error('Elige si te quedas el adelanto o lo devuelves');
+    const devolver = adelantado > 0 && destino === 'devuelto';
+    if (devolver) {
+      if (!puede_anular) throw error('Sin permiso: ventas.anular', 403);
+      if (!metodo_devolucion) throw error('Elige cómo devuelves el adelanto');
+    }
+    const anulado = bloqueada.pedido_id ? await _cancelarPedido(bloqueada.pedido_id, usuario_id, t) : null;
+    if (devolver) {
+      await require('./adelantos.service').devolverAdelanto(r.id, usuario_id, { metodo_pago: metodo_devolucion, monto: adelantado }, alcance, t);
+    }
+    await bloqueada.update({ estado, destino_adelanto: destino || null }, { transaction: t });
+    return anulado;
+  });
+  if (cocina) {
+    emitir('restaurante:actualizar', { tipo: 'pedido_cancelado' });
+    // Cocina física: ticket "ANULAR" con lo que ya se había mandado.
+    try {
+      await ventasService.emitirAnulacionCocina(cocina.pedido_id, cocina.lineas, { devolucion_id: `reserva-${r.id}`, estadoCocinaPrevio: cocina.estadoCocinaPrevio });
+    } catch (e) {
+      console.error('Error avisando anulación a cocina:', e.message);
+    }
+  }
+}
+
 // "Llegó" manda los platos a cocina si todavía no salieron (en `mesa_id` si
 // está libre) y, si ya salieron para llevar, pasa el pedido a esa mesa.
-async function cambiarEstado(id, estado, alcance, { mesa_id, usuario_id } = {}) {
+// "No vino" y "cancelada" cierran la reserva (ver _cerrar).
+async function cambiarEstado(id, estado, alcance, { mesa_id, usuario_id, destino_adelanto, metodo_devolucion, puede_anular = false } = {}) {
   if (!Reserva.ESTADOS.includes(estado)) throw error('Estado no válido');
   const r = await Reserva.findByPk(id);
   if (!r) throw error('Reserva no encontrada', 404);
   _verificarAlcance(r, alcance);
+  if (estado === 'no_vino' || estado === 'cancelada') {
+    await _cerrar(r, estado, alcance, { usuario_id, destino_adelanto, metodo_devolucion, puede_anular });
+    emitir('restaurante:actualizar', { tipo: 'reserva' }, r.sucursal_id);
+    return _json(await _cargar(r.id));
+  }
   if (estado === 'llego') {
     // Recién convertido ya usó la mesa si estaba libre (si no, salió para llevar).
     if (!r.pedido_id) {
@@ -271,11 +333,24 @@ async function cambiarEstado(id, estado, alcance, { mesa_id, usuario_id } = {}) 
       }
     }
   }
-  // Volver a "pendiente" una cancelada vuelve a ocupar su horario.
+  const cambios = { estado };
+  // Volver a "pendiente" una cancelada vuelve a ocupar su horario; el adelanto
+  // que se quedó vuelve a ser del cliente y el pedido cancelado se suelta
+  // (se manda a cocina de nuevo).
   if (estado === 'pendiente' && !ACTIVAS.includes(r.estado)) {
+    if (r.destino_adelanto === 'devuelto') throw error('El adelanto ya se devolvió', 409);
     await _verificarCruce({ mesa_id: r.mesa_id, fecha_hora: new Date(r.fecha_hora), duracion_min: r.duracion_min }, r.sucursal_id, r.id);
+    cambios.destino_adelanto = null;
+    if (r.pedido_id && (await Pedido.findByPk(r.pedido_id))?.estado === 'cancelado') {
+      Object.assign(cambios, { pedido_id: null, enviada_cocina_en: null });
+    }
   }
-  await r.update({ estado });
+  // Llegó sin platos: lo adelantado queda como garantía.
+  if (estado === 'llego') {
+    await r.reload();
+    if (!r.pedido_id && _adelantado(await ReservaPago.findAll({ where: { reserva_id: r.id } })) > 0) cambios.destino_adelanto = 'retenido';
+  }
+  await r.update(cambios);
   emitir('restaurante:actualizar', { tipo: 'reserva' }, r.sucursal_id);
   return _json(await _cargar(r.id));
 }

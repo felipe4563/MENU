@@ -126,3 +126,196 @@ describe('Adelantos de reservas', () => {
     await expect(adelantos.devolverAdelanto(r.id, usuario.id, { metodo_pago: 'efectivo', monto: 10 }, alcance())).rejects.toMatchObject({ status: 409, message: 'Abre tu caja para devolver' });
   });
 });
+
+// Cerrar una reserva con adelanto: no vino o cancelada, quedándose el adelanto
+// (retenido) o devolviéndolo; si ya estaba en cocina, el pedido se cancela.
+describe('Cerrar reservas con adelanto', () => {
+  const ventasService = require('../src/modules/ventas/ventas.service');
+  const push = require('../src/modules/push/push.service');
+  const { Op } = require('sequelize');
+  const {
+    Area, Mesa, Permiso, Categoria, Producto, RegistroInventario, Pedido, DetallePedido, PedidoPago, Configuracion,
+  } = require('../src/models');
+  let sucursal, area, mesa, usuario, sinAnular, rolSinAnular, token, tokenSinAnular, caja, sesion, categoria, plato, flujoAntes;
+  const manana = new Date(Date.now() - 4 * 3600000 + 86400000).toISOString().slice(0, 10);
+  const auth = (t = token) => ({ Authorization: `Bearer ${t}` });
+  let hora = 8;
+  const nueva = async (body = {}) => {
+    hora += 1;
+    const res = await request(app).post('/api/v1/reservas').set(auth())
+      .send({ nombre_cliente: 'Familia Cierre', personas: 2, fecha_hora: `${manana}T${String(hora).padStart(2, '0')}:00`, ...body });
+    expect(res.status).toBe(201);
+    return res.body.datos;
+  };
+  const adelanto = async (id, monto, metodo_pago = 'efectivo') => {
+    const res = await request(app).post(`/api/v1/reservas/${id}/adelantos`).set(auth()).send({ metodo_pago, monto });
+    expect(res.status).toBe(201);
+  };
+  const estado = (id, body, t = token) => request(app).put(`/api/v1/reservas/${id}/estado`).set(auth(t)).send(body);
+
+  beforeAll(async () => {
+    sucursal = await Sucursal.create({ nombre: 'Sucursal Cierre Reservas Test' });
+    area = await Area.create({ nombre: 'Area Cierre Reservas Test', sucursal_id: sucursal.id });
+    mesa = await Mesa.create({ area_id: area.id, nombre: 'Mesa Cierre 1' });
+    const hash = await bcrypt.hash('clave123', 10);
+    const rol = await Rol.findOne({ where: { nombre: 'Administrador' } });
+    usuario = await Usuario.create({ rol_id: rol.id, nombre: 'Cierre Test', email: 'cierre-reservas-test@restaurante.com', contrasena: hash });
+    await usuario.addSucursal(sucursal);
+    token = (await request(app).post('/api/v1/auth/login').send({ email: 'cierre-reservas-test@restaurante.com', contrasena: 'clave123' })).body.datos.token;
+    rolSinAnular = await Rol.create({ nombre: 'Sin Anular Reservas Test', descripcion: 'Rol de prueba sin ventas.anular' });
+    const permisos = await Permiso.findAll({ where: { modulo: 'ventas' } });
+    await rolSinAnular.setPermisos(permisos.filter((p) => p.accion !== 'anular'));
+    sinAnular = await Usuario.create({ rol_id: rolSinAnular.id, nombre: 'Cajero Sin Anular', email: 'cierre-sin-anular-test@restaurante.com', contrasena: hash });
+    await sinAnular.addSucursal(sucursal);
+    tokenSinAnular = (await request(app).post('/api/v1/auth/login').send({ email: 'cierre-sin-anular-test@restaurante.com', contrasena: 'clave123' })).body.datos.token;
+    caja = await Caja.create({ sucursal_id: sucursal.id, nombre: 'Caja Cierre Test' });
+    sesion = await SesionCaja.create({ usuario_id: usuario.id, sucursal_id: sucursal.id, caja_id: caja.id, monto_apertura: 100 });
+    categoria = await Categoria.create({ nombre: 'Categoria Cierre Test' });
+    plato = await Producto.create({ categoria_id: categoria.id, nombre: 'Plato Cierre', precio: 50 });
+    flujoAntes = await Configuracion.findOne({ where: { clave: 'flujo_cocina' } });
+    await Configuracion.upsert({ clave: 'flujo_cocina', valor: 'digital' });
+  });
+
+  beforeEach(() => { jest.spyOn(push, 'aPermiso').mockResolvedValue(0); });
+  afterEach(() => { jest.restoreAllMocks(); });
+
+  afterAll(async () => {
+    if (flujoAntes) await Configuracion.upsert({ clave: 'flujo_cocina', valor: flujoAntes.valor });
+    else await Configuracion.destroy({ where: { clave: 'flujo_cocina' } });
+    const reservas = (await Reserva.findAll({ where: { sucursal_id: sucursal.id }, attributes: ['id'] })).map((r) => r.id);
+    const pedidos = (await Pedido.findAll({ where: { sucursal_id: sucursal.id }, attributes: ['id'] })).map((p) => p.id);
+    await ReservaItem.destroy({ where: { reserva_id: reservas } });
+    await ReservaPago.destroy({ where: { reserva_id: reservas } });
+    await Reserva.destroy({ where: { id: reservas } });
+    await PedidoPago.destroy({ where: { pedido_id: pedidos } });
+    await DetallePedido.destroy({ where: { pedido_id: pedidos } });
+    await Pedido.destroy({ where: { id: pedidos } });
+    await LibroCaja.destroy({ where: { sesion_caja_id: sesion.id } });
+    await SesionCaja.destroy({ where: { id: sesion.id } });
+    await Caja.destroy({ where: { id: caja.id } });
+    await RegistroInventario.destroy({ where: { producto_id: plato.id } });
+    await Producto.destroy({ where: { id: plato.id } });
+    await Categoria.destroy({ where: { id: categoria.id } });
+    await Mesa.destroy({ where: { id: mesa.id } });
+    await Area.destroy({ where: { id: area.id } });
+    await Usuario.destroy({ where: { id: [usuario.id, sinAnular.id] } });
+    await Rol.destroy({ where: { id: rolSinAnular.id } });
+    await Sucursal.destroy({ where: { id: sucursal.id } });
+  });
+
+  it('no vino sin elegir destino => 400', async () => {
+    const r = await nueva();
+    await adelanto(r.id, 40);
+    const res = await estado(r.id, { estado: 'no_vino' });
+    expect(res.status).toBe(400);
+    expect(res.body.mensaje).toBe('Elige si te quedas el adelanto o lo devuelves');
+    expect((await Reserva.findByPk(r.id)).estado).toBe('pendiente');
+  });
+
+  it('sin adelanto no pide destino', async () => {
+    const r = await nueva();
+    const res = await estado(r.id, { estado: 'cancelada' });
+    expect(res.status).toBe(200);
+    expect(res.body.datos).toMatchObject({ estado: 'cancelada', destino_adelanto: null });
+  });
+
+  it('no vino reteniendo', async () => {
+    const r = await nueva();
+    await adelanto(r.id, 40);
+    const res = await estado(r.id, { estado: 'no_vino', destino_adelanto: 'retenido' });
+    expect(res.status).toBe(200);
+    expect(res.body.datos).toMatchObject({ estado: 'no_vino', destino_adelanto: 'retenido', adelantado: 40 });
+    expect(await LibroCaja.count({ where: { referencia_id: r.id, tipo: 'egreso', categoria: 'adelantos_reserva' } })).toBe(0);
+    // Reabrirla deja el adelanto otra vez a favor del cliente.
+    const reabierta = await estado(r.id, { estado: 'pendiente' });
+    expect(reabierta.status).toBe(200);
+    expect(reabierta.body.datos).toMatchObject({ estado: 'pendiente', destino_adelanto: null, adelantado: 40 });
+  });
+
+  it('cancelada devolviendo en efectivo => egreso y destino devuelto', async () => {
+    const r = await nueva();
+    await adelanto(r.id, 30);
+    await adelanto(r.id, 20, 'qr');
+    const antes = Number((await SesionCaja.findByPk(sesion.id)).total_devoluciones);
+    const res = await estado(r.id, { estado: 'cancelada', destino_adelanto: 'devuelto', metodo_devolucion: 'efectivo' });
+    expect(res.status).toBe(200);
+    expect(res.body.datos).toMatchObject({ estado: 'cancelada', destino_adelanto: 'devuelto', adelantado: 0 });
+    const egreso = await LibroCaja.findOne({ where: { referencia_id: r.id, tipo: 'egreso', categoria: 'adelantos_reserva' } });
+    expect(egreso).toMatchObject({ sesion_caja_id: sesion.id, metodo_pago: 'efectivo', concepto: `Devolución adelanto reserva #${r.id} · Familia Cierre` });
+    expect(Number(egreso.monto)).toBe(50);
+    expect(Number((await SesionCaja.findByPk(sesion.id)).total_devoluciones)).toBe(antes + 50);
+    // Ya devuelto: no se puede volver a pendiente.
+    const reabrir = await estado(r.id, { estado: 'pendiente' });
+    expect(reabrir.status).toBe(409);
+    expect(reabrir.body.mensaje).toBe('El adelanto ya se devolvió');
+  });
+
+  it('devolver sin elegir cómo => 400', async () => {
+    const r = await nueva();
+    await adelanto(r.id, 10);
+    const res = await estado(r.id, { estado: 'cancelada', destino_adelanto: 'devuelto' });
+    expect(res.status).toBe(400);
+    expect((await Reserva.findByPk(r.id)).estado).toBe('pendiente');
+  });
+
+  it('cajero sin permiso anular no puede devolver => 403', async () => {
+    const r = await nueva();
+    await adelanto(r.id, 40);
+    const res = await estado(r.id, { estado: 'no_vino', destino_adelanto: 'devuelto', metodo_devolucion: 'efectivo' }, tokenSinAnular);
+    expect(res.status).toBe(403);
+    expect(res.body.mensaje).toBe('Sin permiso: ventas.anular');
+    expect(await Reserva.findByPk(r.id)).toMatchObject({ estado: 'pendiente', destino_adelanto: null });
+    expect(await LibroCaja.count({ where: { referencia_id: r.id, tipo: 'egreso' } })).toBe(0);
+    // Quedarse el adelanto sí puede.
+    const retiene = await estado(r.id, { estado: 'no_vino', destino_adelanto: 'retenido' }, tokenSinAnular);
+    expect(retiene.status).toBe(200);
+  });
+
+  it('no vino con pedido en cocina lo cancela y libera la mesa', async () => {
+    const anulacion = jest.spyOn(ventasService, 'emitirAnulacionCocina');
+    const r = await nueva({ mesa_id: mesa.id, items: [{ producto_id: plato.id, cantidad: 2 }] });
+    await adelanto(r.id, 40);
+    const conv = await request(app).post(`/api/v1/reservas/${r.id}/cocina`).set(auth());
+    expect(conv.status).toBe(200);
+    const { pedido } = conv.body.datos;
+    expect(pedido).toMatchObject({ tipo: 'mesa', mesa_id: mesa.id });
+    expect((await Mesa.findByPk(mesa.id)).estado).toBe('ocupada');
+
+    const res = await estado(r.id, { estado: 'no_vino', destino_adelanto: 'retenido' });
+    expect(res.status).toBe(200);
+    expect(res.body.datos).toMatchObject({ estado: 'no_vino', destino_adelanto: 'retenido', adelantado: 40 });
+    const cancelado = await Pedido.findByPk(pedido.id);
+    expect(cancelado).toMatchObject({ estado: 'cancelado', estado_cocina: null });
+    expect(Number(cancelado.pagado)).toBe(0);
+    const pagos = await PedidoPago.findAll({ where: { pedido_id: pedido.id } });
+    expect(pagos.map((p) => [p.modo, p.estado])).toEqual([['adelanto', 'anulado']]);
+    expect((await Mesa.findByPk(mesa.id)).estado).toBe('disponible');
+    // Cocina se entera de que ya no va.
+    expect(anulacion).toHaveBeenCalledWith(pedido.id, expect.any(Array), expect.objectContaining({ estadoCocinaPrevio: 'pendiente' }));
+    // El adelanto no salió de la caja.
+    expect(await LibroCaja.count({ where: { referencia_id: r.id, tipo: 'egreso' } })).toBe(0);
+  });
+
+  it('con el pedido ya cobrado => 409 Esta reserva ya se cobró', async () => {
+    const r = await nueva({ items: [{ producto_id: plato.id, cantidad: 1 }] });
+    await adelanto(r.id, 20);
+    const conv = await request(app).post(`/api/v1/reservas/${r.id}/cocina`).set(auth());
+    const { pedido } = conv.body.datos;
+    const cobro = await request(app).post(`/api/v1/ventas/${pedido.id}/cobrar`).set(auth()).send({ metodo_pago: 'efectivo', monto_recibido: 30 });
+    expect(cobro.status).toBe(200);
+    const res = await estado(r.id, { estado: 'cancelada', destino_adelanto: 'devuelto', metodo_devolucion: 'efectivo' });
+    expect(res.status).toBe(409);
+    expect(res.body.mensaje).toBe('Esta reserva ya se cobró');
+    expect((await Reserva.findByPk(r.id)).estado).toBe('pendiente');
+    expect(await LibroCaja.count({ where: { referencia_id: r.id, tipo: 'egreso' } })).toBe(0);
+  });
+
+  it('llegó sin platos deja el adelanto retenido', async () => {
+    const r = await nueva();
+    await adelanto(r.id, 60);
+    const res = await estado(r.id, { estado: 'llego' });
+    expect(res.status).toBe(200);
+    expect(res.body.datos).toMatchObject({ estado: 'llego', destino_adelanto: 'retenido', pedido_id: null });
+    expect(await Pedido.count({ where: { sucursal_id: sucursal.id, notas: { [Op.like]: `Reserva #${r.id}%` } } })).toBe(0);
+  });
+});

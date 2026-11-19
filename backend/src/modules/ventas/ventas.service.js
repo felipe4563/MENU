@@ -1690,13 +1690,16 @@ async function cobrar(pedido_id, usuario_id, { metodo_pago, monto_recibido, desc
   return { ...cobrado.toJSON(), datos_impresion };
 }
 
-async function cancelar(pedido_id, usuario_id, alcance) {
-  const pedido = await Pedido.findByPk(pedido_id);
+// Con `transaction` participa de la del llamador (p. ej. cerrar una reserva):
+// libera la mesa dentro de ella y no avisa ni devuelve nada (el llamador avisa
+// después del commit).
+async function cancelar(pedido_id, usuario_id, alcance, { transaction } = {}) {
+  const pedido = await Pedido.findByPk(pedido_id, { transaction });
   if (!pedido) throw Object.assign(new Error('Pedido no encontrado'), { status: 404 });
   _verificarAlcance(pedido, alcance);
   if (pedido.estado !== 'pendiente') throw Object.assign(new Error('Solo se pueden cancelar pedidos pendientes'), { status: 409 });
 
-  await sequelize.transaction(async (t) => {
+  const anular = async (t) => {
     // Bloqueado: no se cruza con el cobro de una parte.
     const bloqueado = await Pedido.findByPk(pedido_id, { transaction: t, lock: t.LOCK.UPDATE });
     if (bloqueado.estado !== 'pendiente') throw Object.assign(new Error('Solo se pueden cancelar pedidos pendientes'), { status: 409 });
@@ -1704,16 +1707,24 @@ async function cancelar(pedido_id, usuario_id, alcance) {
     const conPartes = await PedidoPago.count({ where: { pedido_id, estado: ['pendiente', 'completado'] }, transaction: t });
     if (conPartes > 0) throw Object.assign(new Error(require('./pagosParciales.service').MSJ_YA_PAGADO), { status: 409 });
     await bloqueado.update({ estado: 'cancelado', estado_cocina: null }, { transaction: t });
-  });
-
-  if (pedido.tipo !== 'llevar' && pedido.mesa_id) {
+  };
+  const liberarMesa = async (t) => {
+    if (pedido.tipo === 'llevar' || !pedido.mesa_id) return;
     // Libera mesa.estado; la sesión de autoservicio se cierra solo a mano
     // (mismo motivo que en _finalizarVenta y _revertirPagoQr).
-    const activos = await Pedido.count({ where: { mesa_id: pedido.mesa_id, estado: ['pendiente', 'listo', 'pendiente_pago'] } });
+    const activos = await Pedido.count({ where: { mesa_id: pedido.mesa_id, estado: ['pendiente', 'listo', 'pendiente_pago'] }, transaction: t });
     if (activos === 0) {
-      await Mesa.update({ estado: 'disponible' }, { where: { id: pedido.mesa_id } });
+      await Mesa.update({ estado: 'disponible' }, { where: { id: pedido.mesa_id }, transaction: t });
     }
+  };
+
+  if (transaction) {
+    await anular(transaction);
+    await liberarMesa(transaction);
+    return null;
   }
+  await sequelize.transaction(anular);
+  await liberarMesa();
 
   const cancelado = await obtener(pedido_id);
   emitir('restaurante:actualizar', { tipo: 'pedido_cancelado' });

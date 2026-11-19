@@ -26,8 +26,13 @@ async function actualizar(req, res, next) {
 
 async function cambiarEstado(req, res, next) {
   try {
-    const { estado, mesa_id } = req.body || {};
-    res.json({ ok: true, datos: await svc.cambiarEstado(req.params.id, estado, _alcance(req), { mesa_id, usuario_id: req.usuario.id }) });
+    const { estado, mesa_id, destino_adelanto, metodo_devolucion } = req.body || {};
+    // Devolver el adelanto saca plata de la caja: pide ventas.anular.
+    const puede_anular = (req.usuario.permisos || []).includes('ventas.anular');
+    res.json({
+      ok: true,
+      datos: await svc.cambiarEstado(req.params.id, estado, _alcance(req), { mesa_id, usuario_id: req.usuario.id, destino_adelanto, metodo_devolucion, puede_anular }),
+    });
   } catch (e) { next(e); }
 }
 
