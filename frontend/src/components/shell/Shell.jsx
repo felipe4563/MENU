@@ -12,6 +12,7 @@ import { cx, iniciales } from '../../lib/util';
 import Paleta from './Paleta';
 import Hoja from '../ui/Hoja';
 import CambioContrasena from './CambioContrasena';
+import CrearPin from './CrearPin';
 import CocinaPendienteBT from './CocinaPendienteBT';
 import ImpresoraDispositivo from './ImpresoraDispositivo';
 import VentasSinConexion from './VentasSinConexion';
@@ -224,7 +225,8 @@ export default function Shell() {
       )}
       {paleta && <Paleta onCerrar={() => setPaleta(false)} />}
       {menuUsuario && <MenuUsuario onCerrar={() => setMenuUsuario(false)} />}
-      {usuario?.debe_cambiar_contrasena && <CambioContrasena />}
+      {/* Primero la contraseña propia; recién después se pide el PIN. */}
+      {usuario?.debe_cambiar_contrasena ? <CambioContrasena /> : usuario && !usuario.tiene_pin && <CrearPin />}
       <CocinaPendienteBT />
     </div>
   );

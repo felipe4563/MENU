@@ -16,3 +16,7 @@ export const subirAvatar = (file) => {
   form.append('imagen', file);
   return api.post('/uploads/imagen', form).then((r) => r.data.datos.url);
 };
+
+// Crea o cambia el PIN para la pantalla de bloqueo (pide la contraseña).
+export const guardarPin = (datos) =>
+  api.put('/perfil/pin', datos).then((r) => r.data.datos);

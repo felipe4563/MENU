@@ -81,4 +81,20 @@ describe('Configuración pública incluye el bloqueo por inactividad', () => {
     expect(res.status).toBe(200);
     expect(String(res.body.datos.bloqueo_inactividad_min)).toBe('10');
   });
+
+  it('PUT /api/v1/configuracion solo acepta 0, 5, 10, 15 o 30 minutos', async () => {
+    const put = (valor) => request(app)
+      .put('/api/v1/configuracion')
+      .set('Authorization', `Bearer ${adminToken}`)
+      .send({ bloqueo_inactividad_min: valor });
+
+    for (const malo of ['7', '-5', '60', '', 'abc', '10.5']) {
+      const res = await put(malo);
+      expect(res.status).toBe(400);
+      expect(res.body.mensaje).toBe('El bloqueo por inactividad debe ser apagado, 5, 10, 15 o 30 minutos');
+    }
+    for (const bueno of ['0', '5', '10', '15', '30', 15]) {
+      expect((await put(bueno)).status).toBe(200);
+    }
+  });
 });

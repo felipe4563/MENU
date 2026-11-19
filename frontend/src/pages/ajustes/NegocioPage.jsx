@@ -7,9 +7,15 @@ import { cx, iniciales } from '../../lib/util';
 import InstalarApp from '../../components/shell/InstalarApp';
 
 const COLORES = ['#F2B705', '#E4572E', '#8A0000', '#2F9E6B', '#2F6FD2', '#7B4AE2', '#D73382', '#17262B'];
-const CLAVES = ['nombre_negocio', 'telefono', 'direccion', 'moneda', 'simbolo_moneda', 'color_primario', 'logo', 'portada', 'pie_ticket', 'alerta_costo_pct'];
+const CLAVES = ['nombre_negocio', 'telefono', 'direccion', 'moneda', 'simbolo_moneda', 'color_primario', 'logo', 'portada', 'pie_ticket', 'alerta_costo_pct', 'bloqueo_inactividad_min'];
+const BLOQUEOS = [['0', 'Apagado'], ['5', '5 min'], ['10', '10 min'], ['15', '15 min'], ['30', '30 min']];
 
-const inicial = (config) => Object.fromEntries(CLAVES.map((k) => [k, config[k] === 'NULL' ? '' : (config[k] ?? '')]));
+const valorDe = (config, k) => {
+  // Sin ajuste (o uno viejo que ya no vale): apagado.
+  if (k === 'bloqueo_inactividad_min') return BLOQUEOS.some(([v]) => v === config[k]) ? config[k] : '0';
+  return config[k] === 'NULL' ? '' : (config[k] ?? '');
+};
+const inicial = (config) => Object.fromEntries(CLAVES.map((k) => [k, valorDe(config, k)]));
 
 export default function NegocioPage() {
   const { tiene } = usePermisos();
@@ -22,7 +28,7 @@ export default function NegocioPage() {
 function Formulario({ config, guardar, editar }) {
   const [f, setF] = useState(() => inicial(config));
   const campo = (k) => ({ value: f[k] ?? '', onChange: (e) => setF({ ...f, [k]: e.target.value }), disabled: !editar });
-  const cambiado = CLAVES.some((k) => (f[k] ?? '') !== ((config[k] === 'NULL' ? '' : config[k]) ?? ''));
+  const cambiado = CLAVES.some((k) => (f[k] ?? '') !== valorDe(config, k));
 
   return (
     <Pagina className="pb-28">
@@ -71,6 +77,13 @@ function Formulario({ config, guardar, editar }) {
           </Seccion>
           <Seccion titulo="Ticket" texto="Mensaje al final de cada ticket de venta.">
             <textarea rows={2} className="campo max-w-3xl" {...campo('pie_ticket')} placeholder="¡Gracias por su preferencia!" />
+          </Seccion>
+          <Seccion titulo="Seguridad" texto="Si nadie toca la pantalla, se bloquea y pide el PIN. Sirve para cajas y tablets que comparte el equipo.">
+            <Campo etiqueta="Bloquear tras" className="max-w-xs">
+              <select className="campo" {...campo('bloqueo_inactividad_min')}>
+                {BLOQUEOS.map(([v, t]) => <option key={v} value={v}>{t}</option>)}
+              </select>
+            </Campo>
           </Seccion>
           <Seccion titulo="Instalar la app" texto="En el celular, la tablet o la computadora: queda con el logo y el nombre de tu negocio. Cada persona la instala en su dispositivo desde Mi perfil.">
             <InstalarApp />

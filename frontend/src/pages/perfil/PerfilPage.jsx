@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import InstalarApp from '../../components/shell/InstalarApp';
 import Notificaciones from '../../components/shell/Notificaciones';
+import { FormularioPin } from '../../components/shell/CrearPin';
 import { useMutation, useQuery } from '@tanstack/react-query';
 import { getPerfil, actualizarPerfil, cambiarContrasena } from '../../api/perfil';
 import { useAuthStore } from '../../store/authStore';
@@ -55,6 +56,18 @@ function Clave() {
   );
 }
 
+function Pin({ tienePin }) {
+  return (
+    <section className="ficha p-5 sm:p-6 lg:col-span-2">
+      <h2 className="font-display font-semibold text-lg">PIN</h2>
+      <p className="text-[13px] text-tenue mt-1 mb-4">
+        {tienePin ? 'Ya tienes PIN. Puedes cambiarlo cuando quieras.' : '4 números para desbloquear la pantalla sin escribir tu correo.'}
+      </p>
+      <div className="max-w-md"><FormularioPin tienePin={tienePin} /></div>
+    </section>
+  );
+}
+
 const TEMAS = [
   { valor: 'sistema', etiqueta: 'Automático', texto: 'Sigue a tu dispositivo' },
   { valor: 'claro', etiqueta: 'Claro', texto: 'Para lugares con luz' },
@@ -101,6 +114,7 @@ function Apariencia() {
 
 export default function PerfilPage() {
   const q = useQuery({ queryKey: ['perfil'], queryFn: getPerfil });
+  const tienePinSesion = useAuthStore((s) => s.usuario?.tiene_pin);
   if (q.isLoading) return <Cargando />;
   return (
     <Pagina>
@@ -108,6 +122,7 @@ export default function PerfilPage() {
       <div className="grid lg:grid-cols-2 gap-4 items-stretch">
         {q.data && <Datos perfil={q.data} />}
         <Clave />
+        <Pin tienePin={Boolean(q.data?.tiene_pin ?? tienePinSesion)} />
         <Apariencia />
         <section className="ficha p-5 sm:p-6 lg:col-span-2">
           <h2 className="font-display font-semibold text-lg">Notificaciones</h2>

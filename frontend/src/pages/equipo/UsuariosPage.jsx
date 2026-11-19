@@ -1,16 +1,17 @@
 import { useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { Plus, UsersRound, Pencil, KeyRound, Eye, EyeOff } from 'lucide-react';
-import { getUsuarios, crearUsuario, actualizarUsuario, actualizarSucursalesUsuario } from '../../api/usuarios';
+import { Plus, UsersRound, Pencil, KeyRound, Eye, EyeOff, LockKeyholeOpen } from 'lucide-react';
+import { getUsuarios, crearUsuario, actualizarUsuario, actualizarSucursalesUsuario, reiniciarPin } from '../../api/usuarios';
 import { getRoles } from '../../api/roles';
 import { getSucursales } from '../../api/sucursales';
 import { avatarSrc } from '../../api/perfil';
 import { useAuthStore } from '../../store/authStore';
 import { usePermisos } from '../../hooks/usePermisos';
 import Hoja from '../../components/ui/Hoja';
-import { Buscador, Cargando, Campo, Encabezado, Interruptor, Pagina, SinPermiso, Vacio, Insignia } from '../../components/ui/piezas';
+import { Buscador, Cargando, Campo, Encabezado, Interruptor, Pagina, SinPermiso, Vacio, Insignia, useConfirmar } from '../../components/ui/piezas';
 import { useCampos } from '../../components/ui/formulario';
 import { avisar } from '../../components/ui/Aviso';
+import { borrarVerificador } from '../../lib/bloqueo';
 import { cx, errorDe, iniciales, normalizar } from '../../lib/util';
 
 function claveAleatoria() {
@@ -18,7 +19,39 @@ function claveAleatoria() {
   return Array.from({ length: 8 }, () => letras[Math.floor(Math.random() * letras.length)]).join('');
 }
 
-function HojaUsuario({ u, roles, sucursales, onCerrar }) {
+// Borra el PIN del usuario (y su bloqueo por intentos): crea uno nuevo al entrar.
+function ReiniciarPin({ u }) {
+  const yo = useAuthStore((s) => s.usuario);
+  const updateUsuario = useAuthStore((s) => s.updateUsuario);
+  const [confirmacion, confirmar] = useConfirmar();
+  const reiniciar = useMutation({
+    mutationFn: () => reiniciarPin(u.id),
+    onSuccess: () => {
+      if (u.id === yo?.id) { borrarVerificador(); updateUsuario({ tiene_pin: false }); }
+      avisar.ok(`PIN de ${u.nombre} reiniciado`);
+    },
+    onError: (e) => avisar.error(errorDe(e)),
+  });
+  async function pedir() {
+    const ok = await confirmar({
+      titulo: '¿Reiniciar el PIN?',
+      texto: `${u.nombre} ya no podrá entrar con su PIN. Tendrá que entrar con su correo y crear uno nuevo.`,
+      confirmar: 'Reiniciar PIN',
+      peligro: true,
+    });
+    if (ok) reiniciar.mutate();
+  }
+  return (
+    <div>
+      <span className="etiqueta">PIN de la pantalla de bloqueo</span>
+      <button type="button" className="btn-borde" disabled={reiniciar.isPending} onClick={pedir}><LockKeyholeOpen className="w-4 h-4" /> Reiniciar PIN</button>
+      <p className="text-xs text-tenue mt-1.5">Si lo olvidó o se le bloqueó por intentos.</p>
+      {confirmacion}
+    </div>
+  );
+}
+
+function HojaUsuario({ u, roles, sucursales, onCerrar, puedeEditar }) {
   const qc = useQueryClient();
   const [ver, setVer] = useState(!u);
   const { f, campo, poner } = useCampos({
@@ -73,6 +106,7 @@ function HojaUsuario({ u, roles, sucursales, onCerrar }) {
           )}
         </div>
         {u && <Interruptor activo={f.activo} onCambio={(v) => poner('activo', v)} etiqueta="Puede entrar al sistema" />}
+        {u && puedeEditar && <ReiniciarPin u={u} />}
       </div>
     </Hoja>
   );
@@ -117,7 +151,7 @@ export default function UsuariosPage() {
           ))}
         </ul>
       )}
-      {editar && <HojaUsuario u={editar === 'nuevo' ? null : editar} roles={roles.data ?? []} sucursales={listaSuc} onCerrar={() => setEditar(null)} />}
+      {editar && <HojaUsuario u={editar === 'nuevo' ? null : editar} roles={roles.data ?? []} sucursales={listaSuc} puedeEditar={tiene('usuarios', 'editar')} onCerrar={() => setEditar(null)} />}
     </Pagina>
   );
 }

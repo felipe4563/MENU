@@ -45,11 +45,23 @@ function _validarReservas(pares) {
   entero('reservas_tolerancia_no_vino', 5, 600, 'La tolerancia para avisar que no llegó debe ser entre 5 y 600 minutos');
 }
 
+// Minutos sin tocar la pantalla antes de bloquearla con PIN ('0' = apagado).
+const BLOQUEOS_INACTIVIDAD = ['0', '5', '10', '15', '30'];
+function _validarBloqueo(pares) {
+  if (!('bloqueo_inactividad_min' in pares)) return;
+  const valor = String(pares.bloqueo_inactividad_min ?? '');
+  if (!BLOQUEOS_INACTIVIDAD.includes(valor)) {
+    throw Object.assign(new Error('El bloqueo por inactividad debe ser apagado, 5, 10, 15 o 30 minutos'), { status: 400 });
+  }
+  pares.bloqueo_inactividad_min = valor;
+}
+
 async function actualizar(pares) {
   if (Object.keys(pares).some(SOLO_COBRO_QR)) {
     throw Object.assign(new Error('El cobro con QR se cambia en Ajustes › Cobro con QR.'), { status: 403 });
   }
   _validarReservas(pares);
+  _validarBloqueo(pares);
   for (const [clave, valor] of Object.entries(pares)) {
     await Configuracion.upsert({ clave, valor });
   }
