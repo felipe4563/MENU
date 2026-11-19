@@ -299,6 +299,25 @@ describe('Convertir la reserva en pedido', () => {
     }
   });
 
+  it('"Llegó" no reabre una reserva que otro cerró mientras tanto', async () => {
+    const r = await nueva({ items: [{ producto_id: plato.id, cantidad: 1 }] });
+    const original = convertir.convertirEnPedido;
+    // Justo después de mandarla a cocina, otro cajero la marca "No vino".
+    const espia = jest.spyOn(convertir, 'convertirEnPedido').mockImplementation(async (...args) => {
+      const hecho = await original(...args);
+      await Reserva.update({ estado: 'no_vino' }, { where: { id: r.id } });
+      return hecho;
+    });
+    try {
+      const res = await request(app).put(`/api/v1/reservas/${r.id}/estado`).set(auth()).send({ estado: 'llego' });
+      expect(res.status).toBe(409);
+      expect(res.body.mensaje).toBe('Esta reserva ya está cerrada');
+      expect((await Reserva.findByPk(r.id)).estado).toBe('no_vino');
+    } finally {
+      espia.mockRestore();
+    }
+  });
+
   it('no convierte una reserva cancelada', async () => {
     const r = await nueva({ items: [{ producto_id: plato.id, cantidad: 1 }] });
     await Reserva.update({ estado: 'cancelada' }, { where: { id: r.id } });

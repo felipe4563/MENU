@@ -390,7 +390,11 @@ async function cambiarEstado(id, estado, alcance, { mesa_id, usuario_id, destino
     await r.reload();
     if (!r.pedido_id && _adelantado(await ReservaPago.findAll({ where: { reserva_id: r.id } })) > 0) cambios.destino_adelanto = 'retenido';
   }
-  await r.update(cambios);
+  // Condicional, sin transacción (la conversión ya usó su propio bloqueo): si
+  // mientras tanto otro la cerró ("No vino", "Cancelada"), "Llegó" no la
+  // reabre; los demás cambios valen solo si sigue en el estado que se leyó.
+  const [hechas] = await Reserva.update(cambios, { where: { id: r.id, estado: estado === 'llego' ? ACTIVAS : r.estado } });
+  if (!hechas) throw error('Esta reserva ya está cerrada', 409);
   emitir('restaurante:actualizar', { tipo: 'reserva' }, r.sucursal_id);
   return _json(await _cargar(r.id));
 }
