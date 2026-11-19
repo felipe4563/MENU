@@ -37,3 +37,35 @@ export function partesFecha(iso) {
   const local = new Date(d.getTime() - d.getTimezoneOffset() * 60000).toISOString();
   return { fecha: local.slice(0, 10), hora: local.slice(11, 16) };
 }
+
+// Cuándo pasan a cocina los platos de una reserva (null: lo que diga Ajustes).
+export const ENVIOS_COCINA = [
+  { valor: null, etiqueta: 'Como en Ajustes' },
+  { valor: 'al_llegar', etiqueta: 'Al llegar' },
+  { valor: 'antes', etiqueta: 'Antes de la hora' },
+  { valor: 'manual', etiqueta: 'Cuando lo mande' },
+];
+
+// Reserva activa (por llegar o ya llegaron).
+export const reservaActiva = (r) => ['pendiente', 'llego'].includes(r.estado);
+
+// "2× Pique macho · 1× Sopa de maní"
+export const resumenPlatos = (items = []) => items.map((i) => `${i.cantidad}× ${i.nombre}`).join(' · ');
+
+export const EN_COCINA_TEXTO = 'Ya está en cocina: los cambios se hacen en el pedido';
+
+// Platos guardados de la reserva → líneas editables.
+export const lineasDeReserva = (items = []) => items.map((i) => ({
+  id: `r${i.id}`, clave: `r${i.id}`,
+  producto_id: i.producto_id ?? undefined, combo_id: i.combo_id ?? undefined,
+  nombre: i.nombre, precio: Number(i.precio), cantidad: Number(i.cantidad), nota: i.nota ?? null,
+  peso: i.peso ? Number(i.peso) : undefined, opcion_ids: i.opcion_ids ?? undefined, opciones_por_producto: i.opciones_por_producto ?? undefined,
+}));
+
+// Líneas → `items` que espera el backend.
+export const itemsParaGuardar = (lineas) => lineas.map((l) => ({
+  producto_id: l.producto_id, combo_id: l.combo_id, cantidad: l.cantidad, nota: l.nota?.trim() || null,
+  peso: l.peso, opcion_ids: l.opcion_ids, opciones_por_producto: l.opciones_por_producto,
+}));
+
+export const totalLineas = (lineas) => lineas.reduce((s, l) => s + l.precio * l.cantidad, 0);
