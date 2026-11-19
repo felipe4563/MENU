@@ -1,10 +1,10 @@
 import { useEffect, useMemo, useState } from 'react';
 import { NavLink, Outlet, useLocation, useNavigate } from 'react-router-dom';
-import { MoreHorizontal, Search, LogOut, Moon, Sun, Monitor, UserRound, Clock, WifiOff, Bluetooth, ArrowLeft } from 'lucide-react';
+import { MoreHorizontal, Search, LogOut, Lock, Moon, Sun, Monitor, UserRound, Clock, WifiOff, Bluetooth, ArrowLeft } from 'lucide-react';
 import { useAuthStore } from '../../store/authStore';
 import { useTemaStore } from '../../store/temaStore';
 import { usePermisos } from '../../hooks/usePermisos';
-import { useConfigPublica } from '../../hooks/useConfig';
+import { useConfig, useConfigPublica } from '../../hooks/useConfig';
 import { logoSrc } from '../../api/configuracion';
 import { avatarSrc } from '../../api/perfil';
 import { seccionesVisibles } from './navegacion';
@@ -18,6 +18,7 @@ import VentasSinConexion from './VentasSinConexion';
 import { desvincularPush } from '../../lib/push';
 import { limpiarDatos } from '../../lib/queryClient';
 import { useEnLinea } from '../../hooks/useEnLinea';
+import { bloquear } from '../../lib/bloqueo';
 
 function Marca({ compacto }) {
   const { data: cfg = {} } = useConfigPublica();
@@ -79,8 +80,11 @@ function MenuUsuario({ onCerrar }) {
           </button>
         ))}
       </div>
+      <button className="btn-borde w-full mt-5" onClick={() => { onCerrar(); bloquear(); }}>
+        <Lock className="w-4 h-4" /> Bloquear
+      </button>
       <button
-        className="btn-borde w-full mt-5 text-locoto"
+        className="btn-borde w-full mt-2 text-locoto"
         onClick={async () => { await desvincularPush(); logout(); await limpiarDatos(); navigate('/login'); }}
       >
         <LogOut className="w-4 h-4" /> Cerrar sesión
@@ -98,6 +102,23 @@ export default function Shell() {
   const [mas, setMas] = useState(false);
   const enLinea = useEnLinea();
   const { pathname } = useLocation();
+  const { config } = useConfig();
+  const minutosBloqueo = Number(config.bloqueo_inactividad_min) || 0;
+
+  // Se bloquea solo tras unos minutos sin tocar la pantalla ni el teclado (0 = apagado).
+  useEffect(() => {
+    if (!(minutosBloqueo > 0)) return undefined;
+    let t;
+    const reiniciar = () => { clearTimeout(t); t = setTimeout(bloquear, minutosBloqueo * 60_000); };
+    reiniciar();
+    window.addEventListener('pointerdown', reiniciar, { passive: true });
+    window.addEventListener('keydown', reiniciar);
+    return () => {
+      clearTimeout(t);
+      window.removeEventListener('pointerdown', reiniciar);
+      window.removeEventListener('keydown', reiniciar);
+    };
+  }, [minutosBloqueo]);
 
   useEffect(() => {
     const onKey = (e) => {

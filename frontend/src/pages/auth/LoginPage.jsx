@@ -8,6 +8,7 @@ import { useConfigPublica } from '../../hooks/useConfig';
 import { primeraRuta } from '../../components/shell/navegacion';
 import { vincularPush } from '../../lib/push';
 import { limpiarDatos } from '../../lib/queryClient';
+import { borrarVerificador, marcarDesbloqueado } from '../../lib/bloqueo';
 import { errorDe, iniciales } from '../../lib/util';
 
 function useReloj() {
@@ -164,6 +165,8 @@ export default function LoginPage() {
 
   async function entrar(datos) {
     await limpiarDatos(); // lo guardado del usuario anterior no se le muestra a este
+    borrarVerificador(datos.usuario?.id); // el PIN guardado sin internet era de otro usuario
+    marcarDesbloqueado(); // entró con su correo: esta pestaña no pide PIN
     setAuth(datos);
     vincularPush();
     navigate(primeraRuta(datos.usuario?.permisos), { replace: true });
