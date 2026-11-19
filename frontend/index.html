@@ -23,9 +23,92 @@
         if (t.acento) document.documentElement.style.setProperty('--aji', t.acento);
       } catch (e) {}
     </script>
+    <style>
+      /* El caracol de carga (components/ui/Caracol.jsx). Acá y no en index.css
+         porque la pantalla de arranque lo muestra antes de que cargue la app.
+         Los colores salen del tema; los valores de respaldo son los mismos de
+         index.css, para el arranque (en desarrollo el CSS llega después). */
+      .caracol {
+        --c-tinta: var(--tinta, 23 38 43);
+        --c-papel: var(--papel, 255 255 255);
+        --c-hundido: var(--hundido, 232 234 227);
+        --c-aji: var(--aji, 242 183 5);
+        display: block; width: 100%; height: auto; overflow: visible;
+        stroke-linecap: round; stroke-linejoin: round;
+      }
+      .dark .caracol {
+        --c-tinta: var(--tinta, 233 238 234);
+        --c-papel: var(--papel, 22 37 42);
+        --c-hundido: var(--hundido, 17 29 33);
+      }
+      .caracol .c-suelo { stroke: rgb(var(--c-tinta) / .18); stroke-width: 5; stroke-dasharray: 14 22; animation: c-suelo 1.06s linear infinite; }
+      .caracol .c-piel { fill: rgb(var(--c-hundido)); stroke: rgb(var(--c-tinta)); stroke-width: 9; }
+      .caracol .c-boca { fill: none; stroke: rgb(var(--c-tinta)); stroke-width: 6; }
+      .caracol .c-antena { fill: none; stroke: rgb(var(--c-tinta)); stroke-width: 17; }
+      .caracol .c-antena-in { fill: none; stroke: rgb(var(--c-hundido)); stroke-width: 7; }
+      .caracol .c-ojo circle { fill: rgb(var(--c-papel)); stroke: rgb(var(--c-tinta)); stroke-width: 6; }
+      .caracol .c-ojo .c-pupila { fill: rgb(var(--c-tinta)); stroke: none; }
+      .caracol .c-relleno { fill: rgb(var(--c-aji) / .22); }
+      .caracol .c-espiral { fill: none; stroke: rgb(var(--c-tinta)); stroke-width: 30; stroke-linecap: butt; stroke-linejoin: miter; stroke-miterlimit: 12; }
+      .caracol .c-cometa { fill: none; stroke: rgb(var(--c-aji)); stroke-width: 16; stroke-dasharray: .1 .9; animation: c-cometa 1.6s linear infinite; }
+
+      /* Paso en el lugar: se estira, adelanta la cabeza y la concha se mece */
+      .caracol .c-cuerpo { transform-box: view-box; transform-origin: 340px 596px; animation: c-estira 1.4s ease-in-out infinite; }
+      .caracol .c-cabeza { animation: c-cabeza 1.4s ease-in-out infinite; }
+      .caracol .c-concha { transform-box: view-box; transform-origin: 400px 592px; animation: c-mece 1.4s ease-in-out infinite; }
+      .caracol .c-ojo { transform-box: fill-box; transform-origin: center; animation: c-parpadeo 4.2s ease-in-out 1s infinite; }
+      @keyframes c-suelo { to { stroke-dashoffset: 36; } }
+      @keyframes c-cometa { to { stroke-dashoffset: -1; } }
+      @keyframes c-estira { 0%, 100% { transform: scaleX(1); } 50% { transform: scaleX(1.06); } }
+      @keyframes c-cabeza { 0%, 100% { transform: translateX(0); } 50% { transform: translateX(20px); } }
+      @keyframes c-mece { 0%, 50%, 100% { transform: none; } 75% { transform: translateY(-5px) rotate(-2deg); } }
+      @keyframes c-parpadeo { 0%, 4%, 10%, 100% { transform: scaleY(1); } 7% { transform: scaleY(.1); } }
+
+      /* Escondido en la concha (pantalla de error): se queda quieto y tiembla */
+      .caracol .c-asoma { transform-box: view-box; transform-origin: 450px 596px; transition: transform .6s cubic-bezier(.5, 0, .3, 1), opacity .25s ease .35s; }
+      .caracol-escondido .c-asoma { transform: translateX(-70px) scale(.5); opacity: 0; }
+      .caracol-escondido .c-cometa, .caracol-escondido .c-suelo { animation: none; opacity: 0; }
+      .caracol-escondido .c-concha { animation: c-tiembla 2.8s ease-in-out .6s infinite; }
+      @keyframes c-tiembla { 0%, 70%, 100% { transform: none; } 74% { transform: rotate(-3deg); } 78% { transform: rotate(3deg); } 82% { transform: rotate(-2deg); } 86% { transform: none; } }
+
+      /* Si la carga es rápida no se ve: aparece recién a los 200 ms */
+      .caracol-aparece { animation: c-aparece .3s ease .2s both; }
+      @keyframes c-aparece { from { opacity: 0; transform: translateY(4px); } to { opacity: 1; transform: none; } }
+
+      /* Pantalla de arranque: hasta que React dibuja la app */
+      #arranque { position: fixed; inset: 0; z-index: 9999; display: grid; place-items: center; background: rgb(var(--fondo, 242 243 238)); transition: opacity .3s ease; }
+      .dark #arranque { background: rgb(var(--fondo, 13 22 25)); }
+      #arranque.fuera { opacity: 0; pointer-events: none; }
+      #arranque .caracol { width: 132px; }
+
+      @media (prefers-reduced-motion: reduce) {
+        .caracol *, .caracol-aparece { animation: none !important; }
+      }
+    </style>
   </head>
   <body>
     <div id="root"></div>
+    <!-- Mismo dibujo que components/ui/Caracol.jsx. main.jsx lo quita. -->
+    <div id="arranque" aria-hidden="true">
+      <svg viewBox="222 150 500 465" class="caracol caracol-aparece">
+        <line class="c-suelo" x1="222" y1="604" x2="722" y2="604" />
+        <g class="c-asoma">
+          <g class="c-cuerpo"><path class="c-piel" d="M 340 596 L 600 596 C 662 596 684 560 674 520 C 664 474 596 462 572 500 C 552 538 502 556 422 556 L 362 560 Q 330 574 340 596 Z" /></g>
+          <g class="c-cabeza">
+            <path class="c-boca" d="M 646 532 Q 659 545 673 531" />
+            <path class="c-antena" d="M 615 490 Q 600 450 600 412" /><path class="c-antena-in" d="M 615 490 Q 600 450 600 412" />
+            <g class="c-ojo"><circle cx="600" cy="404" r="16" /><circle class="c-pupila" cx="605" cy="406" r="7" /></g>
+            <path class="c-antena" d="M 640 488 Q 662 452 670 414" /><path class="c-antena-in" d="M 640 488 Q 662 452 670 414" />
+            <g class="c-ojo"><circle cx="670" cy="406" r="16" /><circle class="c-pupila" cx="675" cy="408" r="7" /></g>
+          </g>
+        </g>
+        <g class="c-concha">
+          <path class="c-relleno" d="M 470 271 A 160 160 0 1 1 240 415 C 240 300 330 200 418 172 L 418 271 Z" />
+          <path class="c-espiral" d="M 470 271 A 160 160 0 1 1 240 415 C 240 300 330 200 418 172 L 418 353 A 67 67 0 1 1 371.6 365.1 C 364 350 368 320 370 298" />
+          <path class="c-cometa" pathLength="1" d="M 470 271 A 160 160 0 1 1 240 415 C 240 300 330 200 418 172 L 418 353 A 67 67 0 1 1 371.6 365.1 C 364 350 368 320 370 298" />
+        </g>
+      </svg>
+    </div>
     <script type="module" src="/src/main.jsx"></script>
   </body>
 </html>

@@ -1,12 +1,14 @@
 import { useState } from 'react';
-import { Loader2, Search, X } from 'lucide-react';
+import { Search, X } from 'lucide-react';
 import { cx } from '../../lib/util';
 import Hoja from './Hoja';
+import Caracol from './Caracol';
 
 export function Cargando({ texto = 'Cargando…', className }) {
   return (
-    <div className={cx('flex items-center justify-center gap-2 py-16 text-tenue text-sm', className)}>
-      <Loader2 className="w-4 h-4 animate-spin" /> {texto}
+    <div role="status" className={cx('caracol-aparece flex flex-col items-center justify-center gap-3 py-16 text-tenue text-sm', className)}>
+      <Caracol className="w-20" />
+      {texto}
     </div>
   );
 }

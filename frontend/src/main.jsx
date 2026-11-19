@@ -9,3 +9,11 @@ ReactDOM.createRoot(document.getElementById('root')).render(
     <App />
   </React.StrictMode>,
 );
+
+// La pantalla de arranque (index.html) se va apenas React dibuja la app.
+requestAnimationFrame(() => {
+  const arranque = document.getElementById('arranque');
+  if (!arranque) return;
+  arranque.classList.add('fuera');
+  setTimeout(() => arranque.remove(), 350);
+});

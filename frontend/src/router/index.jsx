@@ -5,6 +5,7 @@ import Shell from '../components/shell/Shell';
 import Seccion from '../components/shell/Seccion';
 import LoginPage from '../pages/auth/LoginPage';
 import { Cargando } from '../components/ui/piezas';
+import PantallaError from '../components/shell/PantallaError';
 
 const l = (fn) => {
   const C = lazy(fn);
@@ -23,7 +24,10 @@ const futuro = {
   v7_skipActionErrorRevalidation: true,
 };
 
-export const router = createBrowserRouter([
+export const router = createBrowserRouter([{
+  // Si cualquier pantalla se rompe, se ve PantallaError en vez de la página de error de React Router.
+  errorElement: <PantallaError />,
+  children: [
   { path: '/login', element: <LoginPage /> },
   // Menú público de autoservicio (los QR impresos de las mesas apuntan acá).
   { path: '/m/:codigo', element: l(() => import('../pages/autoservicio/AutoservicioPage')) },
@@ -119,4 +123,5 @@ export const router = createBrowserRouter([
     ],
   },
   { path: '*', element: <Navigate to="/" replace /> },
-], { future: futuro });
+  ],
+}], { future: futuro });
