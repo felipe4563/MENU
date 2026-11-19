@@ -3,7 +3,7 @@
 // - 'directo': Web Bluetooth desde el navegador (ver bluetoothDirecto.js).
 // - 'rawbt': una URL `rawbt:` que Android le pasa a la app RawBT si está
 //   instalada — mismo mecanismo que "compartir" a otra app.
-import { Esc, buildCaja, buildCocina, buildCierre, LOGO_MAX_PX, CODIFICACIONES } from './escpos';
+import { Esc, buildCaja, buildCocina, buildCierre, buildAdelanto, LOGO_MAX_PX, CODIFICACIONES } from './escpos';
 import { emparejar, imprimirDirecto, viaGuardada } from './bluetoothDirecto';
 import { avisar } from '../components/ui/Aviso';
 import { logoAEscPos } from './logoEscPos';
@@ -92,6 +92,13 @@ export async function imprimirBluetoothCierre(reporte, config) {
   const caja = reporte.sesion?.caja || {};
   const logo = await obtenerLogoRasterizado(config, caja.imprimir_logo !== 0);
   return enviar(buildCierre(reporte, config, caja.ancho_papel_bluetooth || '80mm', logo), caja.conexion_bluetooth, 'el resumen');
+}
+
+// Comprobante del adelanto de una reserva, por la impresora Bluetooth de la
+// caja donde se cobró (`caja`: la de la sesión, como en el cierre).
+export async function imprimirBluetoothAdelanto(datos, config, caja = {}) {
+  const logo = await obtenerLogoRasterizado(config, caja.imprimir_logo !== 0);
+  return enviar(buildAdelanto(datos, config, caja.ancho_papel_bluetooth || '80mm', logo), caja.conexion_bluetooth, 'el ticket');
 }
 
 // Ticket corto para probar la impresora desde "Impresora de este dispositivo".

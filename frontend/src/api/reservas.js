@@ -12,3 +12,5 @@ export const cambiarEstadoReserva = (id, estado, extra = {}) => api.put(`/reserv
 export const cobrarAdelantoReserva = (id, datos) => api.post(`/reservas/${id}/adelantos`, datos).then(r => r.data.datos);
 // → { reserva, pedido|null }
 export const mandarReservaACocina = (id) => api.post(`/reservas/${id}/cocina`).then(r => r.data.datos);
+// Platos de las reservas por llegar de un día: { fecha, totales: [{ nombre, cantidad }], reservas: [...] }.
+export const getPlatosDeReservas = (fecha) => api.get('/reservas/hoy/platos', { params: { fecha } }).then(r => r.data.datos);

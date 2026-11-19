@@ -2,7 +2,7 @@ import {
   Sun, ShoppingBag, ChefHat, Wallet, BookOpen, Truck, UtensilsCrossed, Users, Boxes,
   BarChart3, UsersRound, Settings2, Clock, Package, Gift, Layers, Tag, Ticket, Disc3,
   Wheat, ShoppingCart, Shield, UserCheck, Building2, Landmark, Grid3x3, Store, Star,
-  Cake, Plug, Workflow, Receipt, History, Printer, QrCode, Calculator, TrendingUp, Banknote, ScrollText } from 'lucide-react';
+  Cake, Plug, Workflow, Receipt, History, Printer, QrCode, Calculator, TrendingUp, Banknote, ScrollText, CalendarClock } from 'lucide-react';
 
 // Cada destino: `ver` dice qué permiso lo muestra. Los `hijos` se muestran
 // como pestañas dentro de la sección y también en el buscador (Ctrl+K).
@@ -67,6 +67,7 @@ export const SECCIONES = [
       { to: '/ajustes/sucursales', etiqueta: 'Sucursales', Icono: Building2, ver: ['sucursales.ver'] },
       { to: '/ajustes/cajas', etiqueta: 'Cajas e impresión', Icono: Landmark, ver: ['cajas.ver'] },
       { to: '/ajustes/cocina', etiqueta: 'Flujo de cocina', Icono: ChefHat, ver: ['configuracion.ver'] },
+      { to: '/ajustes/reservas', etiqueta: 'Reservas', Icono: CalendarClock, ver: ['configuracion.ver'] },
       { to: '/ajustes/fidelidad', etiqueta: 'Puntos y cumpleaños', Icono: Star, ver: ['configuracion.ver'] },
       { to: '/ajustes/cobro-qr', etiqueta: 'Cobro con QR', Icono: QrCode, ver: ['configuracion.ver'] },
       { to: '/ajustes/integraciones', etiqueta: 'Integraciones', Icono: Plug, ver: ['configuracion.ver'] },

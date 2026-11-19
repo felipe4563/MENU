@@ -6,6 +6,7 @@ import { usePermisos } from '../../hooks/usePermisos';
 import { useSocket } from '../../hooks/useSocket';
 import { Cargando, SinPermiso } from '../../components/ui/piezas';
 import { avisar } from '../../components/ui/Aviso';
+import ReservasDeHoy from '../../components/ReservasDeHoy';
 import { cx, errorDe, hora } from '../../lib/util';
 import { etiquetaDestino } from '../vender/datosCatalogo';
 
@@ -143,6 +144,7 @@ export default function CocinaPage() {
           <Maximize2 className="w-5 h-5" />
         </button>
       </header>
+      <ReservasDeHoy oscuro className="mx-5 mb-5" />
       {q.isLoading ? <Cargando className="text-white/60" /> : (
         <div className="flex-1 flex flex-col gap-6 pb-6">
           <Riel titulo="Preparando" pedidos={preparando} vacio="Nada en preparación. Los pedidos nuevos aparecen solos." onAccion={accion.mutate} ocupado={accion.isPending} />

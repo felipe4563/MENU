@@ -499,4 +499,37 @@ function buildCierre(reporte, cfg = {}, ancho = '80mm', logo = null) {
   return t.build();
 }
 
-export { Esc, buildCaja, buildCocina, buildCierre };
+// Comprobante del adelanto de una reserva. `d` sale de datosTicketAdelanto
+// (ver ticketAdelanto.js), igual que la versión HTML.
+function buildAdelanto(d, cfg = {}, ancho = '80mm', logo = null) {
+  const sym = cfg.simbolo_moneda || 'Bs';
+  const m = (v) => sym + ' ' + Number(v || 0).toFixed(2);
+  const t = new Esc(ancho);
+  t.init().charset();
+  if (logo) t.center().imagen(logo.anchoBytes, logo.alto, logo.datos).lf();
+  t.center().bold(true).line((cfg.nombre_negocio || 'RESTAURANTE').toUpperCase()).bold(false);
+  t.center().dblH().bold(true).line('ADELANTO DE RESERVA').normal().bold(false);
+  t.center().line('Reserva #' + d.reserva_id);
+  t.rule('=');
+  t.left().bold(true).line(d.nombre_cliente).bold(false);
+  t.cols('Fecha', d.fecha).cols('Hora', d.hora);
+  if (d.personas) t.cols('Personas', String(d.personas));
+  if (d.items.length) {
+    t.rule('-').center().bold(true).line('PLATOS').bold(false).left();
+    d.items.forEach((i) => t.cols(i.cantidad + 'x ' + i.nombre, (i.precio * i.cantidad).toFixed(2)));
+    t.cols('Total platos', m(d.total_platos));
+  }
+  t.rule('-');
+  t.dblH().bold(true).cols('Adelanto', m(d.monto)).normal().bold(false);
+  if (d.adelantado > d.monto + 0.005) t.cols('Total adelantado', m(d.adelantado));
+  if (d.items.length) t.bold(true).cols('Saldo', m(d.saldo)).bold(false);
+  else t.line('Queda como garantía de la reserva');
+  t.cols('Método', METODO_TICKET[d.metodo_pago] || d.metodo_pago);
+  if (d.monto_recibido != null) t.cols('Recibido', m(d.monto_recibido)).cols('Cambio', m(d.cambio));
+  t.cols('Cajero', d.cajero || '-');
+  t.rule('=');
+  t.center().line(d.cobrado_en).lf(3).cut();
+  return t.build();
+}
+
+export { Esc, buildCaja, buildCocina, buildCierre, buildAdelanto };

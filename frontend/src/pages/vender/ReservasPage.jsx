@@ -5,7 +5,7 @@ import { ArrowLeft, CalendarDays, ChevronLeft, ChevronRight, Plus, Users, Armcha
 import { getReservas, crearReserva, actualizarReserva, cambiarEstadoReserva, mandarReservaACocina } from '../../api/reservas';
 import { getMesas } from '../../api/mesas';
 import { usePermisos } from '../../hooks/usePermisos';
-import { useMoneda } from '../../hooks/useConfig';
+import { useConfig, useMoneda } from '../../hooks/useConfig';
 import { useSocket } from '../../hooks/useSocket';
 import Hoja from '../../components/ui/Hoja';
 import { Cargando, Campo, Pagina, SinPermiso, Vacio, useConfirmar } from '../../components/ui/piezas';
@@ -15,6 +15,8 @@ import { ESTADOS_RESERVA, atrasada, itemsParaGuardar, lineasDeReserva, partesFec
 import { SeccionCocina, SeccionPlatos } from './reservas/PlatosReserva';
 import AdelantoReserva from './reservas/AdelantoReserva';
 import CerrarReserva, { HojaMesaLlegada } from './reservas/CerrarReserva';
+import ReservasDeHoy from '../../components/ReservasDeHoy';
+import { imprimirAdelanto } from '../../utils/ticketAdelanto';
 
 const DURACIONES = [60, 90, 120, 150, 180, 240];
 const duracionTexto = (m) => (m % 60 ? `${Math.floor(m / 60) ? `${Math.floor(m / 60)} h ` : ''}${m % 60} min` : `${m / 60} h`);
@@ -186,6 +188,7 @@ export default function ReservasPage() {
   const [accion, setAccion] = useState(null);
   const [errorAccion, setErrorAccion] = useState('');
   const [confirmacion, confirmar] = useConfirmar();
+  const { config } = useConfig();
   const q = useQuery({ queryKey: ['reservas', fecha], queryFn: () => getReservas(fecha), enabled: tiene('ventas', 'ver') });
   const mesasQ = useQuery({ queryKey: ['mesas'], queryFn: () => getMesas(), enabled: tiene('ventas', 'ver') });
   useSocket('restaurante:actualizar', (d) => { if (d?.tipo === 'reserva') qc.invalidateQueries({ queryKey: ['reservas'] }); });
@@ -252,6 +255,8 @@ export default function ReservasPage() {
         {puedeEditar && <button className="btn-aji" onClick={() => setHoja({})}><Plus className="w-4 h-4" /> Nueva reserva</button>}
       </div>
 
+      {fecha === hoyISO() && <ReservasDeHoy className="mb-4" />}
+
       {q.isLoading ? <Cargando /> : lista.length === 0 ? (
         <Vacio Icono={CalendarDays} titulo="Sin reservas este día" texto={puedeEditar ? 'Anota una con “Nueva reserva”. La mesa se marca como reservada en el salón una hora antes.' : undefined} />
       ) : (
@@ -266,8 +271,7 @@ export default function ReservasPage() {
       )}
 
       {hoja && <HojaReserva reserva={hoja.reserva} fecha={fecha < hoyISO() ? hoyISO() : fecha} mesas={mesasQ.data ?? []} onCerrar={() => setHoja(null)} />}
-      {/* Task 8 imprime el ticket de adelanto desde onCobrado(reserva, pago). */}
-      {accion?.tipo === 'adelanto' && <AdelantoReserva reserva={accion.r} onCerrar={cerrarAccion} />}
+      {accion?.tipo === 'adelanto' && <AdelantoReserva reserva={accion.r} onCerrar={cerrarAccion} onCobrado={(r, pago) => imprimirAdelanto(r, pago, config)} />}
       {accion?.tipo === 'mesa' && (
         <HojaMesaLlegada reserva={accion.r} mesas={mesasQ.data ?? []} enviando={estado.isPending} onCerrar={cerrarAccion}
           onElegir={(mesa_id) => estado.mutate({ r: accion.r, nuevo: 'llego', extra: mesa_id ? { mesa_id } : {} })} />

@@ -102,6 +102,7 @@ export const router = createBrowserRouter([{
           { path: 'sucursales', element: l(() => import('../pages/ajustes/SucursalesPage')) },
           { path: 'cajas', element: l(() => import('../pages/ajustes/CajasPage')) },
           { path: 'cocina', element: l(() => import('../pages/ajustes/CocinaFlujoPage')) },
+          { path: 'reservas', element: l(() => import('../pages/ajustes/ReservasAjustesPage')) },
           { path: 'fidelidad', element: l(() => import('../pages/ajustes/FidelidadPage')) },
           { path: 'cobro-qr', element: l(() => import('../pages/ajustes/CobroQrPage')) },
           { path: 'integraciones', element: l(() => import('../pages/ajustes/IntegracionesPage')) },
