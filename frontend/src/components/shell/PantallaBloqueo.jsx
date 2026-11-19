@@ -7,7 +7,8 @@ import { useCarrito } from '../../pages/vender/carritoStore';
 import { useEnLinea } from '../../hooks/useEnLinea';
 import { useConfigPublica } from '../../hooks/useConfig';
 import { avatarSrc } from '../../api/perfil';
-import { entrarConPin, usuariosConPin } from '../../api/pin';
+import { desbloquearConPin, entrarConPin, leerYo, usuariosConPin } from '../../api/pin';
+import { perderSesion, refrescarSesion } from '../../api/cliente';
 import { borrarVerificador, guardarVerificador, marcarDesbloqueado, puedeVerificarLocal, verificarLocal } from '../../lib/bloqueo';
 import { desvincularPush, vincularPush } from '../../lib/push';
 import { limpiarDatos } from '../../lib/queryClient';
@@ -72,12 +73,21 @@ function mensajeError(err) {
   return r.data?.mensaje || 'No se pudo entrar. Inténtalo de nuevo.';
 }
 
+// "Ese usuario no tiene PIN": el PIN se reinició desde Equipo.
+const sinPinEnServidor = (err) => err?.response?.status === 400 && /^Ese usuario no tiene PIN/.test(err.response.data?.mensaje || '');
+// 401 que no es "PIN incorrecto": el token (de sesión o del aparato) ya no sirve.
+const tokenRechazado = (err) => err?.response?.status === 401 && err.response.data?.intentos_restantes === undefined;
+const delAparato = (err) => err?.config?.url === '/auth/pin';
+
 export default function PantallaBloqueo() {
   const navigate = useNavigate();
   const usuario = useAuthStore((s) => s.usuario);
+  const token = useAuthStore((s) => s.token);
   const dispositivoToken = useAuthStore((s) => s.dispositivoToken);
+  const sesionCaducada = useAuthStore((s) => s.sesionCaducada);
   const setAuth = useAuthStore((s) => s.setAuth);
   const setDispositivoToken = useAuthStore((s) => s.setDispositivoToken);
+  const updateUsuario = useAuthStore((s) => s.updateUsuario);
   const logout = useAuthStore((s) => s.logout);
   const enLinea = useEnLinea();
   const { data: cfg = {} } = useConfigPublica();
@@ -93,10 +103,21 @@ export default function PantallaBloqueo() {
 
   const quien = elegido ?? usuario;
   const mismo = !elegido;
-  // El de la sesión puede entrar con PIN si lo tiene y el aparato está habilitado,
-  // o sin internet si ya entró antes con su PIN en este aparato.
-  const tienePin = mismo ? Boolean(usuario?.tiene_pin) || puedeVerificarLocal(usuario?.id) : true;
-  const puedeEscribir = Boolean(dispositivoToken) && tienePin;
+  // Con la sesión caducada solo vale el PIN revisado en el servidor (que da tokens nuevos).
+  const local = !sesionCaducada && puedeVerificarLocal(usuario?.id);
+  // El de la sesión entra con su PIN por el servidor (con su sesión o con el
+  // aparato habilitado), o sin internet si ya entró antes con su PIN aquí.
+  const porServidor = Boolean(usuario?.tiene_pin) && Boolean(token || dispositivoToken);
+  const tienePin = mismo ? Boolean(usuario?.tiene_pin) || local : true;
+  const sinInternetSinLocal = mismo && !enLinea && Boolean(usuario?.tiene_pin) && !local;
+  const puedeEscribir = mismo ? (porServidor || local) && !sinInternetSinLocal : Boolean(dispositivoToken);
+  const todasLasSucursales = usuario?.sucursal_activa && usuario.sucursal_activa.id == null;
+
+  // Al abrir con internet se revisa si sigue teniendo PIN (se pudo crear o reiniciar en otro lado).
+  useEffect(() => {
+    if (!enLinea || !token) return;
+    leerYo().then((yo) => { if (yo && typeof yo.tiene_pin === 'boolean') updateUsuario({ tiene_pin: yo.tiene_pin }); }).catch(() => {});
+  }, [enLinea, token, updateUsuario]);
 
   const lista = useQuery({
     queryKey: ['pin-usuarios', dispositivoToken],
@@ -119,22 +140,48 @@ export default function PantallaBloqueo() {
     setSacudidas((n) => n + 1);
   }
 
-  async function entrarMismo(valor) {
-    const local = async () => {
-      if (!puedeVerificarLocal(usuario.id)) {
-        return fallar('Sin internet no se puede revisar tu PIN en este aparato. Conéctate o entra con tu correo.');
+  // Entra el de la sesión con lo que da el servidor (tokens nuevos).
+  async function entrarConDatos(datos, valor) {
+    await guardarVerificador(datos.usuario.id, valor);
+    setAuth(datos);
+    marcarDesbloqueado();
+  }
+
+  // Con la sesión vigente: /auth/pin/mismo (misma sucursal). Si el token de
+  // acceso venció se renueva una vez; si la sesión ya no sirve, el aparato
+  // habilitado todavía deja entrar con el mismo PIN.
+  async function entrarPorServidor(valor) {
+    if (token) {
+      try {
+        return await entrarConDatos(await desbloquearConPin(valor), valor);
+      } catch (err) {
+        if (!tokenRechazado(err)) throw err;
+        let renovado = false;
+        try { await refrescarSesion(); renovado = true; } catch (errRefresh) {
+          if (!errRefresh?.response) throw errRefresh;
+        }
+        if (renovado) return entrarConDatos(await desbloquearConPin(valor), valor);
+        if (!dispositivoToken) {
+          perderSesion(err.response.data?.codigo);
+          return undefined;
+        }
+        useAuthStore.getState().caducarSesion();
       }
+    }
+    return entrarConDatos(await entrarConPin({ dispositivo_token: dispositivoToken, usuario_id: usuario.id, pin: valor }), valor);
+  }
+
+  async function entrarMismo(valor) {
+    const probarLocal = async () => {
+      if (!local) return fallar('Sin internet: conéctate para desbloquear.');
       if (await verificarLocal(usuario.id, valor)) return marcarDesbloqueado();
       fallar(puedeVerificarLocal(usuario.id) ? 'PIN incorrecto.' : 'Muchos intentos sin internet. Conéctate para entrar.');
     };
-    if (!enLinea) return local();
+    if (!enLinea) return probarLocal();
     try {
-      const datos = await entrarConPin({ dispositivo_token: dispositivoToken, usuario_id: usuario.id, pin: valor });
-      await guardarVerificador(datos.usuario.id, valor);
-      setAuth(datos);
-      marcarDesbloqueado();
+      await entrarPorServidor(valor);
     } catch (err) {
-      if (!err?.response && err?.code !== 'ERR_CANCELED') return local();
+      if (!err?.response && err?.code !== 'ERR_CANCELED') return probarLocal();
       tratarError(err);
     }
   }
@@ -161,9 +208,24 @@ export default function PantallaBloqueo() {
 
   function tratarError(err) {
     const status = err.response?.status;
-    if (status === 401 && err.response.data?.intentos_restantes === undefined) setDispositivoToken(null);
-    // PIN bloqueado en el servidor: tampoco sirve sin internet.
-    if (status === 423 && mismo) borrarVerificador();
+    // Aparato no habilitado. Sin sesión tampoco queda nada: a entrar con correo.
+    if (tokenRechazado(err) && delAparato(err)) {
+      setDispositivoToken(null);
+      if (!useAuthStore.getState().token) {
+        logout();
+        navigate('/login', { replace: true });
+        return;
+      }
+    }
+    if (mismo) {
+      // PIN bloqueado en el servidor: tampoco sirve sin internet.
+      if (status === 423) borrarVerificador();
+      // Le reiniciaron el PIN: ya no tiene.
+      if (sinPinEnServidor(err)) {
+        borrarVerificador();
+        updateUsuario({ tiene_pin: false });
+      }
+    }
     fallar(mensajeError(err));
   }
 
@@ -205,6 +267,8 @@ export default function PantallaBloqueo() {
   });
 
   async function entrarConCorreo() {
+    // Sin internet no se borra nada: no se podría volver a entrar.
+    if (!enLinea) return;
     setSaliendo(true);
     await desvincularPush();
     logout();
@@ -220,10 +284,14 @@ export default function PantallaBloqueo() {
   }
 
   const botonCorreo = (
-    <button className="btn-borde w-full" onClick={entrarConCorreo} disabled={saliendo}>
-      {saliendo ? <Loader2 className="w-4 h-4 animate-spin" /> : <LogIn className="w-4 h-4" />} Entrar con correo
-    </button>
+    <>
+      <button className="btn-borde w-full" onClick={entrarConCorreo} disabled={saliendo || !enLinea}>
+        {saliendo ? <Loader2 className="w-4 h-4 animate-spin" /> : <LogIn className="w-4 h-4" />} Entrar con correo
+      </button>
+      {!enLinea && <p className="text-xs text-tenue text-center">Conéctate a internet para entrar con tu correo</p>}
+    </>
   );
+  const otros = lista.data ?? [];
 
   return (
     <div className="min-h-[100dvh] bg-fondo flex flex-col items-center px-5 pt-[max(env(safe-area-inset-top),2rem)] pb-[max(env(safe-area-inset-bottom),1.5rem)]">
@@ -242,13 +310,13 @@ export default function PantallaBloqueo() {
               <p className="text-sm text-locoto bg-locoto/10 rounded-xl px-3 py-2.5">{mensajeError(lista.error)}</p>
             ) : (
               <div className="space-y-2 max-h-[55dvh] overflow-y-auto">
-                {(lista.data ?? []).filter((u) => u.id !== usuario?.id).map((u) => (
+                {otros.map((u) => (
                   <button key={u.id} onClick={() => elegir(u)} className="w-full ficha flex items-center gap-3 p-3 text-left hover:border-tinta/40 transition">
                     <Avatar usuario={u} className="w-11 h-11" />
                     <span className="flex-1 font-semibold truncate">{u.nombre}</span>
                   </button>
                 ))}
-                {lista.data?.filter((u) => u.id !== usuario?.id).length === 0 && (
+                {lista.data && otros.every((u) => u.id === usuario?.id) && (
                   <p className="text-sm text-tenue">Nadie más tiene PIN en esta sucursal.</p>
                 )}
               </div>
@@ -262,10 +330,12 @@ export default function PantallaBloqueo() {
             <Avatar usuario={quien} className="w-20 h-20 text-2xl" />
             <h1 className="font-display font-extrabold text-2xl mt-3 leading-tight">{quien?.nombre}</h1>
 
-            {!dispositivoToken ? (
-              <p className={cx('mt-2', error ? 'text-locoto' : 'text-tenue')}>{error || 'Para seguir, entra con tu correo.'}</p>
+            {sinInternetSinLocal ? (
+              <p className="text-locoto mt-2">Sin internet: conéctate para desbloquear.</p>
             ) : !tienePin ? (
               <p className="text-tenue mt-2">No tienes PIN en este aparato. Entra con tu correo; luego puedes crearlo en Mi perfil.</p>
+            ) : !puedeEscribir ? (
+              <p className={cx('mt-2', error ? 'text-locoto' : 'text-tenue')}>{error || 'Para seguir, entra con tu correo.'}</p>
             ) : (
               <>
                 <p className="text-tenue mt-1 mb-5">Escribe tu PIN</p>
@@ -290,6 +360,9 @@ export default function PantallaBloqueo() {
             </button>
             {!enLinea && <p className="text-xs text-tenue text-center">Para cambiar de usuario necesitas internet</p>}
           </>
+        )}
+        {!dispositivoToken && todasLasSucursales && vista === 'pin' && (
+          <p className="text-xs text-tenue text-center">Con «Todas las sucursales» no se puede cambiar de usuario aquí.</p>
         )}
         {botonCorreo}
       </div>

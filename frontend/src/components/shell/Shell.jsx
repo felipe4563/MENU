@@ -45,6 +45,8 @@ function Avatar({ usuario, className }) {
 function MenuUsuario({ onCerrar }) {
   const usuario = useAuthStore((s) => s.usuario);
   const logout = useAuthStore((s) => s.logout);
+  // Sin aparato habilitado ni PIN no habría cómo volver a entrar sin el correo.
+  const puedeBloquear = useAuthStore((s) => Boolean(s.dispositivoToken || s.usuario?.tiene_pin));
   const { modo, setModo } = useTemaStore();
   const navigate = useNavigate();
   const ir = (to) => { onCerrar(); navigate(to); };
@@ -81,11 +83,13 @@ function MenuUsuario({ onCerrar }) {
           </button>
         ))}
       </div>
-      <button className="btn-borde w-full mt-5" onClick={() => { onCerrar(); bloquear(); }}>
-        <Lock className="w-4 h-4" /> Bloquear
-      </button>
+      {puedeBloquear && (
+        <button className="btn-borde w-full mt-5" onClick={() => { onCerrar(); bloquear(); }}>
+          <Lock className="w-4 h-4" /> Bloquear
+        </button>
+      )}
       <button
-        className="btn-borde w-full mt-2 text-locoto"
+        className={cx('btn-borde w-full text-locoto', puedeBloquear ? 'mt-2' : 'mt-5')}
         onClick={async () => { await desvincularPush(); logout(); await limpiarDatos(); navigate('/login'); }}
       >
         <LogOut className="w-4 h-4" /> Cerrar sesión
@@ -107,8 +111,10 @@ export default function Shell() {
   const minutosBloqueo = Number(config.bloqueo_inactividad_min) || 0;
 
   // Se bloquea solo tras unos minutos sin tocar la pantalla ni el teclado (0 = apagado).
+  // Las pantallas de cocina quedan a la vista sin que nadie las toque: no se bloquean.
+  const enCocina = pathname.startsWith('/cocina');
   useEffect(() => {
-    if (!(minutosBloqueo > 0)) return undefined;
+    if (!(minutosBloqueo > 0) || enCocina) return undefined;
     let t;
     const reiniciar = () => { clearTimeout(t); t = setTimeout(bloquear, minutosBloqueo * 60_000); };
     reiniciar();
@@ -119,7 +125,7 @@ export default function Shell() {
       window.removeEventListener('pointerdown', reiniciar);
       window.removeEventListener('keydown', reiniciar);
     };
-  }, [minutosBloqueo]);
+  }, [minutosBloqueo, enCocina]);
 
   useEffect(() => {
     const onKey = (e) => {

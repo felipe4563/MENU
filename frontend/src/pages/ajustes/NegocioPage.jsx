@@ -79,7 +79,7 @@ function Formulario({ config, guardar, editar }) {
             <textarea rows={2} className="campo max-w-3xl" {...campo('pie_ticket')} placeholder="¡Gracias por su preferencia!" />
           </Seccion>
           <Seccion titulo="Seguridad" texto="Si nadie toca la pantalla, se bloquea y pide el PIN. Sirve para cajas y tablets que comparte el equipo.">
-            <Campo etiqueta="Bloquear tras" className="max-w-xs">
+            <Campo etiqueta="Bloquear tras" ayuda="Las pantallas de cocina no se bloquean." className="max-w-xs">
               <select className="campo" {...campo('bloqueo_inactividad_min')}>
                 {BLOQUEOS.map(([v, t]) => <option key={v} value={v}>{t}</option>)}
               </select>
