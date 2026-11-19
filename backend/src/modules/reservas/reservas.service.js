@@ -199,7 +199,9 @@ async function obtener(id, alcance) {
 }
 
 // Platos de las reservas pendientes del día, para que cocina se prepare:
-// totales por plato (el más pedido primero) y el detalle de cada reserva.
+// totales por plato (el más pedido primero) y el detalle de cada reserva. Las
+// que ya salieron a cocina (con pedido) no suman en los totales: se listan
+// marcadas `en_cocina`.
 async function platosDelDia({ fecha } = {}, alcance) {
   const dia = _dia(fecha);
   const where = { estado: 'pendiente', fecha_hora: _rangoDia(dia) };
@@ -213,7 +215,7 @@ async function platosDelDia({ fecha } = {}, alcance) {
     order: [['fecha_hora', 'ASC'], ['id', 'ASC'], [{ model: ReservaItem, as: 'items' }, 'id', 'ASC']],
   });
   const suma = new Map();
-  for (const r of reservas) {
+  for (const r of reservas.filter((x) => !x.pedido_id)) {
     for (const i of r.items) suma.set(i.nombre, (suma.get(i.nombre) || 0) + i.cantidad);
   }
   const totales = [...suma].map(([nombre, cantidad]) => ({ nombre, cantidad }))
@@ -227,6 +229,7 @@ async function platosDelDia({ fecha } = {}, alcance) {
       nombre_cliente: r.nombre_cliente,
       personas: r.personas,
       mesa: r.mesa?.nombre ?? null,
+      en_cocina: Boolean(r.pedido_id),
       items: r.items.map((i) => ({ nombre: i.nombre, cantidad: i.cantidad, nota: i.nota })),
     })),
   };

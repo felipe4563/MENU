@@ -139,15 +139,20 @@ describe('Reservas con platos (API)', () => {
     await ReservaItem.create({ reserva_id: b.id, producto_id: plato.id, nombre: 'Silpancho Reservas Test', cantidad: 5, precio: 40, nota: 'bien cocido' });
     await ReservaItem.create({ reserva_id: b.id, producto_id: bebida.id, nombre: 'Limonada Reservas Test', cantidad: 1, precio: 10.5 });
     await ReservaItem.create({ reserva_id: c.id, producto_id: plato.id, nombre: 'Silpancho Reservas Test', cantidad: 7, precio: 40 });
+    // Ya en cocina: se lista marcada, pero sus platos no suman.
+    const enCocina = await Pedido.create({ sucursal_id: sucursal.id, usuario_id: usuario.id, tipo: 'llevar', total: 80 });
+    const d = await Reserva.create({ ...base, nombre_cliente: 'Hoy D', fecha_hora: new Date(`${hoy}T20:30:00-04:00`), pedido_id: enCocina.id });
+    await ReservaItem.create({ reserva_id: d.id, producto_id: plato.id, nombre: 'Silpancho Reservas Test', cantidad: 2, precio: 40 });
     const r = await request(app).get('/api/v1/reservas/hoy/platos').query({ fecha: hoy }).set(auth());
     expect(r.status).toBe(200);
     expect(r.body.datos.fecha).toBe(hoy);
     const nuestros = r.body.datos.totales.filter((t) => /Reservas Test$/.test(t.nombre));
     expect(nuestros[0]).toEqual({ nombre: 'Silpancho Reservas Test', cantidad: 8 });
     expect(nuestros[1]).toEqual({ nombre: 'Limonada Reservas Test', cantidad: 1 });
-    const mias = r.body.datos.reservas.filter((x) => [a.id, b.id, c.id].includes(x.id));
-    expect(mias.map((x) => x.id)).toEqual([b.id, a.id]);
-    expect(mias[0]).toMatchObject({ hora: '19:30', nombre_cliente: 'Hoy B', personas: 2, mesa: null });
+    const mias = r.body.datos.reservas.filter((x) => [a.id, b.id, c.id, d.id].includes(x.id));
+    expect(mias.map((x) => x.id)).toEqual([b.id, d.id, a.id]);
+    expect(mias[0]).toMatchObject({ hora: '19:30', nombre_cliente: 'Hoy B', personas: 2, mesa: null, en_cocina: false });
+    expect(mias[1]).toMatchObject({ nombre_cliente: 'Hoy D', en_cocina: true });
     expect(mias[0].items).toContainEqual({ nombre: 'Silpancho Reservas Test', cantidad: 5, nota: 'bien cocido' });
   });
 });

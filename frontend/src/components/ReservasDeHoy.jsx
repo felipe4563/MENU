@@ -8,7 +8,8 @@ import { cx, hoyISO } from '../lib/util';
 
 // Platos de las reservas por llegar de hoy: totales por plato y, plegado, cada
 // reserva. Va en Cocina (oscuro) y arriba de la lista en Reservas. No se
-// muestra si hoy no hay reservas con platos.
+// muestra si hoy no hay reservas con platos. Las que ya salieron a cocina se
+// listan con "En cocina" pero no suman en los totales.
 export default function ReservasDeHoy({ oscuro = false, className }) {
   const { tiene } = usePermisos();
   const qc = useQueryClient();
@@ -24,6 +25,7 @@ export default function ReservasDeHoy({ oscuro = false, className }) {
 
   const reservas = q.data?.reservas ?? [];
   if (!reservas.length) return null;
+  const porLlegar = reservas.filter((r) => !r.en_cocina).length;
   const totales = q.data.totales ?? [];
   const platos = totales.reduce((s, t) => s + t.cantidad, 0);
   const tenue = oscuro ? 'text-white/55' : 'text-tenue';
@@ -34,7 +36,7 @@ export default function ReservasDeHoy({ oscuro = false, className }) {
         <CalendarClock className={cx('w-5 h-5', oscuro ? 'text-aji' : 'text-tenue')} />
         <h2 className="font-display font-bold text-lg">Reservas de hoy</h2>
         <span className={cx('text-sm num', tenue)}>
-          {reservas.length} {reservas.length === 1 ? 'reserva' : 'reservas'} · {platos} {platos === 1 ? 'plato' : 'platos'}
+          {porLlegar} {porLlegar === 1 ? 'reserva' : 'reservas'} · {platos} {platos === 1 ? 'plato' : 'platos'}
         </span>
         <button type="button" onClick={() => setAbierta((v) => !v)} aria-expanded={abierta}
           className={cx('ml-auto inline-flex items-center gap-1 rounded-lg px-2 h-8 text-sm font-semibold', oscuro ? 'text-white/80 hover:bg-white/10' : 'hover:bg-hundido')}>
@@ -56,7 +58,12 @@ export default function ReservasDeHoy({ oscuro = false, className }) {
             <li key={r.id} className="py-3 flex gap-4">
               <span className="num font-display font-extrabold text-xl w-14 shrink-0 leading-6">{r.hora}</span>
               <div className="min-w-0 flex-1">
-                <p className="font-semibold leading-6">{r.nombre_cliente}</p>
+                <p className="font-semibold leading-6">
+                  {r.nombre_cliente}
+                  {r.en_cocina && (
+                    <span className={cx('ml-2 align-middle rounded-md px-1.5 py-0.5 text-xs font-bold', oscuro ? 'bg-white/15 text-white/80' : 'bg-hundido text-tenue')}>En cocina</span>
+                  )}
+                </p>
                 <p className={cx('text-sm flex flex-wrap gap-x-4', tenue)}>
                   <span className="inline-flex items-center gap-1"><Users className="w-3.5 h-3.5" /> {r.personas} {r.personas === 1 ? 'persona' : 'personas'}</span>
                   {r.mesa && <span className="inline-flex items-center gap-1"><Armchair className="w-3.5 h-3.5" /> {r.mesa}</span>}
