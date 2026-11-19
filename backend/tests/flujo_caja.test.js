@@ -80,6 +80,18 @@ describe('Flujo de caja', () => {
     expect(suma(fila(filas, { categoria: 'ventas' }))).toBe(140);
   });
 
+  it('la devolución de un adelanto de reserva llega como egreso en su categoría de ingresos', async () => {
+    const libro = (d) => LibroCaja.create({ usuario_id: usuario.id, sesion_caja_id: sesion.id, categoria: 'adelantos_reserva', metodo_pago: 'efectivo', ...d });
+    await libro({ tipo: 'ingreso', concepto: 'Adelanto reserva #1 · Ana', monto: 50, creado_en: new Date('2026-09-09T10:00:00-04:00') });
+    await libro({ tipo: 'egreso', concepto: 'Devolución adelanto reserva #1 · Ana', monto: 20, creado_en: new Date('2026-09-10T10:00:00-04:00') });
+    const { filas, grupos, categorias } = (await flujo()).body.datos;
+    expect(categorias.find((c) => c.clave === 'adelantos_reserva').grupo).toBe('ingresos');
+    expect(grupos.find((g) => g.clave === 'ingresos').tipo).toBe('ingreso');
+    // La pantalla resta la fila egreso dentro del grupo de ingresos (signoFila).
+    expect(fila(filas, { dia: '2026-09-09', categoria: 'adelantos_reserva' })).toEqual([expect.objectContaining({ tipo: 'ingreso', total: 50 })]);
+    expect(fila(filas, { dia: '2026-09-10', categoria: 'adelantos_reserva' })).toEqual([expect.objectContaining({ tipo: 'egreso', total: 20 })]);
+  });
+
   it('anota sueldos con su persona y el día en que se pagaron', async () => {
     const r = await anotar({ fecha: '2026-09-05', categoria: 'sueldos', detalle: 'Jhoselin', metodo_pago: 'efectivo', monto: 70 });
     expect(r.status).toBe(201);

@@ -18,6 +18,17 @@ const sumar = (a, b, signo = 1) => { a.efectivo = r2(a.efectivo + signo * b.efec
 const OPERATIVOS = ['costo_variable', 'costo_fijo', 'otros_gastos'];
 const DIAS_SEMANA = ['D', 'L', 'M', 'M', 'J', 'V', 'S'];
 
+// Signo con que una fila del libro entra en su grupo. Los traspasos y ajustes
+// llevan signo (ingreso suma, egreso resta). En los demás grupos la fila
+// suma si es del tipo del grupo y resta si es al revés: la devolución de un
+// adelanto (egreso) baja los ingresos; la plata que vuelve de una compra
+// (ingreso) baja el costo. Así el saldo cuadra con el del servidor
+// (ingresos − egresos).
+export function signoFila(tipoFila, tipoGrupo) {
+  if (tipoGrupo === 'traspaso' || tipoGrupo === 'ajuste') return tipoFila === 'egreso' ? -1 : 1;
+  return tipoFila === tipoGrupo ? 1 : -1;
+}
+
 export function armarFlujo(datos) {
   const { dias: n, desde, hoy, saldo_inicial: saldoIni, filas, grupos, categorias } = datos;
   const mes = desde.slice(0, 7);
@@ -32,6 +43,7 @@ export function armarFlujo(datos) {
   // Categoría → { porDia, total, detalles: Map(nombre → { porDia, total }) }
   const porCat = {};
   categorias.forEach((c) => { porCat[c.clave] = { ...c, porDia: vacioDias(), total: cero(), detalles: new Map() }; });
+  const tipoGrupo = Object.fromEntries(grupos.map((g) => [g.clave, g.tipo]));
   const traspasos = vacioDias();
   const ajustes = vacioDias();
 
@@ -42,20 +54,18 @@ export function armarFlujo(datos) {
     const medio = f.metodo === 'efectivo' ? 'efectivo' : 'qr';
     const v = cero();
     v[medio] = f.total;
-    // Los traspasos y ajustes llevan signo; el resto es positivo y su grupo
-    // dice si suma o resta.
+    const signo = signoFila(f.tipo, tipoGrupo[cat.grupo]);
     if (cat.grupo === 'traspaso' || cat.grupo === 'ajuste') {
-      sumar((cat.grupo === 'traspaso' ? traspasos : ajustes)[i], v, f.tipo === 'ingreso' ? 1 : -1);
+      sumar((cat.grupo === 'traspaso' ? traspasos : ajustes)[i], v, signo);
     }
-    const signoFila = (cat.grupo === 'traspaso' || cat.grupo === 'ajuste') && f.tipo === 'egreso' ? -1 : 1;
-    sumar(cat.porDia[i], v, signoFila);
-    sumar(cat.total, v, signoFila);
+    sumar(cat.porDia[i], v, signo);
+    sumar(cat.total, v, signo);
     const nombre = f.detalle || '';
     if (nombre) {
       if (!cat.detalles.has(nombre)) cat.detalles.set(nombre, { nombre, porDia: vacioDias(), total: cero() });
       const d = cat.detalles.get(nombre);
-      sumar(d.porDia[i], v, signoFila);
-      sumar(d.total, v, signoFila);
+      sumar(d.porDia[i], v, signo);
+      sumar(d.total, v, signo);
     }
   }
 
