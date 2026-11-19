@@ -95,9 +95,9 @@ export async function imprimirBluetoothCierre(reporte, config) {
 }
 
 // Comprobante del adelanto de una reserva, por la impresora Bluetooth de la
-// caja donde se cobró (`caja`: la de la sesión, como en el cierre).
+// caja donde se cobró (`caja`: `impresion` de la respuesta del cobro).
 export async function imprimirBluetoothAdelanto(datos, config, caja = {}) {
-  const logo = await obtenerLogoRasterizado(config, caja.imprimir_logo !== 0);
+  const logo = await obtenerLogoRasterizado(config, caja.imprimir_logo !== false);
   return enviar(buildAdelanto(datos, config, caja.ancho_papel_bluetooth || '80mm', logo), caja.conexion_bluetooth, 'el ticket');
 }
 

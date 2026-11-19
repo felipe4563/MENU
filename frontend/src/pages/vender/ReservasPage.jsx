@@ -271,7 +271,7 @@ export default function ReservasPage() {
       )}
 
       {hoja && <HojaReserva reserva={hoja.reserva} fecha={fecha < hoyISO() ? hoyISO() : fecha} mesas={mesasQ.data ?? []} onCerrar={() => setHoja(null)} />}
-      {accion?.tipo === 'adelanto' && <AdelantoReserva reserva={accion.r} onCerrar={cerrarAccion} onCobrado={(r, pago) => imprimirAdelanto(r, pago, config)} />}
+      {accion?.tipo === 'adelanto' && <AdelantoReserva reserva={accion.r} onCerrar={cerrarAccion} onCobrado={(r, pago) => imprimirAdelanto(r, pago, config).catch(() => avisar.error('No se pudo imprimir el ticket del adelanto'))} />}
       {accion?.tipo === 'mesa' && (
         <HojaMesaLlegada reserva={accion.r} mesas={mesasQ.data ?? []} enviando={estado.isPending} onCerrar={cerrarAccion}
           onElegir={(mesa_id) => estado.mutate({ r: accion.r, nuevo: 'llego', extra: mesa_id ? { mesa_id } : {} })} />

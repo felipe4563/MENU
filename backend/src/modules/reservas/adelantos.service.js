@@ -2,7 +2,7 @@
 // del día en que se cobra; si se devuelve, sale de la caja del día en que se
 // devuelve. Todo dentro de una transacción con la reserva bloqueada.
 const sequelize = require('../../config/database');
-const { Reserva, ReservaItem, ReservaPago, SesionCaja, LibroCaja } = require('../../models');
+const { Reserva, ReservaItem, ReservaPago, SesionCaja, LibroCaja, Caja } = require('../../models');
 const { emitir } = require('../../socket');
 const { round2 } = require('../devoluciones/calculo');
 const reservasService = require('./reservas.service');
@@ -46,6 +46,17 @@ const _cajaAbierta = (usuario_id, sucursal_id, t) => SesionCaja.findOne({
   where: { usuario_id, sucursal_id, estado: 'abierta' }, order: [['id', 'DESC']], transaction: t,
 });
 
+// Cómo imprime la caja donde se cobró, para el ticket de adelanto (el cajero
+// puede no tener caja.ver para leerlo aparte).
+async function _impresionCaja(caja_id) {
+  const caja = caja_id ? await Caja.findByPk(caja_id, {
+    attributes: ['id', 'nombre', 'modo_impresion', 'ancho_papel_bluetooth', 'conexion_bluetooth', 'imprimir_logo', 'imprimir_ticket_cliente'],
+  }) : null;
+  if (!caja) return null;
+  const c = caja.toJSON();
+  return { ...c, imprimir_logo: c.imprimir_logo !== 0 && c.imprimir_logo !== false, imprimir_ticket_cliente: c.imprimir_ticket_cliente !== 0 && c.imprimir_ticket_cliente !== false };
+}
+
 async function cobrarAdelanto(reserva_id, usuario_id, { metodo_pago, monto, monto_recibido } = {}, alcance) {
   const metodo = _metodo(metodo_pago);
   const importe = _monto(monto);
@@ -56,7 +67,7 @@ async function cobrarAdelanto(reserva_id, usuario_id, { metodo_pago, monto, mont
     if (!Number.isFinite(recibido) || recibido < importe) throw error('Monto recibido insuficiente');
     cambio = round2(recibido - importe);
   }
-  const sucursal_id = await sequelize.transaction(async (t) => {
+  const { sucursal_id, caja_id } = await sequelize.transaction(async (t) => {
     const r = await _reservaBloqueada(reserva_id, alcance, t);
     if (!['pendiente', 'llego'].includes(r.estado)) throw error('Esta reserva ya está cerrada', 409);
     if (r.pedido_id) throw error('Esta reserva ya está en cocina: cobra el pedido', 409);
@@ -73,10 +84,11 @@ async function cobrarAdelanto(reserva_id, usuario_id, { metodo_pago, monto, mont
       concepto: `Adelanto reserva #${r.id} · ${r.nombre_cliente}`, referencia_id: r.id,
     }, { transaction: t });
     await SesionCaja.increment('total_ventas', { by: importe, where: { id: sesion.id }, transaction: t });
-    return r.sucursal_id;
+    return { sucursal_id: r.sucursal_id, caja_id: sesion.caja_id };
   });
   emitir('restaurante:actualizar', { tipo: 'reserva' }, sucursal_id);
-  return reservasService.obtener(reserva_id, alcance);
+  const reserva = await reservasService.obtener(reserva_id, alcance);
+  return { ...reserva, impresion: await _impresionCaja(caja_id) };
 }
 
 // Devuelve plata del adelanto desde la caja abierta de quien devuelve. Con

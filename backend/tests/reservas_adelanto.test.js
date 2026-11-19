@@ -54,6 +54,20 @@ describe('Adelantos de reservas', () => {
     expect(libro).toMatchObject({ tipo: 'ingreso', categoria: 'adelantos_reserva', metodo_pago: 'efectivo', concepto: `Adelanto reserva #${r.id} · Familia Adelanto` });
     expect(Number(libro.monto)).toBe(50);
     expect(Number((await sesionActual()).total_ventas)).toBe(50);
+    // Cómo imprime la caja donde se cobró (para el ticket, sin pedir caja.ver).
+    expect(res.body.datos.impresion).toMatchObject({ id: caja.id, nombre: 'Caja Adelantos Test', modo_impresion: 'fisica', imprimir_ticket_cliente: true });
+  });
+
+  it('devuelve la impresión bluetooth de la caja y su ticket de cliente apagado', async () => {
+    await caja.update({ modo_impresion: 'bluetooth', ancho_papel_bluetooth: '58mm', conexion_bluetooth: 'rawbt', imprimir_ticket_cliente: 0 });
+    try {
+      const r = await nueva();
+      const res = await adelanto(r.id, { metodo_pago: 'qr', monto: 20 });
+      expect(res.status).toBe(201);
+      expect(res.body.datos.impresion).toMatchObject({ modo_impresion: 'bluetooth', ancho_papel_bluetooth: '58mm', conexion_bluetooth: 'rawbt', imprimir_ticket_cliente: false });
+    } finally {
+      await caja.update({ modo_impresion: 'fisica', ancho_papel_bluetooth: '80mm', conexion_bluetooth: 'directo', imprimir_ticket_cliente: 1 });
+    }
   });
 
   it('efectivo con monto recibido insuficiente => 400', async () => {

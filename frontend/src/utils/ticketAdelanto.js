@@ -1,6 +1,5 @@
 import { imprimirHtml } from './imprimirHtml';
 import { imprimirBluetoothAdelanto } from './rawbt';
-import { getSesion } from '../api/caja';
 import { METODO_TICKET } from '../lib/metodosPago';
 import { partesFecha } from '../lib/reservas';
 
@@ -87,18 +86,16 @@ export function imprimirTicketAdelantoHtml(d, config = {}) {
   imprimirHtml(html);
 }
 
-// Imprime el comprobante por el canal de la caja donde se cobró: Bluetooth si
-// esa caja imprime por Bluetooth y no está apagado su ticket de cliente; si no,
-// el diálogo de impresión del navegador (el agente de la PC solo sabe imprimir
-// ventas, comandas y cierres).
+// Imprime el comprobante por el canal de la caja donde se cobró, que viene en
+// la respuesta del cobro (`reserva.impresion`): por Bluetooth si esa caja
+// imprime por Bluetooth; si no, el diálogo de impresión del navegador (el
+// agente de la PC solo sabe imprimir ventas, comandas y cierres). Nada si la
+// caja tiene apagado el ticket de cliente.
 export async function imprimirAdelanto(reserva, pago, config = {}) {
   if (!reserva || !pago) return;
+  const caja = reserva.impresion;
+  if (caja?.imprimir_ticket_cliente === false) return;
   const datos = datosTicketAdelanto(reserva, pago);
-  let caja = null;
-  if (pago.sesion_caja_id) {
-    try { caja = (await getSesion(pago.sesion_caja_id))?.caja ?? null; } catch { /* sin permiso o sin red: va por el navegador */ }
-  }
-  if (caja?.imprimir_ticket_cliente === 0 || caja?.imprimir_ticket_cliente === false) return;
   if (caja?.modo_impresion === 'bluetooth') return imprimirBluetoothAdelanto(datos, config, caja);
   imprimirTicketAdelantoHtml(datos, config);
 }
