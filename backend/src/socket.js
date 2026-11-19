@@ -163,4 +163,4 @@ function estadoAgentes() {
 
 const desconectadoEn = (caja_id) => ultimaDesconexion.get(caja_id) ?? null;
 
-module.exports = { init, emitir, estadoAgentes, desconectadoEn };
+module.exports = { init, emitir, estadoAgentes, desconectadoEn, identificar };

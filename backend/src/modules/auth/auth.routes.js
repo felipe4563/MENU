@@ -1,5 +1,5 @@
 const { Router } = require('express');
-const { login, loginSucursal, refresh, yo, usuariosPin, entrarPin } = require('./auth.controller');
+const { login, loginSucursal, refresh, yo, usuariosPin, entrarPin, entrarPinMismo } = require('./auth.controller');
 const { usuarioIdCanonico } = require('./auth.service');
 const auth = require('../../middlewares/auth');
 const limitador = require('../../middlewares/limitador');
@@ -23,6 +23,9 @@ const limitePinPorIp = limitador({ ventanaMs: 15 * 60_000, maximo: 100, mensaje:
 const limitePinPorUsuario = limitador({ ventanaMs: 15 * 60_000, maximo: 10, mensaje: mensajePin, clave: (req) => String(usuarioIdCanonico(req.body?.usuario_id)) });
 router.post('/pin/usuarios', limitePinPorIp, usuariosPin);
 router.post('/pin', limitePinPorIp, limitePinPorUsuario, entrarPin);
+// Desbloquear la sesión propia con PIN (sin aparato habilitado): mismo tope, por usuario de la sesión.
+const limitePinMismo = limitador({ ventanaMs: 15 * 60_000, maximo: 10, mensaje: mensajePin, clave: (req) => String(req.usuario.id) });
+router.post('/pin/mismo', limitePinPorIp, auth, limitePinMismo, entrarPinMismo);
 router.post('/refresh', limitador({ ventanaMs: 15 * 60_000, maximo: 60, mensaje: 'Demasiados pedidos. Espera unos minutos.' }), refresh);
 router.get('/yo', auth, yo);
 

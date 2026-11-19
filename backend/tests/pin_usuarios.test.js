@@ -320,3 +320,103 @@ describe('Entrar con PIN en un aparato habilitado', () => {
     expect(ref2.status).toBe(401);
   });
 });
+
+// Desbloquear la sesión propia con PIN sin aparato habilitado (ej. "Todas las sucursales").
+describe('Desbloquear con PIN la sesión propia', () => {
+  let rolCajero, todas, sucursal;
+  const mismo = (token, pin) => request(app).post('/api/v1/auth/pin/mismo').set('Authorization', `Bearer ${token}`).send({ pin });
+  async function sesionTodas() {
+    const r = await request(app).post('/api/v1/auth/login').send({ email: todas.email, contrasena: 'clave123' });
+    const s = await request(app).post('/api/v1/auth/login/sucursal').send({ pre_token: r.body.datos.pre_token, sucursal_id: null });
+    return s.body.datos;
+  }
+
+  beforeAll(async () => {
+    rolCajero = await Rol.findOne({ where: { nombre: 'Cajero' } });
+    sucursal = await Sucursal.create({ nombre: 'Sucursal PIN Mismo' });
+    todas = await Usuario.create({
+      rol_id: rolCajero.id, nombre: 'PIN Mismo Todas', email: 'pin-mismo-todas@restaurante.com',
+      contrasena: await bcrypt.hash('clave123', 10), pin: await bcrypt.hash('1234', 10), acceso_todas_sucursales: 1,
+    });
+  });
+
+  afterAll(async () => {
+    await Usuario.destroy({ where: { id: todas.id } });
+    await Sucursal.destroy({ where: { id: sucursal.id } });
+  });
+
+  it("con 'Todas las sucursales' devuelve tokens del mismo usuario y sucursal, sin cerrar la sesión", async () => {
+    const s = await sesionTodas();
+    await todas.reload();
+    const version = todas.sesion_version;
+    const r = await mismo(s.token, '1234');
+    expect(r.status).toBe(200);
+    expect(r.body.datos.usuario.id).toBe(todas.id);
+    expect(r.body.datos.usuario.sucursal_activa.id).toBeNull();
+    expect(r.body.datos.refresh_token).toBeDefined();
+    expect(r.body.datos.dispositivo_token).toBeUndefined();
+    await todas.reload();
+    expect(todas.sesion_version).toBe(version);
+    // El token viejo y el nuevo siguen sirviendo.
+    expect((await request(app).get('/api/v1/auth/yo').set('Authorization', `Bearer ${s.token}`)).status).toBe(200);
+    const yo = await request(app).get('/api/v1/auth/yo').set('Authorization', `Bearer ${r.body.datos.token}`);
+    expect(yo.status).toBe(200);
+    expect(yo.body.datos.sucursal_id).toBeNull();
+  });
+
+  it('con sucursal concreta mantiene la sucursal y trae dispositivo_token', async () => {
+    const r = await request(app).post('/api/v1/auth/login').send({ email: todas.email, contrasena: 'clave123' });
+    const s = await request(app).post('/api/v1/auth/login/sucursal').send({ pre_token: r.body.datos.pre_token, sucursal_id: sucursal.id });
+    const m = await mismo(s.body.datos.token, '1234');
+    expect(m.status).toBe(200);
+    expect(m.body.datos.usuario.sucursal_activa).toEqual({ id: sucursal.id, nombre: 'Sucursal PIN Mismo' });
+    expect(m.body.datos.dispositivo_token).toBeDefined();
+  });
+
+  it('PIN mal cuenta para el mismo bloqueo; a los 5 ⇒ 423', async () => {
+    const s = await sesionTodas();
+    await todas.update({ pin_intentos: 0, pin_bloqueado: 0 });
+    const r = await mismo(s.token, '9999');
+    expect(r.status).toBe(401);
+    expect(r.body.mensaje).toBe('PIN incorrecto');
+    expect(r.body.intentos_restantes).toBe(4);
+    await todas.reload();
+    expect(todas.pin_intentos).toBe(1);
+    for (let i = 0; i < 3; i++) expect((await mismo(s.token, '9999')).status).toBe(401);
+    const quinto = await mismo(s.token, '9999');
+    expect(quinto.status).toBe(423);
+    expect(quinto.body.mensaje).toBe('PIN bloqueado: entra con tu correo');
+    const correcto = await mismo(s.token, '1234');
+    expect(correcto.status).toBe(423);
+    await todas.reload();
+    expect(todas.pin_bloqueado).toBe(1);
+  });
+
+  it('PIN que no son 4 números ⇒ 400; sin token ⇒ 401', async () => {
+    await todas.update({ pin_intentos: 0, pin_bloqueado: 0 });
+    const s = await sesionTodas();
+    const r = await mismo(s.token, '12');
+    expect(r.status).toBe(400);
+    expect(r.body.mensaje).toBe('El PIN son 4 números');
+    const sin = await request(app).post('/api/v1/auth/pin/mismo').send({ pin: '1234' });
+    expect(sin.status).toBe(401);
+  });
+});
+
+// El socket solo acepta tokens de sesión: uno con `tipo` (dispositivo, pre_login) se rechaza.
+describe('socket: identificar', () => {
+  const jwt = require('jsonwebtoken');
+  const { identificar } = require('../src/socket');
+  const probar = (token) => new Promise((resolve) => {
+    const socket = { handshake: { auth: { token } }, data: {} };
+    identificar(socket, (err) => resolve({ err, socket }));
+  });
+
+  it('rechaza un token con tipo', async () => {
+    const t = jwt.sign({ tipo: 'dispositivo', id: 1, sucursal_id: 1, sesion_version: 0 }, process.env.JWT_SECRET, { expiresIn: '1m' });
+    const { err, socket } = await probar(t);
+    expect(err).toBeInstanceOf(Error);
+    expect(err.message).toBe('No autorizado');
+    expect(socket.data.quien).toBeUndefined();
+  });
+});

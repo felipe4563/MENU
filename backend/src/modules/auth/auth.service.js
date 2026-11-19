@@ -225,21 +225,9 @@ async function reservarIntentoPin(id) {
   });
 }
 
-async function entrarConPin(dispositivo_token, usuario_id, pin) {
-  const sucursal = await sucursalDelDispositivo(dispositivo_token);
-
-  if (typeof pin !== 'string' || !/^\d{4}$/.test(pin)) {
-    throw Object.assign(new Error('El PIN son 4 números'), { status: 400 });
-  }
-  const id = usuarioIdCanonico(usuario_id);
-  if (id === null) throw Object.assign(new Error('Usuario no válido'), { status: 400 });
-
-  // Inactivo o inexistente se responde igual que "de otra sucursal".
-  const usuario = await buscarUsuarioCompleto({ id, activo: 1 });
-  const esDeLaSucursal = usuario && (usuario.acceso_todas_sucursales
-    || (usuario.sucursales || []).some(s => s.id === sucursal.id));
-  if (!esDeLaSucursal) throw Object.assign(new Error(MSG_OTRA_SUCURSAL), { status: 403 });
-
+// Revisa el PIN del usuario con el tope de 5 intentos (lanza 423/400/401).
+async function comprobarPin(usuario, pin) {
+  const id = usuario.id;
   if (usuario.pin_bloqueado) throw Object.assign(new Error(MSG_PIN_BLOQUEADO), { status: 423 });
   if (!usuario.pin) throw Object.assign(new Error('Ese usuario no tiene PIN: entra con tu correo'), { status: 400 });
 
@@ -265,7 +253,45 @@ async function entrarConPin(dispositivo_token, usuario_id, pin) {
   const [cambiadas] = await Usuario.update({ pin_intentos: 0 }, { where: { id, pin_bloqueado: 0 } });
   if (cambiadas === 0) throw Object.assign(new Error(MSG_PIN_BLOQUEADO), { status: 423 });
   usuario.pin_intentos = 0;
+}
+
+async function entrarConPin(dispositivo_token, usuario_id, pin) {
+  const sucursal = await sucursalDelDispositivo(dispositivo_token);
+
+  if (typeof pin !== 'string' || !/^\d{4}$/.test(pin)) {
+    throw Object.assign(new Error('El PIN son 4 números'), { status: 400 });
+  }
+  const id = usuarioIdCanonico(usuario_id);
+  if (id === null) throw Object.assign(new Error('Usuario no válido'), { status: 400 });
+
+  // Inactivo o inexistente se responde igual que "de otra sucursal".
+  const usuario = await buscarUsuarioCompleto({ id, activo: 1 });
+  const esDeLaSucursal = usuario && (usuario.acceso_todas_sucursales
+    || (usuario.sucursales || []).some(s => s.id === sucursal.id));
+  if (!esDeLaSucursal) throw Object.assign(new Error(MSG_OTRA_SUCURSAL), { status: 403 });
+
+  await comprobarPin(usuario, pin);
   return await emitirSesion(usuario, sucursal.id, sucursal.nombre, { nuevaVersion: false });
 }
 
-module.exports = { login, loginConSucursal, refresh, usuariosConPin, entrarConPin, usuarioIdCanonico };
+// Desbloquear con PIN la sesión que ya está abierta (sin aparato habilitado,
+// ej. "Todas las sucursales"): mismo usuario y misma sucursal del token, sin
+// cerrar otras sesiones. `sesion` es req.usuario del middleware de auth.
+async function entrarConPinMismo(sesion, pin) {
+  if (typeof pin !== 'string' || !/^\d{4}$/.test(pin)) {
+    throw Object.assign(new Error('El PIN son 4 números'), { status: 400 });
+  }
+  const usuario = await buscarUsuarioCompleto({ id: sesion.id, activo: 1 });
+  if (!usuario) throw Object.assign(new Error('Usuario no encontrado'), { status: 401 });
+  await comprobarPin(usuario, pin);
+
+  const sucursalId = sesion.sucursal_id ?? null;
+  if (sucursalId === null) {
+    return await emitirSesion(usuario, null, 'Todas las sucursales', { nuevaVersion: false });
+  }
+  const sucursal = await Sucursal.findOne({ where: { id: sucursalId, activo: 1 } });
+  if (!sucursal) throw Object.assign(new Error('No tienes acceso a esa sucursal'), { status: 403 });
+  return await emitirSesion(usuario, sucursal.id, sucursal.nombre, { nuevaVersion: false });
+}
+
+module.exports = { login, loginConSucursal, refresh, usuariosConPin, entrarConPin, entrarConPinMismo, usuarioIdCanonico };
